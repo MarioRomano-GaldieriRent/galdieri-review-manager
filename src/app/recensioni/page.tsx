@@ -8,6 +8,7 @@ import {
   type ParsedReview,
 } from "@/server/reviews/parse";
 import { activeMailbox, loadSettings, type Label } from "@/server/settings";
+import { isTranslationConfigured, translateToItalian } from "@/server/translate";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Recensioni — Galdieri rent" };
@@ -136,6 +137,22 @@ export default async function RecensioniPage({
     error = e instanceof Error ? e.message : "Errore sconosciuto";
   }
 
+  // Testo scritto davvero dal cliente (Google allega anche la sua traduzione inglese).
+  const parti = allCards.map((c) => splitTranslation(c.review.comment));
+  const originali = parti.map((p) => p.original || p.translated);
+
+  // Traduzione in italiano in un'unica chiamata, con cache su file.
+  const traduzioni = await translateToItalian(originali);
+
+  const arricchite = allCards.map((c, i) => ({
+    ...c,
+    originale: originali[i],
+    italiano: traduzioni[i]?.italian ?? null,
+    giaItaliano: traduzioni[i]?.alreadyItalian ?? false,
+    lingua: traduzioni[i]?.detected ?? "",
+    ingleseDiGoogle: parti[i].original ? parti[i].translated : "",
+  }));
+
   // I conteggi si calcolano SEMPRE su tutte le recensioni, anche quando è attivo
   // un filtro: così i cinque livelli restano sempre visibili.
   const counts: Record<number, number> = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
@@ -145,8 +162,8 @@ export default async function RecensioniPage({
 
   const totale = allCards.length;
   const cards = selectedStars
-    ? allCards.filter((c) => c.review.score === selectedStars)
-    : allCards;
+    ? arricchite.filter((c) => c.review.score === selectedStars)
+    : arricchite;
 
   return (
     <main>
@@ -174,6 +191,14 @@ export default async function RecensioniPage({
         <section className="card">
           <p className="form-error">Errore nella lettura: {error}</p>
         </section>
+      )}
+
+      {!isTranslationConfigured() && (
+        <p className="notice">
+          Traduzione in italiano non attiva: si vede il testo originale del cliente. Per attivarla
+          imposta <code>AZURE_TRANSLATOR_KEY</code> e <code>AZURE_TRANSLATOR_REGION</code> nel file{" "}
+          <code>.env</code>.
+        </p>
       )}
 
       {totale > 0 && (
@@ -217,11 +242,11 @@ export default async function RecensioniPage({
       ) : (
         <div className="review-grid">
           {cards.map((c) => {
-            const { translated, original } = splitTranslation(c.review.comment);
-            // Si mostra per primo quello che ha scritto davvero il cliente; la
-            // traduzione di Google, se c'è, va sotto ed è dichiarata come tale.
-            const testo = original || translated;
-            const traduzione = original ? translated : "";
+            // In evidenza sempre la versione italiana; sotto l'originale.
+            const inItaliano = c.italiano ?? c.originale;
+            const mostraOriginale = Boolean(
+              c.originale && !c.giaItaliano && c.originale !== inItaliano,
+            );
             return (
               <article key={c.key} className="review-card">
                 <header className="review-head">
@@ -233,16 +258,25 @@ export default async function RecensioniPage({
                   <Stars score={c.review.score} />
                 </header>
 
-                {testo ? (
-                  <p className="review-comment">{testo}</p>
+                {inItaliano ? (
+                  <p className="review-comment">{inItaliano}</p>
                 ) : (
                   <p className="review-comment muted">— nessun commento, solo punteggio —</p>
                 )}
 
-                {traduzione && (
+                {mostraOriginale && (
                   <details className="review-original">
-                    <summary>Traduzione di Google</summary>
-                    <p>{traduzione}</p>
+                    <summary>
+                      Testo originale{c.lingua ? ` (${c.lingua.toUpperCase()})` : ""}
+                    </summary>
+                    <p>{c.originale}</p>
+                  </details>
+                )}
+
+                {!c.italiano && c.ingleseDiGoogle && (
+                  <details className="review-original">
+                    <summary>Traduzione di Google (inglese)</summary>
+                    <p>{c.ingleseDiGoogle}</p>
                   </details>
                 )}
 

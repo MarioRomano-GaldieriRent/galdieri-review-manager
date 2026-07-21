@@ -869,3 +869,13 @@ code {
   color: var(--text-soft);
   font-size: 0.9rem;
 }
+
+.notice {
+  background: var(--surface-alt);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px 14px;
+  font-size: 0.86rem;
+  color: var(--text-soft);
+  margin: 0 0 18px;
+}
