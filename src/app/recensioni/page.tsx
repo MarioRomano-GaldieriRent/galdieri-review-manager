@@ -218,29 +218,31 @@ export default async function RecensioniPage({
         <div className="review-grid">
           {cards.map((c) => {
             const { translated, original } = splitTranslation(c.review.comment);
+            // Si mostra per primo quello che ha scritto davvero il cliente; la
+            // traduzione di Google, se c'è, va sotto ed è dichiarata come tale.
+            const testo = original || translated;
+            const traduzione = original ? translated : "";
             return (
               <article key={c.key} className="review-card">
                 <header className="review-head">
-                  <div>
-                    <div className="review-name">{c.review.name}</div>
-                    <div className="review-sub muted">
-                      {c.location && <span className="review-place">{c.location}</span>}
-                      {fmt.format(new Date(c.receivedDateTime))}
-                    </div>
+                  <div className="review-head-main">
+                    <span className="review-name">{c.review.name}</span>
+                    {c.location && <span className="review-place">{c.location}</span>}
+                    <span className="review-date">{fmt.format(new Date(c.receivedDateTime))}</span>
                   </div>
                   <Stars score={c.review.score} />
                 </header>
 
-                {translated ? (
-                  <p className="review-comment">{translated}</p>
+                {testo ? (
+                  <p className="review-comment">{testo}</p>
                 ) : (
                   <p className="review-comment muted">— nessun commento, solo punteggio —</p>
                 )}
 
-                {original && (
+                {traduzione && (
                   <details className="review-original">
-                    <summary>Testo originale</summary>
-                    <p>{original}</p>
+                    <summary>Traduzione di Google</summary>
+                    <p>{traduzione}</p>
                   </details>
                 )}
 

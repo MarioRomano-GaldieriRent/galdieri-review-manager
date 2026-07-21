@@ -740,26 +740,35 @@ code {
   margin-bottom: 10px;
 }
 
+/* Nome, sede e data sulla stessa riga */
+.review-head-main {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
 .review-name {
   font-weight: 700;
   font-size: 1.05rem;
-}
-
-.review-sub {
-  font-size: 0.82rem;
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-  align-items: center;
 }
 
 .review-place {
   background: var(--surface-alt);
   border: 1px solid var(--border);
   border-radius: 999px;
-  padding: 1px 9px;
+  padding: 1px 10px;
+  font-size: 0.78rem;
   font-weight: 600;
   color: var(--text);
+  white-space: nowrap;
+}
+
+.review-date {
+  font-size: 0.82rem;
+  color: var(--text-soft);
+  white-space: nowrap;
 }
 
 .stars-badge {
