@@ -53,6 +53,7 @@ function mailboxPath(mailbox?: string): string {
 
 export type MailMessage = {
   id: string;
+  conversationId: string;
   subject: string;
   fromName: string;
   fromAddress: string;
@@ -63,38 +64,69 @@ export type MailMessage = {
   webLink: string;
 };
 
+export type Recipient = { name: string; address: string };
+
 export type MailDetail = MailMessage & {
-  toRecipients: string[];
+  toRecipients: Recipient[];
+  ccRecipients: Recipient[];
   bodyContent: string;
   bodyIsHtml: boolean;
 };
 
+type GraphRecipient = { emailAddress?: { name?: string; address?: string } };
+
 type GraphMessage = {
   id: string;
+  conversationId?: string;
   subject?: string | null;
   bodyPreview?: string | null;
   receivedDateTime: string;
   isRead?: boolean;
   hasAttachments?: boolean;
   webLink?: string;
-  from?: { emailAddress?: { name?: string; address?: string } };
-  toRecipients?: { emailAddress?: { name?: string; address?: string } }[];
+  from?: GraphRecipient;
+  sender?: GraphRecipient;
+  toRecipients?: GraphRecipient[];
+  ccRecipients?: GraphRecipient[];
   body?: { contentType?: string; content?: string };
 };
 
-const LIST_FIELDS = "id,subject,bodyPreview,receivedDateTime,isRead,hasAttachments,webLink,from";
+const LIST_FIELDS =
+  "id,conversationId,subject,bodyPreview,receivedDateTime,isRead,hasAttachments,webLink,from";
+const DETAIL_FIELDS = `${LIST_FIELDS},toRecipients,ccRecipients,body`;
+
+function mapRecipients(list?: GraphRecipient[]): Recipient[] {
+  return (list ?? [])
+    .map((r) => ({
+      name: r.emailAddress?.name ?? "",
+      address: r.emailAddress?.address ?? "",
+    }))
+    .filter((r) => r.address);
+}
 
 function toMessage(m: GraphMessage): MailMessage {
+  const from = m.from?.emailAddress ?? m.sender?.emailAddress;
   return {
     id: m.id,
+    conversationId: m.conversationId ?? "",
     subject: m.subject?.trim() || "(senza oggetto)",
-    fromName: m.from?.emailAddress?.name ?? "",
-    fromAddress: m.from?.emailAddress?.address ?? "",
+    fromName: from?.name ?? "",
+    fromAddress: from?.address ?? "",
     receivedDateTime: m.receivedDateTime,
     preview: (m.bodyPreview ?? "").replace(/\s+/g, " ").trim(),
     isRead: m.isRead ?? true,
     hasAttachments: m.hasAttachments ?? false,
     webLink: m.webLink ?? "",
+  };
+}
+
+function toDetail(m: GraphMessage): MailDetail {
+  return {
+    ...toMessage(m),
+    toRecipients: mapRecipients(m.toRecipients),
+    ccRecipients: mapRecipients(m.ccRecipients),
+    bodyContent: m.body?.content ?? "",
+    bodyIsHtml: (m.body?.contentType ?? "").toLowerCase() === "html",
   };
 }
 
@@ -144,7 +176,6 @@ export async function listInbox(
   }
 
   let messages = (json.value ?? []).map(toMessage);
-  // Con la ricerca attiva il filtro "non lette" si applica sui risultati ottenuti.
   if (opts.search && opts.unreadOnly) messages = messages.filter((m) => !m.isRead);
 
   return { messages, total: json["@odata.count"] ?? null };
@@ -153,7 +184,7 @@ export async function listInbox(
 /** Legge un singolo messaggio, corpo incluso. NON lo segna come letto. */
 export async function getMessage(id: string, mailbox?: string): Promise<MailDetail> {
   const token = await getAccessToken();
-  const params = new URLSearchParams({ $select: `${LIST_FIELDS},toRecipients,body` });
+  const params = new URLSearchParams({ $select: DETAIL_FIELDS });
   const url = `${mailboxPath(mailbox)}/messages/${encodeURIComponent(id)}?${params}`;
 
   const res = await fetch(url, {
@@ -165,15 +196,47 @@ export async function getMessage(id: string, mailbox?: string): Promise<MailDeta
   if (!res.ok) {
     throw new Error(`Graph ${res.status}: ${json.error?.message ?? "messaggio non trovato"}`);
   }
+  return toDetail(json);
+}
 
-  return {
-    ...toMessage(json),
-    toRecipients: (json.toRecipients ?? [])
-      .map((r) => r.emailAddress?.address ?? "")
-      .filter(Boolean),
-    bodyContent: json.body?.content ?? "",
-    bodyIsHtml: (json.body?.contentType ?? "").toLowerCase() === "html",
-  };
+/**
+ * Tutti i messaggi della stessa conversazione, in ordine cronologico.
+ * Cerca su TUTTA la casella (non solo Inbox), così include anche le risposte
+ * inviate: è il "flusso" completo come nei client di posta classici.
+ */
+export async function getConversation(
+  conversationId: string,
+  mailbox?: string,
+): Promise<MailDetail[]> {
+  if (!conversationId) return [];
+  const token = await getAccessToken();
+
+  const params = new URLSearchParams({
+    // L'apostrofo nei literal OData si raddoppia.
+    $filter: `conversationId eq '${conversationId.replace(/'/g, "''")}'`,
+    $select: DETAIL_FIELDS,
+    $top: "50",
+  });
+  const url = `${mailboxPath(mailbox)}/messages?${params}`;
+
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${token}` },
+    cache: "no-store",
+  });
+
+  const json = (await res.json()) as { value?: GraphMessage[]; error?: { message?: string } };
+  if (!res.ok) {
+    throw new Error(`Graph ${res.status}: ${json.error?.message ?? "conversazione non trovata"}`);
+  }
+
+  // Ordinamento lato applicazione: $orderby insieme a $filter su conversationId
+  // non è sempre accettato da Exchange.
+  return (json.value ?? [])
+    .map(toDetail)
+    .sort(
+      (a, b) =>
+        new Date(a.receivedDateTime).getTime() - new Date(b.receivedDateTime).getTime(),
+    );
 }
 
 /** Segna un messaggio come letto o non letto (richiede Mail.ReadWrite). */
