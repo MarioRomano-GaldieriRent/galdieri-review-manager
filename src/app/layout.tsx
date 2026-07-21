@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import "./globals.css";
 import { ThemeToggle } from "./ThemeToggle";
 
@@ -33,6 +34,11 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
                 <span className="logo-rent">rent</span>
               </span>
             </div>
+            <nav className="app-nav">
+              <Link href="/recensioni">Recensioni</Link>
+              <Link href="/">Posta</Link>
+              <Link href="/impostazioni">Impostazioni</Link>
+            </nav>
             <ThemeToggle />
           </div>
         </header>

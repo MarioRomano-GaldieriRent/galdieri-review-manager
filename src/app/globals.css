@@ -621,6 +621,189 @@ code {
   flex-wrap: wrap;
 }
 
+/* ---------- Navigazione ---------- */
+.app-nav {
+  display: flex;
+  gap: 4px;
+  margin-left: 14px;
+}
+
+.app-nav a {
+  color: var(--text-soft);
+  text-decoration: none;
+  font-size: 0.92rem;
+  font-weight: 600;
+  padding: 7px 13px;
+  border-radius: 999px;
+  transition:
+    background 0.15s,
+    color 0.15s;
+}
+
+.app-nav a:hover {
+  color: var(--g-blue-dark);
+  background: var(--accent-soft);
+}
+
+/* ---------- Recensioni (pannello di produzione) ---------- */
+.label-tabs {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 18px;
+}
+
+.stats-row {
+  display: flex;
+  gap: 28px;
+  flex-wrap: wrap;
+}
+
+.stat-box {
+  display: flex;
+  flex-direction: column;
+}
+
+.stat-value {
+  font-size: 1.7rem;
+  font-weight: 700;
+  line-height: 1.1;
+  color: var(--g-blue-dark);
+}
+
+.stat-name {
+  font-size: 0.8rem;
+  color: var(--text-soft);
+}
+
+.review-grid {
+  display: grid;
+  gap: 16px;
+}
+
+.review-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 18px 20px;
+  box-shadow: var(--shadow);
+}
+
+.review-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  margin-bottom: 10px;
+}
+
+.review-name {
+  font-weight: 700;
+  font-size: 1.05rem;
+}
+
+.review-sub {
+  font-size: 0.82rem;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.review-place {
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 1px 9px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.stars-badge {
+  color: var(--g-yellow-dark);
+  font-size: 1.15rem;
+  letter-spacing: 1px;
+  white-space: nowrap;
+}
+
+.stars-badge.stars-1,
+.stars-badge.stars-2 {
+  color: var(--brand-red);
+}
+
+.stars-empty {
+  color: var(--border);
+}
+
+.review-comment {
+  margin: 0 0 10px;
+  font-size: 0.96rem;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+
+.review-original {
+  margin-bottom: 10px;
+  font-size: 0.86rem;
+  color: var(--text-soft);
+}
+
+.review-original summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.review-original p {
+  margin: 6px 0 0;
+  white-space: pre-wrap;
+}
+
+.review-foot {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
+
+.flag-green {
+  color: #fff;
+  background: var(--g-green);
+}
+
+/* ---------- Impostazioni ---------- */
+.label-row {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 14px 16px;
+  margin-bottom: 12px;
+  background: var(--surface-alt);
+}
+
+.label-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.btn-danger {
+  color: var(--brand-red);
+  border-color: color-mix(in srgb, var(--brand-red) 40%, var(--border));
+}
+
+.btn-danger:hover {
+  background: var(--error-bg);
+  border-color: var(--brand-red);
+  color: var(--brand-red);
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px;
+}
+
 /* ---------- Paginazione ---------- */
 .pagination {
   display: flex;

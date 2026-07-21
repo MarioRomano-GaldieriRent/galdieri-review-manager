@@ -6,6 +6,7 @@ import {
   type MailDetail,
   type Recipient,
 } from "@/server/graph/client";
+import { activeMailbox } from "@/server/settings";
 import { setReadStateAction } from "../actions";
 
 export const dynamic = "force-dynamic";
@@ -150,13 +151,14 @@ export default async function EmailPage({
   }
 
   try {
-    const selected = await getMessage(id);
+    const mailbox = await activeMailbox();
+    const selected = await getMessage(id, mailbox);
 
     // Recupera l'intero flusso; se non riesce, mostra almeno il messaggio aperto.
     let thread: MailDetail[] = [];
     let threadError: string | null = null;
     try {
-      thread = await getConversation(selected.conversationId);
+      thread = await getConversation(selected.conversationId, mailbox);
     } catch (e) {
       threadError = e instanceof Error ? e.message : "errore sconosciuto";
     }

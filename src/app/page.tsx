@@ -1,5 +1,6 @@
 import Link from "next/link";
-import { isGraphConfigured, listInbox, WATCHED_MAILBOX } from "@/server/graph/client";
+import { isGraphConfigured, listInbox } from "@/server/graph/client";
+import { activeMailbox } from "@/server/settings";
 import { setReadStateAction } from "./actions";
 
 export const dynamic = "force-dynamic";
@@ -29,8 +30,9 @@ export default async function InboxPage({
   const page = Math.max(1, Number(sp.page ?? "1") || 1);
   const q = sp.q?.trim() || "";
   const unreadOnly = sp.unread === "1";
+  const mailbox = await activeMailbox();
 
-  if (!isGraphConfigured()) {
+  if (!isGraphConfigured() || !mailbox) {
     return (
       <main>
         <h1>Posta in arrivo</h1>
@@ -55,6 +57,7 @@ export default async function InboxPage({
       skip: q ? 0 : (page - 1) * PAGE_SIZE,
       search: q || undefined,
       unreadOnly,
+      mailbox,
     });
     messages = res.messages;
     total = res.total;
@@ -68,7 +71,7 @@ export default async function InboxPage({
     <main>
       <h1>Posta in arrivo</h1>
       <p className="subtitle">
-        Casella <strong>{WATCHED_MAILBOX}</strong>
+        Casella <strong>{mailbox}</strong>
         {total !== null && !q ? ` — ${total} email` : ""}
         {q ? ` — risultati per "${q}"` : ""}
         {unreadOnly ? " · solo non lette" : ""}

@@ -239,6 +239,46 @@ export async function getConversation(
     );
 }
 
+/**
+ * Cerca i messaggi il cui OGGETTO contiene un testo, con il corpo incluso.
+ * Cerca su tutta la casella così prende anche risposte e notifiche del flusso.
+ */
+export async function searchMessages(opts: {
+  subjectContains: string;
+  fromContains?: string;
+  top?: number;
+  mailbox?: string;
+}): Promise<MailDetail[]> {
+  if (!opts.subjectContains.trim()) return [];
+  const token = await getAccessToken();
+
+  const params = new URLSearchParams({
+    $search: `"subject:${opts.subjectContains.replace(/"/g, "")}"`,
+    $select: DETAIL_FIELDS,
+    $top: String(Math.min(opts.top ?? 50, 100)),
+  });
+  const url = `${mailboxPath(opts.mailbox)}/messages?${params}`;
+
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${token}`, ConsistencyLevel: "eventual" },
+    cache: "no-store",
+  });
+
+  const json = (await res.json()) as { value?: GraphMessage[]; error?: { message?: string } };
+  if (!res.ok) {
+    throw new Error(`Graph ${res.status}: ${json.error?.message ?? "ricerca non riuscita"}`);
+  }
+
+  const needle = (opts.fromContains ?? "").trim().toLowerCase();
+  return (json.value ?? [])
+    .map(toDetail)
+    .filter((m) => !needle || m.fromAddress.toLowerCase().includes(needle))
+    .sort(
+      (a, b) =>
+        new Date(b.receivedDateTime).getTime() - new Date(a.receivedDateTime).getTime(),
+    );
+}
+
 /** Segna un messaggio come letto o non letto (richiede Mail.ReadWrite). */
 export async function setReadState(id: string, isRead: boolean, mailbox?: string): Promise<void> {
   const token = await getAccessToken();
