@@ -1,0 +1,440 @@
+/* ===========================================================================
+   Galdieri rent — Posta in arrivo.
+   Tema chiaro (default) e scuro, commutabile dal tasto luna/sole nell'header.
+   =========================================================================== */
+
+:root,
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --g-blue: #4285f4;
+  --g-blue-dark: #1a73e8;
+  --g-red: #ea4335;
+  --g-yellow: #fbbc04;
+  --g-yellow-dark: #f9ab00;
+  --g-green: #34a853;
+
+  /* Rosso del marchio Galdieri rent */
+  --brand-red: #e30613;
+
+  --bg: #ffffff;
+  --surface: #ffffff;
+  --surface-alt: #f8f9fa;
+  --border: #e2e5ea;
+  --text: #202124;
+  --text-soft: #5f6368;
+
+  --accent-soft: #f0f6ff;
+  --row-hover: #f7faff;
+  --error-bg: #fce8e6;
+  --error-border: #f7ccc8;
+  --error-text: #d93025;
+
+  --shadow: 0 1px 2px rgba(60, 64, 67, 0.12), 0 4px 14px rgba(60, 64, 67, 0.08);
+  --shadow-hover: 0 2px 6px rgba(60, 64, 67, 0.18), 0 10px 28px rgba(60, 64, 67, 0.14);
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --g-blue: #4285f4;
+  --g-blue-dark: #8ab4f8;
+  --g-red: #f28b82;
+  --g-yellow-dark: #fdd663;
+
+  --bg: #16181c;
+  --surface: #1e2126;
+  --surface-alt: #262a30;
+  --border: #363b42;
+  --text: #e8eaed;
+  --text-soft: #9aa0a6;
+
+  --accent-soft: #22314a;
+  --row-hover: #232830;
+  --error-bg: #3c1f1d;
+  --error-border: #5c2b27;
+  --error-text: #f28b82;
+
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 4px 14px rgba(0, 0, 0, 0.3);
+  --shadow-hover: 0 2px 6px rgba(0, 0, 0, 0.5), 0 10px 28px rgba(0, 0, 0, 0.4);
+}
+
+:root {
+  --radius: 16px;
+  --radius-sm: 10px;
+  --rainbow: linear-gradient(
+    90deg,
+    #4285f4 0%,
+    #ea4335 33%,
+    #fbbc04 66%,
+    #34a853 100%
+  );
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family:
+    "Google Sans", "Product Sans", Roboto, "Segoe UI", system-ui, -apple-system, Helvetica, Arial,
+    sans-serif;
+  min-height: 100vh;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+  transition:
+    background-color 0.2s ease,
+    color 0.2s ease;
+}
+
+a {
+  color: var(--g-blue-dark);
+}
+
+main {
+  max-width: 1000px;
+  margin: 0 auto;
+  padding: 36px 24px 80px;
+}
+
+h1 {
+  font-size: 2rem;
+  margin: 0 0 4px;
+  letter-spacing: -0.02em;
+  font-weight: 700;
+}
+
+.subtitle {
+  color: var(--text-soft);
+  margin: 4px 0 24px;
+  font-size: 1.02rem;
+}
+
+code {
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 1px 6px;
+  font-size: 0.86em;
+  color: var(--g-blue-dark);
+  font-family: "Roboto Mono", ui-monospace, Consolas, monospace;
+}
+
+/* ---------- Header + marchio ---------- */
+.app-header {
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.app-header::before {
+  content: "";
+  display: block;
+  height: 4px;
+  background: var(--rainbow);
+}
+
+.app-header-inner {
+  max-width: 1000px;
+  margin: 0 auto;
+  padding: 12px 24px;
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  font-size: 1.35rem;
+}
+
+.logo {
+  display: inline-flex;
+  align-items: baseline;
+  line-height: 1;
+  letter-spacing: -0.02em;
+  white-space: nowrap;
+}
+
+.logo-name {
+  font-weight: 800;
+  color: var(--text);
+}
+
+.logo-rent {
+  font-weight: 500;
+  font-style: italic;
+  color: var(--brand-red);
+}
+
+/* ---------- Tasto tema chiaro/scuro ---------- */
+.theme-toggle {
+  margin-left: auto;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  border-radius: 50%;
+  color: var(--text-soft);
+  cursor: pointer;
+  transition:
+    background 0.15s,
+    color 0.15s,
+    transform 0.1s;
+}
+
+.theme-toggle:hover {
+  background: var(--surface-alt);
+  color: var(--text);
+}
+
+.theme-toggle:active {
+  transform: scale(0.92);
+}
+
+.theme-toggle svg {
+  display: block;
+}
+
+/* ---------- Card ---------- */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px 22px;
+  margin-bottom: 20px;
+  box-shadow: var(--shadow);
+  transition:
+    box-shadow 0.18s ease,
+    background-color 0.2s ease,
+    border-color 0.2s ease;
+}
+
+.card:hover {
+  box-shadow: var(--shadow-hover);
+}
+
+.hint {
+  color: var(--text-soft);
+  font-size: 0.9rem;
+}
+
+.form-error {
+  color: var(--error-text);
+  background: var(--error-bg);
+  border: 1px solid var(--error-border);
+  border-radius: var(--radius-sm);
+  padding: 9px 13px;
+  margin: 0;
+  font-size: 0.9rem;
+  font-weight: 500;
+}
+
+/* ---------- Form / filtri ---------- */
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 0.88rem;
+  color: var(--text-soft);
+  font-weight: 500;
+}
+
+.field input {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 11px 13px;
+  color: var(--text);
+  font-size: 1rem;
+  font-family: inherit;
+  outline: none;
+  transition:
+    border-color 0.15s,
+    box-shadow 0.15s;
+}
+
+.field input:focus {
+  border-color: var(--g-blue);
+  box-shadow: 0 0 0 3px rgba(66, 133, 244, 0.25);
+}
+
+.field.grow {
+  flex: 1;
+  min-width: 200px;
+}
+
+.filters-row {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  align-items: flex-end;
+}
+
+.filters-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+/* ---------- Bottoni ---------- */
+.btn-primary {
+  background: var(--g-blue);
+  color: #fff;
+  border: none;
+  border-radius: 999px;
+  padding: 11px 22px;
+  font-size: 0.98rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background 0.15s,
+    box-shadow 0.15s;
+}
+
+.btn-primary:hover {
+  background: var(--g-blue-dark);
+  box-shadow: var(--shadow-hover);
+}
+
+.btn-secondary {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--g-blue-dark);
+  border-radius: 999px;
+  padding: 10px 18px;
+  font-size: 0.92rem;
+  font-weight: 600;
+  cursor: pointer;
+  text-decoration: none;
+  display: inline-block;
+  transition:
+    background 0.15s,
+    border-color 0.15s;
+}
+
+.btn-secondary:hover {
+  background: var(--accent-soft);
+  border-color: var(--g-blue);
+}
+
+.btn-secondary.disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* ---------- Tabella email ---------- */
+.table-wrap {
+  overflow-x: auto;
+}
+
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.data-table th,
+.data-table td {
+  text-align: left;
+  padding: 11px 13px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+
+.data-table thead th {
+  color: var(--g-blue-dark);
+  font-weight: 700;
+  font-size: 0.74rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  background: var(--surface-alt);
+  border-bottom: 2px solid var(--border);
+}
+
+.data-table tbody tr:hover {
+  background: var(--row-hover);
+}
+
+.nowrap {
+  white-space: nowrap;
+}
+
+.muted {
+  color: var(--text-soft);
+  font-size: 0.85em;
+}
+
+.review-cell {
+  max-width: 520px;
+}
+
+.review-author {
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.review-text {
+  color: var(--text-soft);
+  font-size: 0.87rem;
+  margin: 2px 0 5px;
+}
+
+.review-flags {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.flag {
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  border-radius: 6px;
+  padding: 2px 7px;
+}
+
+.flag-red {
+  color: #fff;
+  background: var(--brand-red);
+}
+
+.flag-amber {
+  color: #1f1f1f;
+  background: var(--g-yellow-dark);
+}
+
+.flag-gray {
+  color: var(--text-soft);
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
+}
+
+/* ---------- Paginazione ---------- */
+.pagination {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  justify-content: center;
+  margin-top: 6px;
+}
+
+.page-info {
+  color: var(--text-soft);
+  font-size: 0.9rem;
+}

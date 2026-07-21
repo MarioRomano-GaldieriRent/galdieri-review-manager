@@ -1,0 +1,33 @@
+# dependencies
+/node_modules
+/.pnp
+.pnp.*
+
+# next.js
+/.next/
+/out/
+/build
+next-env.d.ts
+
+# production
+/dist
+
+# misc
+.DS_Store
+*.pem
+*.tsbuildinfo
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# env — mai committare i segreti (usa .env.example come modello)
+.env
+.env*.local
+
+# ide
+.idea
+
+# prisma
+/prisma/generated
