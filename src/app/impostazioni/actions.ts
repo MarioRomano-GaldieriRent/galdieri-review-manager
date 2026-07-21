@@ -6,6 +6,7 @@ import { loadSettings, saveSettings, slugify, type Label } from "@/server/settin
 import { testGraphConnection } from "@/server/graph/client";
 import { testTranslator } from "@/server/translate";
 import { testFreshdesk } from "@/server/integrations/freshdesk";
+import { caricaRegole, regoleDiDefault, salvaRegole } from "@/server/automation/rules";
 
 function refresh() {
   revalidatePath("/impostazioni");
@@ -61,6 +62,41 @@ export async function deleteLabelAction(formData: FormData): Promise<void> {
   const settings = await loadSettings();
   settings.labels = settings.labels.filter((l) => l.id !== id);
   await saveSettings(settings);
+  refresh();
+}
+
+// ------------------------------------------------ regole delle automazioni
+
+/** Accende o spegne una regola. */
+export async function cambiaStatoRegolaAction(formData: FormData): Promise<void> {
+  const id = str(formData, "id");
+  const regole = await caricaRegole();
+  const r = regole.find((x) => x.id === id);
+  if (!r) return;
+  r.attiva = !r.attiva;
+  await salvaRegole(regole);
+  refresh();
+}
+
+/** Salva i parametri di un nodo (es. il testo della risposta su Google). */
+export async function salvaNodoAction(formData: FormData): Promise<void> {
+  const regolaId = str(formData, "regolaId");
+  const azioneId = str(formData, "azioneId");
+  const regole = await caricaRegole();
+  const azione = regole.find((r) => r.id === regolaId)?.azioni.find((a) => a.id === azioneId);
+  if (!azione) return;
+
+  for (const [chiave, valore] of formData.entries()) {
+    if (!chiave.startsWith("p_")) continue;
+    azione.parametri[chiave.slice(2)] = String(valore).trim();
+  }
+  await salvaRegole(regole);
+  refresh();
+}
+
+/** Riporta le regole a quelle iniziali, ricavate dai ticket reali. */
+export async function ripristinaRegoleAction(): Promise<void> {
+  await salvaRegole(regoleDiDefault());
   refresh();
 }
 

@@ -2,17 +2,17 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { caricaRegole, regolaPer, regoleDiDefault, salvaRegole } from "@/server/automation/rules";
+import { caricaRegole, regolaPer } from "@/server/automation/rules";
 import { eseguiRegola } from "@/server/automation/engine";
 import { registraEsecuzione, svuotaEsecuzioni } from "@/server/automation/runs";
 import { caricaRecensioni, haTesto } from "@/server/reviews/load";
 import { loadSettings } from "@/server/settings";
 
-const str = (fd: FormData, k: string) => String(fd.get(k) ?? "").trim();
+// Azioni operative del pannello Automazioni: far partire un flusso su una
+// recensione e gestire il registro. Le regole invece si configurano in
+// Impostazioni — vedi impostazioni/actions.ts.
 
-function refresh() {
-  revalidatePath("/automazioni");
-}
+const str = (fd: FormData, k: string) => String(fd.get(k) ?? "").trim();
 
 /**
  * Esegue la regola che copre una singola recensione.
@@ -37,42 +37,11 @@ export async function eseguiSuRecensioneAction(formData: FormData): Promise<void
   const esecuzione = await eseguiRegola(regola, recensione);
   await registraEsecuzione(esecuzione);
 
-  refresh();
+  revalidatePath("/automazioni");
   redirect(`/automazioni?run=${encodeURIComponent(esecuzione.id)}`);
-}
-
-export async function cambiaStatoRegolaAction(formData: FormData): Promise<void> {
-  const id = str(formData, "id");
-  const regole = await caricaRegole();
-  const r = regole.find((x) => x.id === id);
-  if (!r) return;
-  r.attiva = !r.attiva;
-  await salvaRegole(regole);
-  refresh();
-}
-
-/** Salva i parametri di un nodo (es. il testo della risposta su Google). */
-export async function salvaNodoAction(formData: FormData): Promise<void> {
-  const regolaId = str(formData, "regolaId");
-  const azioneId = str(formData, "azioneId");
-  const regole = await caricaRegole();
-  const azione = regole.find((r) => r.id === regolaId)?.azioni.find((a) => a.id === azioneId);
-  if (!azione) return;
-
-  for (const [chiave, valore] of formData.entries()) {
-    if (!chiave.startsWith("p_")) continue;
-    azione.parametri[chiave.slice(2)] = String(valore).trim();
-  }
-  await salvaRegole(regole);
-  refresh();
-}
-
-export async function ripristinaRegoleAction(): Promise<void> {
-  await salvaRegole(regoleDiDefault());
-  refresh();
 }
 
 export async function svuotaRegistroAction(): Promise<void> {
   await svuotaEsecuzioni();
-  refresh();
+  revalidatePath("/automazioni");
 }

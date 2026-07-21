@@ -9,10 +9,14 @@ import {
   resolveTranslator,
 } from "@/server/settings";
 import { getGoogleReviewsStatus } from "@/server/integrations/googleReviews";
+import { caricaRegole } from "@/server/automation/rules";
+import { descriviCondizione, NodoEditor } from "../_ui/automazioni";
 import {
   addLabelAction,
   cambiaModoAction,
+  cambiaStatoRegolaAction,
   deleteLabelAction,
+  ripristinaRegoleAction,
   salvaAutomationAction,
   saveFreshdeskAction,
   saveGoogleReviewsAction,
@@ -41,7 +45,7 @@ export default async function ImpostazioniPage({
 }) {
   const sp = await searchParams;
   const settings = await loadSettings();
-  const [graph, translator, freshdesk, google, mailbox, googleStatus, automation] =
+  const [graph, translator, freshdesk, google, mailbox, googleStatus, automation, regole] =
     await Promise.all([
       resolveGraph(settings),
       resolveTranslator(settings),
@@ -50,6 +54,7 @@ export default async function ImpostazioniPage({
       activeMailbox(),
       getGoogleReviewsStatus(),
       resolveAutomation(settings),
+      caricaRegole(),
     ]);
   const simulazione = settings.modo !== "reale";
 
@@ -115,12 +120,58 @@ export default async function ImpostazioniPage({
         <Esito per="modo" />
       </section>
 
+      {/* ---------------------------------------------------- Automazioni */}
+      <section id="automazioni" className="card">
+        <div className="sec-head">
+          <h2>Automazioni — regole e flussi</h2>
+          <span className="conn-badge conn-ok">
+            {regole.filter((r) => r.attiva).length} attive su {regole.length}
+          </span>
+        </div>
+        <p className="hint">
+          Ogni regola è una catena di passaggi. I valori iniziali ricalcano quello che oggi viene
+          fatto a mano: sono stati ricavati leggendo i ticket recensione già presenti su Freshdesk.
+          Apri un nodo per modificarne il contenuto. Le recensioni si lavorano poi dal pannello{" "}
+          <a href="/automazioni">Automazioni</a>.
+        </p>
+        <div className="label-actions">
+          <form action={ripristinaRegoleAction}>
+            <button type="submit" className="btn-secondary">
+              Ripristina regole iniziali
+            </button>
+          </form>
+        </div>
+      </section>
+
+      {regole.map((r) => (
+        <section key={r.id} className={`card regola ${r.attiva ? "" : "regola-spenta"}`}>
+          <div className="sec-head">
+            <h2>
+              <span className="regola-cond">{descriviCondizione(r)}</span> {r.nome}
+            </h2>
+            <form action={cambiaStatoRegolaAction}>
+              <input type="hidden" name="id" value={r.id} />
+              <button type="submit" className={r.attiva ? "btn-mini" : "btn-mini btn-danger"}>
+                {r.attiva ? "Attiva — disattiva" : "Disattivata — attiva"}
+              </button>
+            </form>
+          </div>
+          <div className="flow">
+            {r.azioni.map((a, i) => (
+              <div key={a.id} className="flow-step">
+                {i > 0 && <span className="flow-freccia">→</span>}
+                <NodoEditor regola={r} azione={a} />
+              </div>
+            ))}
+          </div>
+        </section>
+      ))}
+
       {/* -------------------------------------------- Parametri automazioni */}
       <section className="card">
         <h2>Parametri delle automazioni</h2>
         <p className="hint">
-          Valori rilevati dai ticket reali di Freshdesk. Le regole vere e proprie si modificano nel
-          pannello <a href="/automazioni">Automazioni</a>.
+          Valori usati come riferimento dai nodi qui sopra, rilevati dai ticket reali di Freshdesk.
         </p>
         <form action={salvaAutomationAction}>
           <div className="form-grid">
