@@ -105,7 +105,10 @@ export default async function RecensioniPage({
   const stelleNum = Number(sp.stelle);
   const selectedStars = stelleNum >= 1 && stelleNum <= 5 ? stelleNum : null;
 
-  if (!isGraphConfigured() || !label) {
+  const graphPronto = await isGraphConfigured();
+  const traduzioneAttiva = await isTranslationConfigured();
+
+  if (!graphPronto || !label) {
     return (
       <main>
         <h1>Recensioni</h1>
@@ -193,7 +196,7 @@ export default async function RecensioniPage({
         </section>
       )}
 
-      {!isTranslationConfigured() && (
+      {!traduzioneAttiva && (
         <p className="notice">
           Traduzione in italiano non attiva: si vede il testo originale del cliente. Per attivarla
           imposta <code>AZURE_TRANSLATOR_KEY</code> e <code>AZURE_TRANSLATOR_REGION</code> nel file{" "}

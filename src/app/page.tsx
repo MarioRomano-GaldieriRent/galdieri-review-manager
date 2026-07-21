@@ -32,7 +32,7 @@ export default async function InboxPage({
   const unreadOnly = sp.unread === "1";
   const mailbox = await activeMailbox();
 
-  if (!isGraphConfigured() || !mailbox) {
+  if (!(await isGraphConfigured()) || !mailbox) {
     return (
       <main>
         <h1>Posta in arrivo</h1>

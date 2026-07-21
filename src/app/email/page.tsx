@@ -135,7 +135,7 @@ export default async function EmailPage({
 }) {
   const { id } = await searchParams;
 
-  if (!isGraphConfigured() || !id) {
+  if (!(await isGraphConfigured()) || !id) {
     return (
       <main>
         <p>

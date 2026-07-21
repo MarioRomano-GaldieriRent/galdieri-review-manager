@@ -879,3 +879,58 @@ code {
   color: var(--text-soft);
   margin: 0 0 18px;
 }
+
+/* ---------- Impostazioni: intestazioni sezione e stato ---------- */
+.sec-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+
+.sec-head h2 {
+  margin: 0;
+}
+
+.conn-badge {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border-radius: 999px;
+  padding: 3px 10px;
+  border: 1px solid var(--border);
+}
+
+.conn-ok {
+  color: var(--g-green-dark, #188038);
+  background: color-mix(in srgb, var(--g-green) 14%, transparent);
+  border-color: color-mix(in srgb, var(--g-green) 40%, var(--border));
+}
+
+.conn-ko {
+  color: var(--text-soft);
+  background: var(--surface-alt);
+}
+
+.test-ok {
+  color: var(--g-green-dark, #188038);
+  background: color-mix(in srgb, var(--g-green) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--g-green) 35%, var(--border));
+  border-radius: var(--radius-sm);
+  padding: 9px 13px;
+  margin: 12px 0 0;
+  font-size: 0.9rem;
+  font-weight: 500;
+}
+
+.form-error {
+  margin-top: 12px;
+}
+
+.sep {
+  border: 0;
+  border-top: 1px solid var(--border);
+  margin: 20px 0 16px;
+}

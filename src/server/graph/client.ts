@@ -1,30 +1,30 @@
+import { activeMailbox, resolveGraph, type GraphConfig } from "@/server/settings";
+
 // Client Microsoft Graph in modalità "app-only" (client credentials).
-// Usa l'app registration esistente: legge e aggiorna le caselle del tenant.
+// La configurazione viene letta a ogni chiamata: le modifiche fatte in
+// Impostazioni hanno effetto immediato, senza riavviare l'app.
 
-const TENANT = process.env.MICROSOFT_TENANT_ID ?? "";
-const CLIENT_ID = process.env.MICROSOFT_CLIENT_ID ?? "";
-const CLIENT_SECRET = process.env.MICROSOFT_CLIENT_SECRET ?? "";
-const GRAPH = process.env.GRAPH_API_URL ?? "https://graph.microsoft.com/v1.0";
-
-/** Casella da mostrare in "Posta in arrivo". */
-export const WATCHED_MAILBOX = process.env.MAIL_WATCH_ADDRESS ?? "";
-
-export function isGraphConfigured(): boolean {
-  return Boolean(TENANT && CLIENT_ID && CLIENT_SECRET && WATCHED_MAILBOX);
+export async function isGraphConfigured(): Promise<boolean> {
+  const cfg = await resolveGraph();
+  const mbx = await activeMailbox();
+  return Boolean(cfg.tenantId && cfg.clientId && cfg.clientSecret && mbx);
 }
 
-// Cache del token in memoria (scade dopo ~1h, lo rinnoviamo 60s prima).
-let cached: { token: string; expiresAt: number } | null = null;
+// Cache del token in memoria, indicizzata per tenant+client: cambiando
+// configurazione il vecchio token non viene riutilizzato.
+const tokens = new Map<string, { token: string; expiresAt: number }>();
 
-async function getAccessToken(): Promise<string> {
-  if (cached && Date.now() < cached.expiresAt) return cached.token;
+async function getAccessToken(cfg: GraphConfig): Promise<string> {
+  const cacheKey = `${cfg.tenantId}:${cfg.clientId}`;
+  const hit = tokens.get(cacheKey);
+  if (hit && Date.now() < hit.expiresAt) return hit.token;
 
-  const res = await fetch(`https://login.microsoftonline.com/${TENANT}/oauth2/v2.0/token`, {
+  const res = await fetch(`https://login.microsoftonline.com/${cfg.tenantId}/oauth2/v2.0/token`, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
-      client_id: CLIENT_ID,
-      client_secret: CLIENT_SECRET,
+      client_id: cfg.clientId,
+      client_secret: cfg.clientSecret,
       scope: "https://graph.microsoft.com/.default",
       grant_type: "client_credentials",
     }),
@@ -40,15 +40,18 @@ async function getAccessToken(): Promise<string> {
     throw new Error(`Autenticazione Microsoft fallita: ${data.error_description ?? res.status}`);
   }
 
-  cached = {
+  tokens.set(cacheKey, {
     token: data.access_token,
     expiresAt: Date.now() + ((data.expires_in ?? 3600) - 60) * 1000,
-  };
-  return cached.token;
+  });
+  return data.access_token;
 }
 
-function mailboxPath(mailbox?: string): string {
-  return `${GRAPH}/users/${encodeURIComponent(mailbox || WATCHED_MAILBOX)}`;
+async function ctx(mailbox?: string): Promise<{ token: string; base: string }> {
+  const cfg = await resolveGraph();
+  const mbx = mailbox || (await activeMailbox());
+  const token = await getAccessToken(cfg);
+  return { token, base: `${cfg.graphUrl}/users/${encodeURIComponent(mbx)}` };
 }
 
 export type MailMessage = {
@@ -97,10 +100,7 @@ const DETAIL_FIELDS = `${LIST_FIELDS},toRecipients,ccRecipients,body`;
 
 function mapRecipients(list?: GraphRecipient[]): Recipient[] {
   return (list ?? [])
-    .map((r) => ({
-      name: r.emailAddress?.name ?? "",
-      address: r.emailAddress?.address ?? "",
-    }))
+    .map((r) => ({ name: r.emailAddress?.name ?? "", address: r.emailAddress?.address ?? "" }))
     .filter((r) => r.address);
 }
 
@@ -144,7 +144,7 @@ export async function listInbox(
 ): Promise<{ messages: MailMessage[]; total: number | null }> {
   const top = Math.min(opts.top ?? 25, 50);
   const skip = opts.skip ?? 0;
-  const token = await getAccessToken();
+  const { token, base } = await ctx(opts.mailbox);
 
   const params = new URLSearchParams({ $top: String(top), $select: LIST_FIELDS });
 
@@ -158,9 +158,7 @@ export async function listInbox(
     if (opts.unreadOnly) params.set("$filter", "isRead eq false");
   }
 
-  const url = `${mailboxPath(opts.mailbox)}/mailFolders/Inbox/messages?${params}`;
-
-  const res = await fetch(url, {
+  const res = await fetch(`${base}/mailFolders/Inbox/messages?${params}`, {
     headers: { Authorization: `Bearer ${token}`, ConsistencyLevel: "eventual" },
     cache: "no-store",
   });
@@ -170,7 +168,6 @@ export async function listInbox(
     "@odata.count"?: number;
     error?: { message?: string };
   };
-
   if (!res.ok) {
     throw new Error(`Graph ${res.status}: ${json.error?.message ?? "errore sconosciuto"}`);
   }
@@ -183,11 +180,10 @@ export async function listInbox(
 
 /** Legge un singolo messaggio, corpo incluso. NON lo segna come letto. */
 export async function getMessage(id: string, mailbox?: string): Promise<MailDetail> {
-  const token = await getAccessToken();
+  const { token, base } = await ctx(mailbox);
   const params = new URLSearchParams({ $select: DETAIL_FIELDS });
-  const url = `${mailboxPath(mailbox)}/messages/${encodeURIComponent(id)}?${params}`;
 
-  const res = await fetch(url, {
+  const res = await fetch(`${base}/messages/${encodeURIComponent(id)}?${params}`, {
     headers: { Authorization: `Bearer ${token}` },
     cache: "no-store",
   });
@@ -209,7 +205,7 @@ export async function getConversation(
   mailbox?: string,
 ): Promise<MailDetail[]> {
   if (!conversationId) return [];
-  const token = await getAccessToken();
+  const { token, base } = await ctx(mailbox);
 
   const params = new URLSearchParams({
     // L'apostrofo nei literal OData si raddoppia.
@@ -217,9 +213,8 @@ export async function getConversation(
     $select: DETAIL_FIELDS,
     $top: "50",
   });
-  const url = `${mailboxPath(mailbox)}/messages?${params}`;
 
-  const res = await fetch(url, {
+  const res = await fetch(`${base}/messages?${params}`, {
     headers: { Authorization: `Bearer ${token}` },
     cache: "no-store",
   });
@@ -234,8 +229,7 @@ export async function getConversation(
   return (json.value ?? [])
     .map(toDetail)
     .sort(
-      (a, b) =>
-        new Date(a.receivedDateTime).getTime() - new Date(b.receivedDateTime).getTime(),
+      (a, b) => new Date(a.receivedDateTime).getTime() - new Date(b.receivedDateTime).getTime(),
     );
 }
 
@@ -250,16 +244,15 @@ export async function searchMessages(opts: {
   mailbox?: string;
 }): Promise<MailDetail[]> {
   if (!opts.subjectContains.trim()) return [];
-  const token = await getAccessToken();
+  const { token, base } = await ctx(opts.mailbox);
 
   const params = new URLSearchParams({
     $search: `"subject:${opts.subjectContains.replace(/"/g, "")}"`,
     $select: DETAIL_FIELDS,
     $top: String(Math.min(opts.top ?? 50, 100)),
   });
-  const url = `${mailboxPath(opts.mailbox)}/messages?${params}`;
 
-  const res = await fetch(url, {
+  const res = await fetch(`${base}/messages?${params}`, {
     headers: { Authorization: `Bearer ${token}`, ConsistencyLevel: "eventual" },
     cache: "no-store",
   });
@@ -274,22 +267,17 @@ export async function searchMessages(opts: {
     .map(toDetail)
     .filter((m) => !needle || m.fromAddress.toLowerCase().includes(needle))
     .sort(
-      (a, b) =>
-        new Date(b.receivedDateTime).getTime() - new Date(a.receivedDateTime).getTime(),
+      (a, b) => new Date(b.receivedDateTime).getTime() - new Date(a.receivedDateTime).getTime(),
     );
 }
 
 /** Segna un messaggio come letto o non letto (richiede Mail.ReadWrite). */
 export async function setReadState(id: string, isRead: boolean, mailbox?: string): Promise<void> {
-  const token = await getAccessToken();
-  const url = `${mailboxPath(mailbox)}/messages/${encodeURIComponent(id)}`;
+  const { token, base } = await ctx(mailbox);
 
-  const res = await fetch(url, {
+  const res = await fetch(`${base}/messages/${encodeURIComponent(id)}`, {
     method: "PATCH",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-    },
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
     body: JSON.stringify({ isRead }),
     cache: "no-store",
   });
@@ -297,5 +285,27 @@ export async function setReadState(id: string, isRead: boolean, mailbox?: string
   if (!res.ok) {
     const json = (await res.json().catch(() => ({}))) as { error?: { message?: string } };
     throw new Error(`Graph ${res.status}: ${json.error?.message ?? "aggiornamento non riuscito"}`);
+  }
+}
+
+/** Prova la connessione: token + lettura di un messaggio dalla casella. */
+export async function testGraphConnection(): Promise<{ ok: boolean; message: string }> {
+  try {
+    const cfg = await resolveGraph();
+    const mbx = await activeMailbox();
+    if (!cfg.tenantId || !cfg.clientId || !cfg.clientSecret) {
+      return { ok: false, message: "Configurazione incompleta (tenant, client o segreto)." };
+    }
+    if (!mbx) return { ok: false, message: "Nessuna casella impostata." };
+
+    const { messages, total } = await listInbox({ top: 1 });
+    return {
+      ok: true,
+      message: `Connesso a ${mbx}${total !== null ? ` — ${total} email` : ""}${
+        messages[0] ? `, ultima: "${messages[0].subject.slice(0, 50)}"` : ""
+      }`,
+    };
+  } catch (e) {
+    return { ok: false, message: e instanceof Error ? e.message : "Errore sconosciuto" };
   }
 }

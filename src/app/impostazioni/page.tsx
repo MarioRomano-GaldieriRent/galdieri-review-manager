@@ -1,54 +1,305 @@
-import { WATCHED_MAILBOX } from "@/server/graph/client";
-import { loadSettings } from "@/server/settings";
+import {
+  activeMailbox,
+  isSet,
+  loadSettings,
+  resolveFreshdesk,
+  resolveGoogleReviews,
+  resolveGraph,
+  resolveTranslator,
+} from "@/server/settings";
+import { getGoogleReviewsStatus } from "@/server/integrations/googleReviews";
 import {
   addLabelAction,
   deleteLabelAction,
+  saveFreshdeskAction,
+  saveGoogleReviewsAction,
+  saveGraphAction,
   saveMailboxAction,
+  saveTranslatorAction,
+  testFreshdeskAction,
+  testGraphAction,
+  testTranslatorAction,
   updateLabelAction,
 } from "./actions";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Impostazioni — Galdieri rent" };
 
-export default async function ImpostazioniPage() {
+const SEGRETO = "•••••••• (impostato — lascia vuoto per non cambiarlo)";
+
+function Stato({ ok, testo }: { ok: boolean; testo: string }) {
+  return <span className={`conn-badge ${ok ? "conn-ok" : "conn-ko"}`}>{testo}</span>;
+}
+
+export default async function ImpostazioniPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ test?: string; ok?: string; msg?: string }>;
+}) {
+  const sp = await searchParams;
   const settings = await loadSettings();
+  const [graph, translator, freshdesk, google, mailbox, googleStatus] = await Promise.all([
+    resolveGraph(settings),
+    resolveTranslator(settings),
+    resolveFreshdesk(settings),
+    resolveGoogleReviews(settings),
+    activeMailbox(),
+    getGoogleReviewsStatus(),
+  ]);
+
+  const esito = sp.test ? { quale: sp.test, ok: sp.ok === "1", msg: sp.msg ?? "" } : null;
+  const Esito = ({ per }: { per: string }) =>
+    esito && esito.quale === per ? (
+      <p className={esito.ok ? "test-ok" : "form-error"}>
+        {esito.ok ? "✓ " : "✕ "}
+        {esito.msg}
+      </p>
+    ) : null;
+
+  const graphOk = isSet(graph.tenantId) && isSet(graph.clientId) && isSet(graph.clientSecret);
+  const translatorOk = isSet(translator.key) && isSet(translator.region);
+  const freshdeskOk = isSet(freshdesk.domain) && isSet(freshdesk.apiKey);
 
   return (
     <main>
       <h1>Impostazioni</h1>
       <p className="subtitle">
-        Casella monitorata ed etichette per filtrare le email. Le impostazioni sono salvate in{" "}
-        <code>data/settings.json</code>.
+        Configurazione delle integrazioni e delle etichette. I valori inseriti qui hanno la
+        precedenza sul file <code>.env</code> e sono salvati in <code>data/settings.json</code>.
       </p>
 
+      {/* ---------------------------------------------------------- Email */}
       <section className="card">
-        <h2>Casella monitorata</h2>
+        <div className="sec-head">
+          <h2>Email — Microsoft 365</h2>
+          <Stato ok={graphOk} testo={graphOk ? "configurata" : "incompleta"} />
+        </div>
+        <p className="hint">
+          Lettura della posta via Microsoft Graph in modalità applicativa. È l&apos;integrazione in
+          uso adesso dal pannello Recensioni.
+        </p>
+
+        <form action={saveGraphAction}>
+          <div className="form-grid">
+            <label className="field">
+              <span>Tenant ID</span>
+              <input name="tenantId" defaultValue={settings.graph.tenantId ?? ""} placeholder={graph.tenantId} />
+            </label>
+            <label className="field">
+              <span>Client ID</span>
+              <input name="clientId" defaultValue={settings.graph.clientId ?? ""} placeholder={graph.clientId} />
+            </label>
+            <label className="field">
+              <span>Client secret</span>
+              <input
+                name="clientSecret"
+                type="password"
+                autoComplete="off"
+                placeholder={isSet(graph.clientSecret) ? SEGRETO : "non impostato"}
+              />
+            </label>
+            <label className="field">
+              <span>Endpoint Graph</span>
+              <input name="graphUrl" defaultValue={settings.graph.graphUrl ?? ""} placeholder={graph.graphUrl} />
+            </label>
+          </div>
+          <div className="label-actions">
+            <button type="submit" className="btn-primary">
+              Salva
+            </button>
+            <button type="submit" className="btn-secondary" formAction={testGraphAction}>
+              Prova connessione
+            </button>
+          </div>
+        </form>
+        <Esito per="graph" />
+
+        <hr className="sep" />
+
         <form action={saveMailboxAction} className="filters-row">
           <label className="field grow">
-            <span>Indirizzo (vuoto = usa quello del file .env)</span>
-            <input
-              name="mailbox"
-              defaultValue={settings.mailbox}
-              placeholder={WATCHED_MAILBOX || "nome.cognome@galdierirent.it"}
-            />
+            <span>Casella monitorata (vuoto = quella del .env)</span>
+            <input name="mailbox" defaultValue={settings.mailbox} placeholder={mailbox} />
           </label>
           <div className="filters-actions">
             <button type="submit" className="btn-primary">
-              Salva
+              Salva casella
             </button>
           </div>
         </form>
         <p className="hint">
-          In uso adesso: <strong>{settings.mailbox || WATCHED_MAILBOX || "(nessuna)"}</strong>
+          In uso adesso: <strong>{mailbox || "(nessuna)"}</strong>
         </p>
       </section>
 
+      {/* ---------------------------------------------------- Traduzione */}
+      <section className="card">
+        <div className="sec-head">
+          <h2>Traduzione — Azure AI Translator</h2>
+          <Stato ok={translatorOk} testo={translatorOk ? "attiva" : "non attiva"} />
+        </div>
+        <p className="hint">
+          Traduce in italiano le recensioni scritte in altre lingue. Piano gratuito F0: 2 milioni di
+          caratteri al mese. Le traduzioni sono messe in cache, quindi ogni testo si traduce una
+          volta sola.
+        </p>
+
+        <form action={saveTranslatorAction}>
+          <div className="form-grid">
+            <label className="field">
+              <span>Chiave</span>
+              <input
+                name="key"
+                type="password"
+                autoComplete="off"
+                placeholder={isSet(translator.key) ? SEGRETO : "non impostata"}
+              />
+            </label>
+            <label className="field">
+              <span>Regione</span>
+              <input
+                name="region"
+                defaultValue={settings.translator.region ?? ""}
+                placeholder={translator.region || "es. westeurope"}
+              />
+            </label>
+            <label className="field">
+              <span>Endpoint</span>
+              <input
+                name="endpoint"
+                defaultValue={settings.translator.endpoint ?? ""}
+                placeholder={translator.endpoint}
+              />
+            </label>
+          </div>
+          <div className="label-actions">
+            <button type="submit" className="btn-primary">
+              Salva
+            </button>
+            <button type="submit" className="btn-secondary" formAction={testTranslatorAction}>
+              Prova connessione
+            </button>
+          </div>
+        </form>
+        <Esito per="translator" />
+      </section>
+
+      {/* ----------------------------------------------------- Freshdesk */}
+      <section className="card">
+        <div className="sec-head">
+          <h2>Freshdesk — ticketing</h2>
+          <Stato ok={freshdeskOk} testo={freshdeskOk ? "configurata" : "da configurare"} />
+        </div>
+        <p className="hint">
+          Le credenziali si prendono dal profilo agente Freshdesk → <em>View API Key</em>. Per ora
+          la connessione è solo verificabile: la creazione e la chiusura automatica dei ticket
+          arriveranno nel passo successivo.
+        </p>
+
+        <form action={saveFreshdeskAction}>
+          <div className="form-grid">
+            <label className="field">
+              <span>Dominio</span>
+              <input
+                name="domain"
+                defaultValue={settings.freshdesk.domain ?? ""}
+                placeholder={freshdesk.domain || "azienda.freshdesk.com"}
+              />
+            </label>
+            <label className="field">
+              <span>API key</span>
+              <input
+                name="apiKey"
+                type="password"
+                autoComplete="off"
+                placeholder={isSet(freshdesk.apiKey) ? SEGRETO : "non impostata"}
+              />
+            </label>
+          </div>
+          <div className="label-actions">
+            <button type="submit" className="btn-primary">
+              Salva
+            </button>
+            <button type="submit" className="btn-secondary" formAction={testFreshdeskAction}>
+              Prova connessione
+            </button>
+          </div>
+        </form>
+        <Esito per="freshdesk" />
+      </section>
+
+      {/* ------------------------------------------------ Google Reviews */}
+      <section className="card">
+        <div className="sec-head">
+          <h2>Google Business Profile — recensioni</h2>
+          <Stato
+            ok={false}
+            testo={googleStatus.configured ? "dati completi, non attiva" : "da configurare"}
+          />
+        </div>
+        <p className="hint">{googleStatus.note}</p>
+        {googleStatus.missing.length > 0 && (
+          <p className="hint">Mancano: {googleStatus.missing.join(", ")}.</p>
+        )}
+
+        <form action={saveGoogleReviewsAction}>
+          <div className="form-grid">
+            <label className="field">
+              <span>Client ID (OAuth)</span>
+              <input
+                name="clientId"
+                defaultValue={settings.googleReviews.clientId ?? ""}
+                placeholder={google.clientId || "…apps.googleusercontent.com"}
+              />
+            </label>
+            <label className="field">
+              <span>Client secret</span>
+              <input
+                name="clientSecret"
+                type="password"
+                autoComplete="off"
+                placeholder={isSet(google.clientSecret) ? SEGRETO : "non impostato"}
+              />
+            </label>
+            <label className="field">
+              <span>Refresh token</span>
+              <input
+                name="refreshToken"
+                type="password"
+                autoComplete="off"
+                placeholder={isSet(google.refreshToken) ? SEGRETO : "non impostato"}
+              />
+            </label>
+            <label className="field">
+              <span>Account ID</span>
+              <input
+                name="accountId"
+                defaultValue={settings.googleReviews.accountId ?? ""}
+                placeholder={google.accountId || "accounts/1234567890"}
+              />
+            </label>
+          </div>
+          <button type="submit" className="btn-primary" style={{ marginTop: 12 }}>
+            Salva
+          </button>
+        </form>
+
+        <p className="notice" style={{ marginTop: 14 }}>
+          <strong>Come si attiva.</strong> 1) In Google Cloud Console crea un client OAuth e abilita
+          la <em>Business Profile API</em>. 2) Compila il modulo di richiesta accesso: Google
+          assegna <strong>quota 0</strong> di default e finché non approva ogni chiamata risponde
+          403. 3) Ottieni una volta sola un refresh token con scope{" "}
+          <code>business.manage</code>. Nel frattempo le recensioni continuano ad arrivare via email
+          (Zapier), che è la sorgente usata ora.
+        </p>
+      </section>
+
+      {/* ------------------------------------------------------ Etichette */}
       <section className="card">
         <h2>Etichette ({settings.labels.length})</h2>
         <p className="hint" style={{ marginBottom: 16 }}>
-          Un&apos;etichetta raccoglie le email il cui <strong>oggetto contiene</strong> un testo.
-          Il filtro sul mittente è facoltativo: lascialo vuoto per prendere tutto il flusso
-          (notifica originale, ticket e risposte interne).
+          Un&apos;etichetta raccoglie le email il cui <strong>oggetto contiene</strong> un testo. Il
+          filtro sul mittente è facoltativo: lascialo vuoto per prendere tutto il flusso.
         </p>
 
         {settings.labels.map((l) => (
@@ -65,31 +316,19 @@ export default async function ImpostazioniPage() {
               </label>
               <label className="field">
                 <span>Mittente contiene (facoltativo)</span>
-                <input
-                  name="fromContains"
-                  defaultValue={l.fromContains}
-                  placeholder="es. zapiermail"
-                />
+                <input name="fromContains" defaultValue={l.fromContains} placeholder="es. zapiermail" />
               </label>
             </div>
             <div className="label-actions">
               <button type="submit" className="btn-mini">
                 Salva modifiche
               </button>
-              <button
-                type="submit"
-                className="btn-mini btn-danger"
-                formAction={deleteLabelAction}
-              >
+              <button type="submit" className="btn-mini btn-danger" formAction={deleteLabelAction}>
                 Elimina
               </button>
             </div>
           </form>
         ))}
-
-        {settings.labels.length === 0 && (
-          <p className="hint">Nessuna etichetta. Aggiungine una qui sotto.</p>
-        )}
       </section>
 
       <section className="card">

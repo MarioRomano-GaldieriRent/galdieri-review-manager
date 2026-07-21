@@ -1,19 +1,16 @@
 import { createHash } from "crypto";
 import { mkdir, readFile, writeFile } from "fs/promises";
 import path from "path";
+import { resolveTranslator } from "@/server/settings";
 
 // Traduzione in italiano tramite Azure AI Translator.
 // I risultati sono messi in cache su file: ogni testo si traduce una volta sola.
 
-const KEY = process.env.AZURE_TRANSLATOR_KEY ?? "";
-const REGION = process.env.AZURE_TRANSLATOR_REGION ?? "";
-const ENDPOINT =
-  process.env.AZURE_TRANSLATOR_ENDPOINT ?? "https://api.cognitive.microsofttranslator.com";
-
 const CACHE_FILE = path.join(process.cwd(), "data", "translations.json");
 
-export function isTranslationConfigured(): boolean {
-  return Boolean(KEY && REGION);
+export async function isTranslationConfigured(): Promise<boolean> {
+  const cfg = await resolveTranslator();
+  return Boolean(cfg.key && cfg.region);
 }
 
 export type Translated = {
@@ -58,7 +55,8 @@ async function persistCache(): Promise<void> {
  */
 export async function translateToItalian(texts: string[]): Promise<(Translated | null)[]> {
   const result: (Translated | null)[] = texts.map(() => null);
-  if (!isTranslationConfigured()) return result;
+  const cfg = await resolveTranslator();
+  if (!cfg.key || !cfg.region) return result;
 
   const store = await loadCache();
   const daTradurre: { index: number; text: string; key: string }[] = [];
@@ -85,11 +83,11 @@ export async function translateToItalian(texts: string[]): Promise<(Translated |
     // Azure Translator accetta fino a 100 elementi per chiamata.
     for (let i = 0; i < daTradurre.length; i += 100) {
       const lotto = daTradurre.slice(i, i + 100);
-      const res = await fetch(`${ENDPOINT}/translate?api-version=3.0&to=it`, {
+      const res = await fetch(`${cfg.endpoint}/translate?api-version=3.0&to=it`, {
         method: "POST",
         headers: {
-          "Ocp-Apim-Subscription-Key": KEY,
-          "Ocp-Apim-Subscription-Region": REGION,
+          "Ocp-Apim-Subscription-Key": cfg.key,
+          "Ocp-Apim-Subscription-Region": cfg.region,
           "Content-Type": "application/json",
         },
         body: JSON.stringify(lotto.map((x) => ({ Text: x.text }))),
@@ -123,4 +121,31 @@ export async function translateToItalian(texts: string[]): Promise<(Translated |
   }
 
   return result;
+}
+
+/** Prova la connessione al servizio di traduzione. */
+export async function testTranslator(): Promise<{ ok: boolean; message: string }> {
+  const cfg = await resolveTranslator();
+  if (!cfg.key || !cfg.region) {
+    return { ok: false, message: "Chiave o regione non impostate." };
+  }
+  try {
+    const res = await fetch(`${cfg.endpoint}/translate?api-version=3.0&to=it`, {
+      method: "POST",
+      headers: {
+        "Ocp-Apim-Subscription-Key": cfg.key,
+        "Ocp-Apim-Subscription-Region": cfg.region,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify([{ Text: "Excellent service, very fast." }]),
+      cache: "no-store",
+    });
+    if (!res.ok) {
+      return { ok: false, message: `Azure ${res.status}: ${(await res.text()).slice(0, 150)}` };
+    }
+    const data = (await res.json()) as { translations?: { text?: string }[] }[];
+    return { ok: true, message: `Prova riuscita: "${data[0]?.translations?.[0]?.text ?? ""}"` };
+  } catch (e) {
+    return { ok: false, message: e instanceof Error ? e.message : "Errore sconosciuto" };
+  }
 }
