@@ -91,10 +91,23 @@ async function main() {
     if (!campione.has(reg.id)) campione.set(reg.id, r);
   }
 
-  console.log(`Regole con un caso reale: ${campione.size} su ${regole.length}`);
-  const scoperte = regole.filter((r) => !campione.has(r.id)).map((r) => r.nome);
-  if (scoperte.length) console.log(`Senza casi nelle ultime email: ${scoperte.join(", ")}`);
-  if (senzaRegola.length) console.log(`Recensioni senza regola: ${senzaRegola.join(", ")}`);
+  const attive = regole.filter((r) => r.attiva);
+  const inCoda = recensioni.filter((r) => regolaPer(regole, r.stelle, haTesto(r)) !== null);
+  console.log(
+    `In coda: ${inCoda.length} — ${inCoda.map((r) => `${r.nome} (${r.stelle}★)`).join(", ")}`,
+  );
+  console.log(`Regole attive: ${attive.map((r) => r.nome).join(", ") || "nessuna"}`);
+  console.log(`Regole spente: ${regole.filter((r) => !r.attiva).length} su ${regole.length}`);
+  console.log(`Regole attive con un caso reale: ${campione.size} su ${attive.length}`);
+
+  const scoperte = attive.filter((r) => !campione.has(r.id)).map((r) => r.nome);
+  if (scoperte.length) console.log(`Attive ma senza casi nelle ultime email: ${scoperte.join(", ")}`);
+  if (senzaRegola.length) {
+    console.log(
+      `Recensioni fuori dalla coda: ${senzaRegola.length} ` +
+        `(${senzaRegola.slice(0, 4).join(", ")}${senzaRegola.length > 4 ? ", …" : ""})`,
+    );
+  }
   console.log("");
 
   let errori = 0;

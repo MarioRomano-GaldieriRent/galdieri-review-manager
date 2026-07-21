@@ -134,6 +134,11 @@ export default async function ImpostazioniPage({
           Apri un nodo per modificarne il contenuto. Le recensioni si lavorano poi dal pannello{" "}
           <a href="/automazioni">Automazioni</a>.
         </p>
+        <p className="notice">
+          <strong>In questa fase è attiva solo «5 stelle senza testo».</strong> È il caso più
+          semplice e meno rischioso: un ringraziamento non può essere sbagliato nel merito. Le altre
+          regole restano scritte e pronte ma spente — accendile una alla volta, quando vuoi provarle.
+        </p>
         <div className="label-actions">
           <form action={ripristinaRegoleAction}>
             <button type="submit" className="btn-secondary">

@@ -29,6 +29,15 @@ export async function svuotaEsecuzioni(): Promise<void> {
   await writeFile(FILE, "[]", "utf8");
 }
 
+/** Cancella una singola esecuzione, così la si può rifare da capo. */
+export async function eliminaEsecuzione(id: string): Promise<void> {
+  const tutte = await caricaEsecuzioni();
+  const rimaste = tutte.filter((e) => e.id !== id);
+  if (rimaste.length === tutte.length) return;
+  await mkdir(DATA_DIR, { recursive: true });
+  await writeFile(FILE, JSON.stringify(rimaste, null, 2), "utf8");
+}
+
 /** Ultima esecuzione per ciascuna recensione. */
 export async function ultimePerRecensione(): Promise<Map<string, Esecuzione>> {
   const m = new Map<string, Esecuzione>();

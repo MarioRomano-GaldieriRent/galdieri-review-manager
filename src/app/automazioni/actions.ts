@@ -4,7 +4,11 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { caricaRegole, regolaPer } from "@/server/automation/rules";
 import { eseguiRegola } from "@/server/automation/engine";
-import { registraEsecuzione, svuotaEsecuzioni } from "@/server/automation/runs";
+import {
+  eliminaEsecuzione,
+  registraEsecuzione,
+  svuotaEsecuzioni,
+} from "@/server/automation/runs";
 import { caricaRecensioni, haTesto } from "@/server/reviews/load";
 import { loadSettings } from "@/server/settings";
 
@@ -41,7 +45,17 @@ export async function eseguiSuRecensioneAction(formData: FormData): Promise<void
   redirect(`/automazioni?run=${encodeURIComponent(esecuzione.id)}`);
 }
 
+/** Cancella una singola prova, così si può ripetere da capo. */
+export async function eliminaEsecuzioneAction(formData: FormData): Promise<void> {
+  const id = str(formData, "id");
+  if (id) await eliminaEsecuzione(id);
+  revalidatePath("/automazioni");
+  // Se era la prova aperta, si torna all'elenco: il dettaglio non esiste più.
+  redirect("/automazioni");
+}
+
 export async function svuotaRegistroAction(): Promise<void> {
   await svuotaEsecuzioni();
   revalidatePath("/automazioni");
+  redirect("/automazioni");
 }

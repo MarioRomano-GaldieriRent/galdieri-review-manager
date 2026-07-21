@@ -9,7 +9,11 @@ import { tagSede } from "@/server/automation/sedi";
 import { caricaRecensioni, haTesto, testoRecensione, type Recensione } from "@/server/reviews/load";
 import { loadSettings } from "@/server/settings";
 import { NodoEseguito } from "../_ui/automazioni";
-import { eseguiSuRecensioneAction, svuotaRegistroAction } from "./actions";
+import {
+  eliminaEsecuzioneAction,
+  eseguiSuRecensioneAction,
+  svuotaRegistroAction,
+} from "./actions";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Automazioni — Galdieri rent" };
@@ -25,8 +29,16 @@ function Esito({ e }: { e: Esecuzione }) {
           {e.recensione.nome} {e.recensione.stelle ? `${e.recensione.stelle}★` : ""} —{" "}
           {e.regolaNome}
         </h2>
-        <span className={`conn-badge ${e.modo === "reale" ? "conn-ko" : "conn-ok"}`}>
-          {e.modo === "reale" ? "ESECUZIONE REALE" : "simulazione"}
+        <span className="thread-actions">
+          <span className={`conn-badge ${e.modo === "reale" ? "conn-ko" : "conn-ok"}`}>
+            {e.modo === "reale" ? "ESECUZIONE REALE" : "simulazione"}
+          </span>
+          <form action={eliminaEsecuzioneAction}>
+            <input type="hidden" name="id" value={e.id} />
+            <button type="submit" className="btn-mini btn-danger">
+              Cancella la prova
+            </button>
+          </form>
         </span>
       </div>
       <p className="hint">
@@ -34,6 +46,7 @@ function Esito({ e }: { e: Esecuzione }) {
         {scritture === 0
           ? "nessuna modifica effettuata"
           : `${scritture} modifiche effettuate davvero`}
+        {" · "}cancellandola la recensione torna «mai eseguita» e la puoi rifare.
       </p>
       <div className="run-flow">
         {e.nodi.map((n) => (
@@ -81,14 +94,30 @@ export default async function AutomazioniPage({
     .filter((x) => x.regola !== null);
   const scartate = recensioni.length - inCoda.length;
   const daFare = inCoda.filter((x) => !ultime.has(x.r.chiave)).length;
+  const attive = regole.filter((r) => r.attiva);
 
   return (
     <main>
       <h1>Automazioni</h1>
       <p className="subtitle">
-        Le recensioni pronte a essere lavorate: {inCoda.length} in coda, {daFare} mai eseguite.
-        {scartate > 0 ? ` ${scartate} senza regola.` : ""}
+        {inCoda.length} recensioni in coda, {daFare} mai eseguite — su {recensioni.length} lette
+        dalla posta.
       </p>
+
+      {/* Le recensioni escluse non spariscono in silenzio: si dice quante sono
+          e per quale motivo restano fuori. */}
+      {scartate > 0 && (
+        <p className="notice">
+          <strong>
+            {scartate} recensioni su {recensioni.length} restano fuori dalla coda.
+          </strong>{" "}
+          In questa fase è attiva una sola regola —{" "}
+          {attive.map((r) => r.nome).join(", ") || "nessuna"} — perché stiamo lavorando solo il caso
+          più semplice. Le altre regole sono già scritte ma spente: si accendono da{" "}
+          <Link href="/impostazioni#automazioni">Impostazioni</Link> una alla volta. Le recensioni
+          escluse restano tutte visibili in <Link href="/recensioni">Recensioni</Link>.
+        </p>
+      )}
 
       {/* Riga di stato: modalità in vigore e dove si configura il flusso. */}
       <section className={`card modo-riga ${simulazione ? "modo-sim" : "modo-reale"}`}>
@@ -200,9 +229,17 @@ export default async function AutomazioniPage({
                     </button>
                   </form>
                   {ultima && (
-                    <Link className="btn-mini" href={`/automazioni?run=${ultima.id}`}>
-                      Ultimo esito →
-                    </Link>
+                    <>
+                      <Link className="btn-mini" href={`/automazioni?run=${ultima.id}`}>
+                        Ultimo esito →
+                      </Link>
+                      <form action={eliminaEsecuzioneAction}>
+                        <input type="hidden" name="id" value={ultima.id} />
+                        <button type="submit" className="btn-mini btn-danger">
+                          Cancella prova
+                        </button>
+                      </form>
+                    </>
                   )}
                   <Link className="btn-mini" href={`/email?id=${encodeURIComponent(r.messaggioId)}`}>
                     Email →
@@ -260,10 +297,16 @@ export default async function AutomazioniPage({
                         {e.esito === "errore" ? "errore" : "completata"}
                       </span>
                     </td>
-                    <td>
+                    <td className="thread-actions">
                       <Link className="btn-mini" href={`/automazioni?run=${e.id}`}>
                         Dettaglio
                       </Link>
+                      <form action={eliminaEsecuzioneAction}>
+                        <input type="hidden" name="id" value={e.id} />
+                        <button type="submit" className="btn-mini btn-danger">
+                          Cancella
+                        </button>
+                      </form>
                     </td>
                   </tr>
                 ))}

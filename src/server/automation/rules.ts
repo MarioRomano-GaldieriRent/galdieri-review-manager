@@ -33,6 +33,12 @@ const azione = (id: string, tipo: TipoAzione, parametri: Record<string, string> 
  *  3 stelle             → nessuna risposta automatica: passa a Cherubina.
  *  1-2 stelle           → inoltro a Cherubina con "Si trasmette per quanto di
  *                         competenza", ticket aperto, attesa della risposta.
+ *
+ * ATTIVA UNA SOLA: per ora si lavora esclusivamente il caso più semplice e
+ * meno rischioso, le 5 stelle senza commento — un ringraziamento non può
+ * essere sbagliato nel merito. Le altre restano scritte e pronte ma spente:
+ * descrivono comunque la prassi rilevata dai ticket reali, e si accendono una
+ * alla volta da Impostazioni quando saremo pronti a provarle.
  */
 export function regoleDiDefault(): Regola[] {
   return [
@@ -50,16 +56,16 @@ export function regoleDiDefault(): Regola[] {
         }),
         azione("a3", "freshdesk.tag", { tag: "{sede}" }),
         azione("a4", "freshdesk.assegna", { agenteId: AGENTE_MARKETING }),
-        azione("a5", "google.rispondi", {
-          testo: "Grazie {nome}! A presto da Galdieri rent.",
-        }),
+        // Recensione senza commento: si risponde solo "Grazie.", niente di più.
+        // Non c'è nulla nel merito a cui replicare.
+        azione("a5", "google.rispondi", { testo: "Grazie." }),
         azione("a6", "freshdesk.stato", { stato: "4" }),
       ],
     },
     {
       id: "5-stelle-con-testo",
       nome: "5 stelle con testo",
-      attiva: true,
+      attiva: false,
       condizione: { stelle: [5], testo: "con" },
       azioni: [
         azione("b1", "freshdesk.trovaTicket"),
@@ -80,7 +86,7 @@ export function regoleDiDefault(): Regola[] {
     {
       id: "4-stelle",
       nome: "4 stelle",
-      attiva: true,
+      attiva: false,
       condizione: { stelle: [4], testo: "qualsiasi" },
       azioni: [
         azione("c1", "freshdesk.trovaTicket"),
@@ -101,7 +107,7 @@ export function regoleDiDefault(): Regola[] {
     {
       id: "3-stelle",
       nome: "3 stelle — revisione manuale",
-      attiva: true,
+      attiva: false,
       condizione: { stelle: [3], testo: "qualsiasi" },
       azioni: [
         azione("d1", "freshdesk.trovaTicket"),
@@ -119,7 +125,7 @@ export function regoleDiDefault(): Regola[] {
     {
       id: "1-2-stelle",
       nome: "1 e 2 stelle — escalation",
-      attiva: true,
+      attiva: false,
       condizione: { stelle: [1, 2], testo: "qualsiasi" },
       azioni: [
         azione("e1", "freshdesk.trovaTicket"),
