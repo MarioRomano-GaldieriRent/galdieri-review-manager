@@ -42,18 +42,54 @@ export type GoogleReviewsConfig = {
   accountId: string;
 };
 
+/**
+ * Modalità operativa dell'applicazione.
+ *
+ *  simulazione — nessuna scrittura verso l'esterno. Le automazioni leggono i
+ *                dati veri (per dire quale ticket avrebbero toccato) ma non
+ *                modificano nulla su Freshdesk, Google o la posta.
+ *  reale       — le automazioni eseguono davvero. Va attivata a mano e resta
+ *                comunque a conferma: si parte una recensione alla volta.
+ */
+export type ModoOperativo = "simulazione" | "reale";
+
+export type AutomationConfig = {
+  /** Casella a cui inoltrare le recensioni negative. */
+  emailEscalation: string;
+  /** Testo di accompagnamento dell'inoltro. */
+  testoEscalation: string;
+  /** Id agente Freshdesk che lavora le recensioni positive. */
+  agenteMarketing: string;
+  /** Id agente Freshdesk che riceve le negative. */
+  agenteEscalation: string;
+  /** Tipo ticket usato per le recensioni Google. */
+  tipoTicketGoogle: string;
+};
+
 export type Settings = {
   /** Casella da leggere; vuoto = usa MAIL_WATCH_ADDRESS dal .env */
   mailbox: string;
+  /** Simulazione o reale. Default: simulazione. */
+  modo: ModoOperativo;
   labels: Label[];
   graph: Partial<GraphConfig>;
   translator: Partial<TranslatorConfig>;
   freshdesk: Partial<FreshdeskConfig>;
   googleReviews: Partial<GoogleReviewsConfig>;
+  automation: Partial<AutomationConfig>;
+};
+
+export const DEFAULT_AUTOMATION: AutomationConfig = {
+  emailEscalation: "cherubina.panico@galdierirent.it",
+  testoEscalation: "Si trasmette per quanto di competenza.",
+  agenteMarketing: "80108775423",
+  agenteEscalation: "80128977810",
+  tipoTicketGoogle: "Recensioni clienti GMB",
 };
 
 export const DEFAULT_SETTINGS: Settings = {
   mailbox: "",
+  modo: "simulazione",
   labels: [
     {
       id: "recensioni-google",
@@ -68,6 +104,7 @@ export const DEFAULT_SETTINGS: Settings = {
   translator: {},
   freshdesk: {},
   googleReviews: {},
+  automation: {},
 };
 
 export async function loadSettings(): Promise<Settings> {
@@ -76,12 +113,16 @@ export async function loadSettings(): Promise<Settings> {
     const p = JSON.parse(raw) as Partial<Settings>;
     return {
       mailbox: typeof p.mailbox === "string" ? p.mailbox : "",
+      // Qualsiasi valore diverso da "reale" ricade su simulazione: un file
+      // corrotto o troncato non deve mai poter abilitare le scritture.
+      modo: p.modo === "reale" ? "reale" : "simulazione",
       labels:
         Array.isArray(p.labels) && p.labels.length > 0 ? p.labels : DEFAULT_SETTINGS.labels,
       graph: p.graph ?? {},
       translator: p.translator ?? {},
       freshdesk: p.freshdesk ?? {},
       googleReviews: p.googleReviews ?? {},
+      automation: p.automation ?? {},
     };
   } catch {
     return DEFAULT_SETTINGS;
@@ -97,6 +138,32 @@ export async function saveSettings(settings: Settings): Promise<void> {
 export async function activeMailbox(): Promise<string> {
   const s = await loadSettings();
   return s.mailbox || process.env.MAIL_WATCH_ADDRESS || "";
+}
+
+/** Modalità in vigore adesso. */
+export async function modoOperativo(): Promise<ModoOperativo> {
+  return (await loadSettings()).modo;
+}
+
+/**
+ * Unico punto in cui si decide se una scrittura verso l'esterno può partire.
+ * Ogni connettore che modifica qualcosa deve chiamare questa funzione prima di
+ * agire: se la modalità non è "reale" solleva un errore e l'azione non parte.
+ */
+export async function scritturaConsentita(): Promise<boolean> {
+  return (await modoOperativo()) === "reale";
+}
+
+export async function resolveAutomation(s?: Settings): Promise<AutomationConfig> {
+  const st = s ?? (await loadSettings());
+  const a = st.automation;
+  return {
+    emailEscalation: pick(a.emailEscalation, undefined, DEFAULT_AUTOMATION.emailEscalation),
+    testoEscalation: pick(a.testoEscalation, undefined, DEFAULT_AUTOMATION.testoEscalation),
+    agenteMarketing: pick(a.agenteMarketing, undefined, DEFAULT_AUTOMATION.agenteMarketing),
+    agenteEscalation: pick(a.agenteEscalation, undefined, DEFAULT_AUTOMATION.agenteEscalation),
+    tipoTicketGoogle: pick(a.tipoTicketGoogle, undefined, DEFAULT_AUTOMATION.tipoTicketGoogle),
+  };
 }
 
 const pick = (saved: string | undefined, env: string | undefined, fallback = "") =>

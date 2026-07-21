@@ -10,6 +10,7 @@ import { testFreshdesk } from "@/server/integrations/freshdesk";
 function refresh() {
   revalidatePath("/impostazioni");
   revalidatePath("/recensioni");
+  revalidatePath("/automazioni");
   revalidatePath("/");
 }
 
@@ -60,6 +61,55 @@ export async function deleteLabelAction(formData: FormData): Promise<void> {
   const settings = await loadSettings();
   settings.labels = settings.labels.filter((l) => l.id !== id);
   await saveSettings(settings);
+  refresh();
+}
+
+// ------------------------------------------------------- modalità operativa
+
+/**
+ * Passa da simulazione a reale e viceversa.
+ *
+ * Per accendere la modalità reale bisogna scrivere a mano la parola REALE: è
+ * l'ultima barriera prima che le automazioni possano modificare ticket veri e
+ * inviare email vere. Spegnerla non richiede nulla.
+ */
+export async function cambiaModoAction(formData: FormData): Promise<void> {
+  const richiesto = str(formData, "modo");
+  const s = await loadSettings();
+
+  if (richiesto === "reale") {
+    if (str(formData, "conferma").toUpperCase() !== "REALE") {
+      redirect("/impostazioni?test=modo&ok=0&msg=" + encodeURIComponent(
+        "Per attivare la modalità reale scrivi REALE nella casella di conferma.",
+      ));
+    }
+    s.modo = "reale";
+  } else {
+    s.modo = "simulazione";
+  }
+
+  await saveSettings(s);
+  refresh();
+  redirect(
+    "/impostazioni?test=modo&ok=1&msg=" +
+      encodeURIComponent(
+        s.modo === "reale"
+          ? "Modalità REALE attiva: le automazioni eseguite modificheranno davvero ticket e posta."
+          : "Modalità simulazione attiva: nessuna scrittura verso l'esterno.",
+      ),
+  );
+}
+
+export async function salvaAutomationAction(formData: FormData): Promise<void> {
+  const s = await loadSettings();
+  s.automation = {
+    emailEscalation: str(formData, "emailEscalation"),
+    testoEscalation: str(formData, "testoEscalation"),
+    agenteMarketing: str(formData, "agenteMarketing"),
+    agenteEscalation: str(formData, "agenteEscalation"),
+    tipoTicketGoogle: str(formData, "tipoTicketGoogle"),
+  };
+  await saveSettings(s);
   refresh();
 }
 

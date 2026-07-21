@@ -162,6 +162,46 @@ export async function getConversations(id: number): Promise<FdConversation[]> {
     .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
 }
 
+/** Toglie prefissi di risposta/inoltro per confrontare due oggetti. */
+function normalizzaOggetto(s: string): string {
+  return s
+    .replace(/^\s*((r|re|i|fw|fwd|rif)\s*:\s*)+/i, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+/**
+ * Cerca il ticket nato da una recensione. La ricerca di Freshdesk non copre
+ * l'oggetto, quindi si scorrono i ticket recenti e si confronta l'oggetto
+ * normalizzato, preferendo quelli creati vicino alla data dell'email.
+ *
+ * Sola lettura: è una GET, non modifica nulla.
+ */
+export async function cercaTicketPerOggetto(
+  oggetto: string,
+  ricevutaIl: string,
+  pagine = 3,
+): Promise<FdTicket | null> {
+  const atteso = normalizzaOggetto(oggetto);
+  if (!atteso) return null;
+  const riferimento = new Date(ricevutaIl).getTime();
+
+  let migliore: { t: FdTicket; distanza: number } | null = null;
+
+  for (let page = 1; page <= pagine; page++) {
+    const { tickets, hasMore } = await listTickets({ page, perPage: 100 });
+    for (const t of tickets) {
+      if (normalizzaOggetto(t.subject) !== atteso) continue;
+      const distanza = Math.abs(new Date(t.createdAt).getTime() - riferimento);
+      if (!migliore || distanza < migliore.distanza) migliore = { t, distanza };
+    }
+    if (!hasMore) break;
+  }
+
+  return migliore?.t ?? null;
+}
+
 // Elenco agenti in cache: serve solo a mostrare un nome al posto di un id.
 let agentCache: { at: number; byId: Map<number, string> } | null = null;
 

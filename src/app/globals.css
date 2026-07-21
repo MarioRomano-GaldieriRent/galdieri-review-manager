@@ -934,3 +934,246 @@ code {
   border-top: 1px solid var(--border);
   margin: 20px 0 16px;
 }
+
+/* ======================================================================
+   AUTOMAZIONI — flussi a nodi, modalità operativa, esiti di esecuzione
+   ====================================================================== */
+
+/* Ogni servizio ha il suo colore, così il flusso si legge a colpo d'occhio. */
+.nodo-freshdesk {
+  --nodo: var(--g-green);
+}
+.nodo-google {
+  --nodo: var(--g-blue);
+}
+.nodo-email {
+  --nodo: var(--g-yellow-dark);
+}
+.nodo-sistema {
+  --nodo: var(--text-soft);
+}
+
+/* ------------------------------------------------- banner modalità */
+
+.modo-banner {
+  border-left: 5px solid var(--g-green);
+}
+.modo-banner.modo-reale {
+  border-left-color: var(--error-text);
+  background: color-mix(in srgb, var(--error-bg) 55%, var(--surface));
+}
+.modo-banner p {
+  margin: 8px 0 0;
+  color: var(--text-soft);
+  line-height: 1.6;
+}
+
+/* ------------------------------------------------------ le regole */
+
+.regola-spenta {
+  opacity: 0.55;
+}
+
+.regola-cond {
+  display: inline-block;
+  background: var(--accent-soft);
+  color: var(--g-blue-dark);
+  border-radius: 999px;
+  padding: 2px 12px;
+  margin-right: 8px;
+  font-size: 0.85rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+/* Il flusso scorre in orizzontale e non fa mai scorrere la pagina. */
+.flow {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  overflow-x: auto;
+  padding: 6px 2px 12px;
+}
+
+.flow-step {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+}
+
+.flow-freccia {
+  color: var(--text-soft);
+  font-size: 1.1rem;
+  padding: 0 2px;
+}
+
+.nodo {
+  min-width: 190px;
+  max-width: 260px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-top: 3px solid var(--nodo, var(--border));
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow);
+}
+
+.nodo[open] {
+  min-width: 300px;
+}
+
+.nodo-testa {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  cursor: pointer;
+  list-style: none;
+}
+.nodo-testa::-webkit-details-marker {
+  display: none;
+}
+
+.nodo-icona {
+  color: var(--nodo, var(--text-soft));
+  font-size: 1rem;
+  flex: 0 0 auto;
+}
+
+.nodo-titolo {
+  font-weight: 600;
+  font-size: 0.9rem;
+  flex: 1 1 auto;
+}
+
+.nodo-tipo {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border-radius: 999px;
+  padding: 2px 7px;
+  font-weight: 700;
+  flex: 0 0 auto;
+}
+.nodo-legge {
+  background: var(--surface-alt);
+  color: var(--text-soft);
+}
+.nodo-scrive {
+  background: color-mix(in srgb, var(--g-yellow) 25%, transparent);
+  color: var(--g-yellow-dark);
+}
+
+.nodo-corpo {
+  padding: 0 12px 12px;
+  border-top: 1px solid var(--border);
+}
+.nodo-corpo .field {
+  margin-top: 10px;
+}
+.nodo-corpo textarea {
+  font: inherit;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  resize: vertical;
+}
+.nodo-corpo .btn-mini {
+  margin-top: 10px;
+}
+
+/* --------------------------------------------- esito di un'esecuzione */
+
+.run-card {
+  border-left: 5px solid var(--g-blue);
+}
+.run-card-ko {
+  border-left-color: var(--error-text);
+}
+
+.run-flow {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.run-nodo {
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--nodo, var(--border));
+  border-radius: var(--radius-sm);
+  padding: 10px 14px;
+  background: var(--surface-alt);
+}
+
+.run-nodo-testa {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.run-simbolo {
+  font-weight: 700;
+  width: 1.1em;
+  text-align: center;
+  flex: 0 0 auto;
+}
+
+.run-ok .run-simbolo {
+  color: var(--g-green);
+}
+.run-simulato .run-simbolo {
+  color: var(--g-blue);
+}
+.run-saltato .run-simbolo {
+  color: var(--text-soft);
+}
+.run-errore {
+  background: var(--error-bg);
+  border-color: var(--error-border);
+}
+.run-errore .run-simbolo {
+  color: var(--error-text);
+}
+
+.run-saltato {
+  opacity: 0.6;
+}
+
+.run-durata {
+  margin-left: auto;
+  font-size: 0.78rem;
+  color: var(--text-soft);
+  font-variant-numeric: tabular-nums;
+}
+
+.run-messaggio {
+  margin: 7px 0 0;
+  font-size: 0.9rem;
+  line-height: 1.55;
+  color: var(--text);
+}
+
+.run-chiamata {
+  margin-top: 9px;
+}
+.run-chiamata summary {
+  cursor: pointer;
+  font-size: 0.82rem;
+  color: var(--g-blue-dark);
+}
+.run-chiamata pre {
+  margin: 8px 0 0;
+  padding: 10px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 0.78rem;
+  line-height: 1.5;
+  overflow-x: auto;
+  white-space: pre;
+  color: var(--text-soft);
+}

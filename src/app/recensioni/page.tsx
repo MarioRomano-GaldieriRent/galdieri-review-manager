@@ -1,30 +1,13 @@
 import Link from "next/link";
-import { isGraphConfigured, searchMessages, type MailDetail } from "@/server/graph/client";
-import {
-  htmlToText,
-  locationFromSubject,
-  parseReview,
-  splitTranslation,
-  type ParsedReview,
-} from "@/server/reviews/parse";
-import { activeMailbox, loadSettings, type Label } from "@/server/settings";
-import { isTranslationConfigured, translateToItalian } from "@/server/translate";
+import { isGraphConfigured } from "@/server/graph/client";
+import { caricaRecensioni, type Recensione } from "@/server/reviews/load";
+import { loadSettings } from "@/server/settings";
+import { isTranslationConfigured } from "@/server/translate";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Recensioni — Galdieri rent" };
 
 const fmt = new Intl.DateTimeFormat("it-IT", { dateStyle: "medium", timeStyle: "short" });
-
-type ReviewCard = {
-  key: string;
-  review: ParsedReview;
-  location: string;
-  receivedDateTime: string;
-  source: MailDetail;
-  threadCount: number;
-  hasReply: boolean;
-  resolved: boolean;
-};
 
 function Stars({ score }: { score: number | null }) {
   if (score === null) return <span className="muted">—</span>;
@@ -33,57 +16,6 @@ function Stars({ score }: { score: number | null }) {
       {"★".repeat(score)}
       <span className="stars-empty">{"★".repeat(5 - score)}</span>
     </span>
-  );
-}
-
-/** Raggruppa i messaggi per conversazione e ne ricava una recensione per flusso. */
-function buildCards(messages: MailDetail[], label: Label): ReviewCard[] {
-  const byConversation = new Map<string, MailDetail[]>();
-  for (const m of messages) {
-    const key = m.conversationId || m.id;
-    const arr = byConversation.get(key);
-    if (arr) arr.push(m);
-    else byConversation.set(key, [m]);
-  }
-
-  const cards: ReviewCard[] = [];
-
-  for (const [key, group] of byConversation) {
-    // Il messaggio che contiene davvero i campi della recensione; si preferisce
-    // l'originale di Zapier rispetto alle risposte che lo citano.
-    let best: { msg: MailDetail; parsed: ParsedReview } | null = null;
-    for (const m of group) {
-      const parsed = parseReview(m.bodyIsHtml ? htmlToText(m.bodyContent) : m.bodyContent);
-      if (!parsed) continue;
-      const isZapier = m.fromAddress.toLowerCase().includes("zapier");
-      if (!best || (isZapier && !best.msg.fromAddress.toLowerCase().includes("zapier"))) {
-        best = { msg: m, parsed };
-      }
-    }
-    if (!best) continue;
-
-    const resolved = group.some((m) => /ticket\s+risolto/i.test(m.subject));
-    const hasReply = group.some((m) => {
-      const a = m.fromAddress.toLowerCase();
-      return (
-        a.endsWith("@galdierirent.it") && !a.startsWith("customer.care") && !a.includes("zapier")
-      );
-    });
-
-    cards.push({
-      key,
-      review: best.parsed,
-      location: locationFromSubject(best.msg.subject, label.subjectContains),
-      receivedDateTime: best.msg.receivedDateTime,
-      source: best.msg,
-      threadCount: group.length,
-      hasReply,
-      resolved,
-    });
-  }
-
-  return cards.sort(
-    (a, b) => new Date(b.receivedDateTime).getTime() - new Date(a.receivedDateTime).getTime(),
   );
 }
 
@@ -123,50 +55,27 @@ export default async function RecensioniPage({
     );
   }
 
-  let allCards: ReviewCard[] = [];
+  let tutte: Recensione[] = [];
   let scanned = 0;
   let error: string | null = null;
 
   try {
-    const messages = await searchMessages({
-      subjectContains: label.subjectContains,
-      fromContains: label.fromContains,
-      top: 50,
-      mailbox: await activeMailbox(),
-    });
-    scanned = messages.length;
-    allCards = buildCards(messages, label);
+    const esito = await caricaRecensioni(label);
+    tutte = esito.recensioni;
+    scanned = esito.analizzate;
   } catch (e) {
     error = e instanceof Error ? e.message : "Errore sconosciuto";
   }
 
-  // Testo scritto davvero dal cliente (Google allega anche la sua traduzione inglese).
-  const parti = allCards.map((c) => splitTranslation(c.review.comment));
-  const originali = parti.map((p) => p.original || p.translated);
-
-  // Traduzione in italiano in un'unica chiamata, con cache su file.
-  const traduzioni = await translateToItalian(originali);
-
-  const arricchite = allCards.map((c, i) => ({
-    ...c,
-    originale: originali[i],
-    italiano: traduzioni[i]?.italian ?? null,
-    giaItaliano: traduzioni[i]?.alreadyItalian ?? false,
-    lingua: traduzioni[i]?.detected ?? "",
-    ingleseDiGoogle: parti[i].original ? parti[i].translated : "",
-  }));
-
   // I conteggi si calcolano SEMPRE su tutte le recensioni, anche quando è attivo
   // un filtro: così i cinque livelli restano sempre visibili.
   const counts: Record<number, number> = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
-  for (const c of allCards) {
-    if (c.review.score && counts[c.review.score] !== undefined) counts[c.review.score] += 1;
+  for (const c of tutte) {
+    if (c.stelle && counts[c.stelle] !== undefined) counts[c.stelle] += 1;
   }
 
-  const totale = allCards.length;
-  const cards = selectedStars
-    ? arricchite.filter((c) => c.review.score === selectedStars)
-    : arricchite;
+  const totale = tutte.length;
+  const cards = selectedStars ? tutte.filter((c) => c.stelle === selectedStars) : tutte;
 
   return (
     <main>
@@ -251,14 +160,14 @@ export default async function RecensioniPage({
               c.originale && !c.giaItaliano && c.originale !== inItaliano,
             );
             return (
-              <article key={c.key} className="review-card">
+              <article key={c.chiave} className="review-card">
                 <header className="review-head">
                   <div className="review-head-main">
-                    <span className="review-name">{c.review.name}</span>
-                    {c.location && <span className="review-place">{c.location}</span>}
-                    <span className="review-date">{fmt.format(new Date(c.receivedDateTime))}</span>
+                    <span className="review-name">{c.nome}</span>
+                    {c.sede && <span className="review-place">{c.sede}</span>}
+                    <span className="review-date">{fmt.format(new Date(c.ricevutaIl))}</span>
                   </div>
-                  <Stars score={c.review.score} />
+                  <Stars score={c.stelle} />
                 </header>
 
                 {inItaliano ? (
@@ -269,9 +178,7 @@ export default async function RecensioniPage({
 
                 {mostraOriginale && (
                   <details className="review-original">
-                    <summary>
-                      Testo originale{c.lingua ? ` (${c.lingua.toUpperCase()})` : ""}
-                    </summary>
+                    <summary>Testo originale{c.lingua ? ` (${c.lingua.toUpperCase()})` : ""}</summary>
                     <p>{c.originale}</p>
                   </details>
                 )}
@@ -284,14 +191,14 @@ export default async function RecensioniPage({
                 )}
 
                 <footer className="review-foot">
-                  {c.hasReply ? (
+                  {c.haRisposta ? (
                     <span className="flag flag-green">risposta inviata</span>
                   ) : (
                     <span className="flag flag-amber">senza risposta</span>
                   )}
-                  {c.resolved && <span className="flag flag-gray">ticket risolto</span>}
-                  <span className="flag flag-gray">{c.threadCount} messaggi</span>
-                  <Link className="btn-mini" href={`/email?id=${encodeURIComponent(c.source.id)}`}>
+                  {c.risolto && <span className="flag flag-gray">ticket risolto</span>}
+                  <span className="flag flag-gray">{c.numeroMessaggi} messaggi</span>
+                  <Link className="btn-mini" href={`/email?id=${encodeURIComponent(c.messaggioId)}`}>
                     Vedi il flusso →
                   </Link>
                 </footer>

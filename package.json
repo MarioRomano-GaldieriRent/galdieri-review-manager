@@ -11,7 +11,8 @@
     "typecheck": "tsc --noEmit",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "test:graph": "tsx scripts/test-graph.ts"
+    "test:graph": "tsx scripts/test-graph.ts",
+    "test:automazioni": "tsx --tsconfig tsconfig.json scripts/test-automazioni.ts"
   },
   "dependencies": {
     "next": "^15.1.0",

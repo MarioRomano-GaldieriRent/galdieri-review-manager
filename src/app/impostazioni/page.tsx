@@ -2,6 +2,7 @@ import {
   activeMailbox,
   isSet,
   loadSettings,
+  resolveAutomation,
   resolveFreshdesk,
   resolveGoogleReviews,
   resolveGraph,
@@ -10,7 +11,9 @@ import {
 import { getGoogleReviewsStatus } from "@/server/integrations/googleReviews";
 import {
   addLabelAction,
+  cambiaModoAction,
   deleteLabelAction,
+  salvaAutomationAction,
   saveFreshdeskAction,
   saveGoogleReviewsAction,
   saveGraphAction,
@@ -38,14 +41,17 @@ export default async function ImpostazioniPage({
 }) {
   const sp = await searchParams;
   const settings = await loadSettings();
-  const [graph, translator, freshdesk, google, mailbox, googleStatus] = await Promise.all([
-    resolveGraph(settings),
-    resolveTranslator(settings),
-    resolveFreshdesk(settings),
-    resolveGoogleReviews(settings),
-    activeMailbox(),
-    getGoogleReviewsStatus(),
-  ]);
+  const [graph, translator, freshdesk, google, mailbox, googleStatus, automation] =
+    await Promise.all([
+      resolveGraph(settings),
+      resolveTranslator(settings),
+      resolveFreshdesk(settings),
+      resolveGoogleReviews(settings),
+      activeMailbox(),
+      getGoogleReviewsStatus(),
+      resolveAutomation(settings),
+    ]);
+  const simulazione = settings.modo !== "reale";
 
   const esito = sp.test ? { quale: sp.test, ok: sp.ok === "1", msg: sp.msg ?? "" } : null;
   const Esito = ({ per }: { per: string }) =>
@@ -67,6 +73,83 @@ export default async function ImpostazioniPage({
         Configurazione delle integrazioni e delle etichette. I valori inseriti qui hanno la
         precedenza sul file <code>.env</code> e sono salvati in <code>data/settings.json</code>.
       </p>
+
+      {/* ------------------------------------------------ Modalità operativa */}
+      <section id="modo" className={`card modo-banner ${simulazione ? "modo-sim" : "modo-reale"}`}>
+        <div className="sec-head">
+          <h2>Modalità operativa</h2>
+          <span className={`conn-badge ${simulazione ? "conn-ok" : "conn-ko"}`}>
+            {simulazione ? "simulazione" : "REALE"}
+          </span>
+        </div>
+
+        <p>
+          {simulazione ? (
+            <>
+              Le automazioni <strong>non scrivono nulla</strong> fuori da qui. Leggono i dati veri —
+              così sanno dire quale ticket toccherebbero — ma non modificano Freshdesk, non
+              pubblicano su Google e non inviano posta.
+            </>
+          ) : (
+            <>
+              Le automazioni <strong>eseguono davvero</strong>: modificano i ticket e inviano email.
+              Restano comunque a conferma, una recensione alla volta.
+            </>
+          )}
+        </p>
+
+        <form action={cambiaModoAction} className="filters-row" style={{ marginTop: 12 }}>
+          <input type="hidden" name="modo" value={simulazione ? "reale" : "simulazione"} />
+          {simulazione && (
+            <label className="field grow">
+              <span>Per attivare la modalità reale scrivi REALE</span>
+              <input name="conferma" placeholder="REALE" autoComplete="off" />
+            </label>
+          )}
+          <div className="filters-actions">
+            <button type="submit" className={simulazione ? "btn-secondary btn-danger" : "btn-primary"}>
+              {simulazione ? "Attiva modalità reale" : "Torna in simulazione"}
+            </button>
+          </div>
+        </form>
+        <Esito per="modo" />
+      </section>
+
+      {/* -------------------------------------------- Parametri automazioni */}
+      <section className="card">
+        <h2>Parametri delle automazioni</h2>
+        <p className="hint">
+          Valori rilevati dai ticket reali di Freshdesk. Le regole vere e proprie si modificano nel
+          pannello <a href="/automazioni">Automazioni</a>.
+        </p>
+        <form action={salvaAutomationAction}>
+          <div className="form-grid">
+            <label className="field">
+              <span>Email per le recensioni negative</span>
+              <input name="emailEscalation" defaultValue={automation.emailEscalation} />
+            </label>
+            <label className="field">
+              <span>Testo dell&apos;inoltro</span>
+              <input name="testoEscalation" defaultValue={automation.testoEscalation} />
+            </label>
+            <label className="field">
+              <span>Id agente — recensioni positive</span>
+              <input name="agenteMarketing" defaultValue={automation.agenteMarketing} />
+            </label>
+            <label className="field">
+              <span>Id agente — recensioni negative</span>
+              <input name="agenteEscalation" defaultValue={automation.agenteEscalation} />
+            </label>
+            <label className="field">
+              <span>Tipo ticket per le recensioni Google</span>
+              <input name="tipoTicketGoogle" defaultValue={automation.tipoTicketGoogle} />
+            </label>
+          </div>
+          <button type="submit" className="btn-primary" style={{ marginTop: 12 }}>
+            Salva
+          </button>
+        </form>
+      </section>
 
       {/* ---------------------------------------------------------- Email */}
       <section className="card">

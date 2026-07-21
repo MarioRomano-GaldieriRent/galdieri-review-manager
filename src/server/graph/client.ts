@@ -288,6 +288,37 @@ export async function setReadState(id: string, isRead: boolean, mailbox?: string
   }
 }
 
+/**
+ * Inoltra un messaggio a uno o più destinatari.
+ *
+ * ATTENZIONE: invia posta reale. Non va mai chiamata direttamente da una
+ * pagina: passa dal connettore in automation/connectors.ts, che prima verifica
+ * la modalità operativa.
+ */
+export async function forwardMessage(
+  id: string,
+  destinatari: string[],
+  commento: string,
+  mailbox?: string,
+): Promise<void> {
+  const { token, base } = await ctx(mailbox);
+
+  const res = await fetch(`${base}/messages/${encodeURIComponent(id)}/forward`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      comment: commento,
+      toRecipients: destinatari.map((address) => ({ emailAddress: { address } })),
+    }),
+    cache: "no-store",
+  });
+
+  if (!res.ok) {
+    const json = (await res.json().catch(() => ({}))) as { error?: { message?: string } };
+    throw new Error(`Graph ${res.status}: ${json.error?.message ?? "inoltro non riuscito"}`);
+  }
+}
+
 /** Prova la connessione: token + lettura di un messaggio dalla casella. */
 export async function testGraphConnection(): Promise<{ ok: boolean; message: string }> {
   try {
