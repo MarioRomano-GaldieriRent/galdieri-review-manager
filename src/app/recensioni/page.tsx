@@ -62,13 +62,10 @@ function buildCards(messages: MailDetail[], label: Label): ReviewCard[] {
     if (!best) continue;
 
     const resolved = group.some((m) => /ticket\s+risolto/i.test(m.subject));
-    // Risposta scritta da una persona interna (non Zapier, non il bot dei ticket)
     const hasReply = group.some((m) => {
       const a = m.fromAddress.toLowerCase();
       return (
-        a.endsWith("@galdierirent.it") &&
-        !a.startsWith("customer.care") &&
-        !a.includes("zapier")
+        a.endsWith("@galdierirent.it") && !a.startsWith("customer.care") && !a.includes("zapier")
       );
     });
 
@@ -85,20 +82,27 @@ function buildCards(messages: MailDetail[], label: Label): ReviewCard[] {
   }
 
   return cards.sort(
-    (a, b) =>
-      new Date(b.receivedDateTime).getTime() - new Date(a.receivedDateTime).getTime(),
+    (a, b) => new Date(b.receivedDateTime).getTime() - new Date(a.receivedDateTime).getTime(),
   );
+}
+
+function href(labelId: string, stelle?: number): string {
+  const p = new URLSearchParams({ label: labelId });
+  if (stelle) p.set("stelle", String(stelle));
+  return `/recensioni?${p}`;
 }
 
 export default async function RecensioniPage({
   searchParams,
 }: {
-  searchParams: Promise<{ label?: string }>;
+  searchParams: Promise<{ label?: string; stelle?: string }>;
 }) {
   const sp = await searchParams;
   const settings = await loadSettings();
-  const label =
-    settings.labels.find((l) => l.id === sp.label) ?? settings.labels[0] ?? null;
+  const label = settings.labels.find((l) => l.id === sp.label) ?? settings.labels[0] ?? null;
+
+  const stelleNum = Number(sp.stelle);
+  const selectedStars = stelleNum >= 1 && stelleNum <= 5 ? stelleNum : null;
 
   if (!isGraphConfigured() || !label) {
     return (
@@ -115,7 +119,7 @@ export default async function RecensioniPage({
     );
   }
 
-  let cards: ReviewCard[] = [];
+  let allCards: ReviewCard[] = [];
   let scanned = 0;
   let error: string | null = null;
 
@@ -127,23 +131,29 @@ export default async function RecensioniPage({
       mailbox: await activeMailbox(),
     });
     scanned = messages.length;
-    cards = buildCards(messages, label);
+    allCards = buildCards(messages, label);
   } catch (e) {
     error = e instanceof Error ? e.message : "Errore sconosciuto";
   }
 
-  const withScore = cards.filter((c) => c.review.score !== null);
-  const media =
-    withScore.length > 0
-      ? (withScore.reduce((s, c) => s + (c.review.score ?? 0), 0) / withScore.length).toFixed(1)
-      : "—";
+  // I conteggi si calcolano SEMPRE su tutte le recensioni, anche quando è attivo
+  // un filtro: così i cinque livelli restano sempre visibili.
+  const counts: Record<number, number> = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+  for (const c of allCards) {
+    if (c.review.score && counts[c.review.score] !== undefined) counts[c.review.score] += 1;
+  }
+
+  const totale = allCards.length;
+  const cards = selectedStars
+    ? allCards.filter((c) => c.review.score === selectedStars)
+    : allCards;
 
   return (
     <main>
       <h1>Recensioni</h1>
       <p className="subtitle">
-        Etichetta <strong>{label.name}</strong> — {cards.length} recensioni da {scanned} email
-        analizzate
+        Etichetta <strong>{label.name}</strong> — {totale} recensioni da {scanned} email analizzate
+        {selectedStars ? ` · filtro ${selectedStars}★` : ""}
       </p>
 
       {settings.labels.length > 1 && (
@@ -151,7 +161,7 @@ export default async function RecensioniPage({
           {settings.labels.map((l) => (
             <Link
               key={l.id}
-              href={`/recensioni?label=${encodeURIComponent(l.id)}`}
+              href={href(l.id)}
               className={l.id === label.id ? "btn-secondary is-active" : "btn-secondary"}
             >
               {l.name}
@@ -166,37 +176,42 @@ export default async function RecensioniPage({
         </section>
       )}
 
-      {cards.length > 0 && (
-        <section className="card">
-          <div className="stats-row">
-            <div className="stat-box">
-              <span className="stat-value">{cards.length}</span>
-              <span className="stat-name">recensioni</span>
-            </div>
-            <div className="stat-box">
-              <span className="stat-value">{media}</span>
-              <span className="stat-name">media</span>
-            </div>
-            <div className="stat-box">
-              <span className="stat-value">{cards.filter((c) => c.hasReply).length}</span>
-              <span className="stat-name">con risposta</span>
-            </div>
-            <div className="stat-box">
-              <span className="stat-value">
-                {cards.filter((c) => (c.review.score ?? 5) <= 3).length}
-              </span>
-              <span className="stat-name">critiche (≤3★)</span>
-            </div>
-          </div>
-        </section>
+      {totale > 0 && (
+        <div className="star-filter">
+          <Link
+            href={href(label.id)}
+            className={`star-chip chip-all${selectedStars ? "" : " is-active"}`}
+          >
+            Tutte <span className="chip-count">{totale}</span>
+          </Link>
+
+          {[1, 2, 3, 4, 5].map((n) => {
+            const count = counts[n];
+            const active = selectedStars === n;
+            return (
+              <Link
+                key={n}
+                href={active ? href(label.id) : href(label.id, n)}
+                className={`star-chip s${n}${active ? " is-active" : ""}${count === 0 ? " is-empty" : ""}`}
+                aria-label={`${count} recensioni da ${n} stelle`}
+              >
+                <span className="chip-stars">
+                  {"★".repeat(n)}
+                  <span className="stars-empty">{"★".repeat(5 - n)}</span>
+                </span>
+                <span className="chip-count">{count}</span>
+              </Link>
+            );
+          })}
+        </div>
       )}
 
       {cards.length === 0 && !error ? (
         <section className="card">
           <p className="hint">
-            Nessuna recensione trovata per l&apos;etichetta «{label.name}» (oggetto contenente «
-            {label.subjectContains}»
-            {label.fromContains ? `, mittente contenente «${label.fromContains}»` : ""}).
+            {selectedStars
+              ? `Nessuna recensione da ${selectedStars} stelle.`
+              : `Nessuna recensione trovata per l'etichetta «${label.name}».`}
           </p>
         </section>
       ) : (
@@ -237,10 +252,7 @@ export default async function RecensioniPage({
                   )}
                   {c.resolved && <span className="flag flag-gray">ticket risolto</span>}
                   <span className="flag flag-gray">{c.threadCount} messaggi</span>
-                  <Link
-                    className="btn-mini"
-                    href={`/email?id=${encodeURIComponent(c.source.id)}`}
-                  >
+                  <Link className="btn-mini" href={`/email?id=${encodeURIComponent(c.source.id)}`}>
                     Vedi il flusso →
                   </Link>
                 </footer>
