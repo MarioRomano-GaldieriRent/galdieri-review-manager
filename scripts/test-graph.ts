@@ -82,7 +82,22 @@ async function main() {
     console.log(`  ✅ Accesso OK — ${j.value?.length ?? 0} messaggi letti`);
     for (const m of j.value ?? []) {
       const from = m.from?.emailAddress?.address ?? "?";
-      console.log(`   • ${String(m.receivedDateTime).slice(0, 16)} | ${from} | ${m.subject}`);
+      const stato = m.isRead === false ? "NON LETTA" : "letta";
+      console.log(`   • [${stato}] ${String(m.receivedDateTime).slice(0, 16)} | ${from} | ${m.subject}`);
+    }
+
+    // Quante non lette ci sono in totale nella Posta in arrivo?
+    const cntUrl =
+      `${graph}/users/${encodeURIComponent(mbx)}/mailFolders/Inbox/messages` +
+      `?$filter=isRead eq false&$count=true&$top=1&$select=id`;
+    const cr = await fetch(cntUrl, {
+      headers: { Authorization: `Bearer ${token}`, ConsistencyLevel: "eventual" },
+    });
+    const cj = (await cr.json()) as any;
+    if (cr.ok) {
+      console.log(`  📬 Email NON LETTE nella Posta in arrivo: ${cj["@odata.count"] ?? "?"}`);
+    } else {
+      console.log(`  ⚠️ conteggio non lette fallito: ${cj?.error?.message ?? cr.status}`);
     }
   }
 }

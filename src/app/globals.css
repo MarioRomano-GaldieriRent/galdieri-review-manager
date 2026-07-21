@@ -26,6 +26,7 @@
 
   --accent-soft: #f0f6ff;
   --row-hover: #f7faff;
+  --unread-bg: #eef4ff;
   --error-bg: #fce8e6;
   --error-border: #f7ccc8;
   --error-text: #d93025;
@@ -51,6 +52,7 @@
 
   --accent-soft: #22314a;
   --row-hover: #232830;
+  --unread-bg: #1d2634;
   --error-bg: #3c1f1d;
   --error-border: #5c2b27;
   --error-text: #f28b82;
@@ -423,6 +425,118 @@ code {
   color: var(--text-soft);
   background: var(--surface-alt);
   border: 1px solid var(--border);
+}
+
+/* ---------- Email non lette ---------- */
+.data-table tbody tr.unread {
+  background: var(--unread-bg);
+}
+
+.data-table tbody tr.unread:hover {
+  background: var(--row-hover);
+}
+
+.data-table tbody tr.unread .review-author {
+  font-weight: 800;
+}
+
+.data-table tbody tr.unread .review-author a {
+  color: var(--text);
+}
+
+.unread-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--g-blue);
+  margin-right: 7px;
+  vertical-align: middle;
+}
+
+.review-author a {
+  text-decoration: none;
+}
+
+.review-author a:hover {
+  text-decoration: underline;
+}
+
+.btn-mini {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-soft);
+  border-radius: 999px;
+  padding: 5px 11px;
+  font-size: 0.76rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    background 0.15s,
+    color 0.15s,
+    border-color 0.15s;
+}
+
+.btn-mini:hover {
+  background: var(--accent-soft);
+  border-color: var(--g-blue);
+  color: var(--g-blue-dark);
+}
+
+.btn-secondary.is-active {
+  background: var(--accent-soft);
+  border-color: var(--g-blue);
+}
+
+/* ---------- Lettura email ---------- */
+.mail-toolbar {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+  margin-bottom: 18px;
+}
+
+.mail-subject {
+  font-size: 1.5rem;
+  margin: 0 0 16px;
+}
+
+.mail-meta {
+  display: grid;
+  gap: 8px;
+}
+
+.mail-meta-row {
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+  font-size: 0.92rem;
+  flex-wrap: wrap;
+}
+
+.mail-meta-label {
+  min-width: 74px;
+  color: var(--text-soft);
+  font-size: 0.76rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.mail-body-card {
+  padding: 0;
+  overflow: hidden;
+}
+
+.mail-body {
+  display: block;
+  width: 100%;
+  height: 70vh;
+  min-height: 420px;
+  border: 0;
+  background: #fff;
 }
 
 /* ---------- Paginazione ---------- */
