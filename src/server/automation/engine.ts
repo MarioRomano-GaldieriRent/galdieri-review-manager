@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { eseguiAzione, type Contesto } from "./connectors";
 import { CATALOGO, type Esecuzione, type EsitoNodo, type Regola, type StatoNodo } from "./types";
 import { modoOperativo, resolveAutomation } from "@/server/settings";
@@ -12,9 +13,18 @@ import { testoRecensione, type Recensione } from "@/server/reviews/load";
 
 let contatore = 0;
 
+/**
+ * Identificativo dell'esecuzione.
+ *
+ * Il contatore riparte da zero a ogni riavvio del processo, e nel database la
+ * colonna è chiave primaria: due esecuzioni nello stesso millisecondo dopo un
+ * riavvio potrebbero collidere, e l'INSERT fallirebbe DOPO che le scritture su
+ * Freshdesk e Google sono già partite. La parte casuale toglie il problema.
+ */
 function nuovoId(): string {
   contatore += 1;
-  return `run-${Date.now().toString(36)}-${contatore}`;
+  const caso = randomUUID().slice(0, 8);
+  return `run-${Date.now().toString(36)}-${contatore.toString(36)}-${caso}`;
 }
 
 /**

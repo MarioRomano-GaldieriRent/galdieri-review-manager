@@ -1,3 +1,4 @@
+import { salvaRecensioni } from "@/server/db/recensioni";
 import { searchMessages, type MailDetail } from "@/server/graph/client";
 import { htmlToText, locationFromSubject, parseReview, splitTranslation } from "./parse";
 import { activeMailbox, type Label } from "@/server/settings";
@@ -140,6 +141,11 @@ export async function caricaRecensioni(
   const originali = parti.map((p) => p.original || p.translated);
   const traduzioni = await translateToItalian(originali);
 
+  // Quante conversazioni non contenevano una recensione interpretabile: senza
+  // questo numero non si può dire quanto è coperta la raccolta, e ogni
+  // statistica sui tempi diventa indifendibile.
+  const interpretati = grezze.length;
+
   const recensioni: Recensione[] = grezze.map((g, i) => ({
     chiave: g.chiave,
     nome: g.nome,
@@ -158,6 +164,15 @@ export async function caricaRecensioni(
     haRisposta: g.haRisposta,
     risolto: g.risolto,
   }));
+
+  // Archiviazione: da qui in poi la recensione esiste anche quando uscirà
+  // dalle ultime 50 email. È fuori dal percorso critico — se fallisce, lo
+  // dice in console e le pagine funzionano lo stesso.
+  salvaRecensioni(recensioni, label.id, {
+    letti: messaggi.length,
+    interpretati,
+    scartati: Math.max(0, messaggi.length - interpretati),
+  });
 
   return { recensioni, analizzate: messaggi.length };
 }

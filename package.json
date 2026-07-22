@@ -15,7 +15,8 @@
     "test:automazioni": "tsx --tsconfig tsconfig.json scripts/test-automazioni.ts",
     "analisi": "tsx --tsconfig tsconfig.json scripts/analisi-recensioni.ts",
     "test:lingua": "tsx --tsconfig tsconfig.json scripts/test-lingua.ts",
-    "analisi:trustpilot": "tsx --tsconfig tsconfig.json scripts/analisi-trustpilot.ts"
+    "analisi:trustpilot": "tsx --tsconfig tsconfig.json scripts/analisi-trustpilot.ts",
+    "verifica:db": "tsx --tsconfig tsconfig.json scripts/verifica-db.ts"
   },
   "dependencies": {
     "next": "^15.1.0",

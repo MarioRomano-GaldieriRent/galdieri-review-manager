@@ -1,10 +1,9 @@
-import { mkdir, readFile, writeFile } from "fs/promises";
-import path from "path";
+import "@/server/db/avvio";
+import { leggiRegole, scriviRegole, type Origine } from "@/server/db/regole";
 import type { Azione, Regola, TipoAzione } from "./types";
 
-// Le regole vivono su file, come le impostazioni: data/automation-rules.json
-const DATA_DIR = path.join(process.cwd(), "data");
-const FILE = path.join(DATA_DIR, "automation-rules.json");
+// Le regole vivono nel database, come le impostazioni. Ogni salvataggio lascia
+// anche una versione immutabile: vedi src/server/db/regole.ts.
 
 // Valori rilevati dai ticket reali (vedi commenti in sedi.ts):
 //   gruppo Customer Care        80000162477   (263 ticket recensione su 263)
@@ -168,18 +167,19 @@ export function regoleDiDefault(): Regola[] {
 
 export async function caricaRegole(): Promise<Regola[]> {
   try {
-    const raw = await readFile(FILE, "utf8");
-    const parsed = JSON.parse(raw) as Regola[];
-    if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-  } catch {
-    // Primo avvio o file illeggibile: si riparte dalle regole di default.
+    const regole = leggiRegole();
+    if (regole.length > 0) return regole;
+  } catch (e) {
+    console.error("[regole] lettura non riuscita:", e);
   }
+  // Database vuoto o irraggiungibile: le regole di default restano la rete di
+  // sicurezza. Sono anche il seme del primo avvio e il bersaglio del
+  // ripristino, quindi vivono nel codice e non solo nel database.
   return regoleDiDefault();
 }
 
-export async function salvaRegole(regole: Regola[]): Promise<void> {
-  await mkdir(DATA_DIR, { recursive: true });
-  await writeFile(FILE, JSON.stringify(regole, null, 2), "utf8");
+export async function salvaRegole(regole: Regola[], origine: Origine = "interfaccia"): Promise<void> {
+  scriviRegole(regole, origine);
 }
 
 /** Prima regola attiva che copre la recensione, oppure null. */

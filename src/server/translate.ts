@@ -1,12 +1,11 @@
 import { createHash } from "crypto";
-import { mkdir, readFile, writeFile } from "fs/promises";
-import path from "path";
+import "@/server/db/avvio";
+import { cercaTraduzioni, salvaTraduzioni, segnaUso } from "@/server/db/traduzioni";
 import { resolveTranslator } from "@/server/settings";
 
 // Traduzione in italiano tramite Azure AI Translator.
-// I risultati sono messi in cache su file: ogni testo si traduce una volta sola.
-
-const CACHE_FILE = path.join(process.cwd(), "data", "translations.json");
+// I risultati sono messi in cache nel database: ogni testo si traduce una volta
+// sola, e la cache non si perde più fra un processo e l'altro.
 
 export async function isTranslationConfigured(): Promise<boolean> {
   const cfg = await resolveTranslator();
@@ -22,31 +21,15 @@ export type Translated = {
   alreadyItalian: boolean;
 };
 
-type CacheEntry = { italian: string; detected: string };
-let cache: Record<string, CacheEntry> | null = null;
-
+/**
+ * Chiave di cache: sha1 del testo, tagliato a 20 caratteri.
+ *
+ * Identica a quella usata quando la cache stava su file. Cambiarla — anche
+ * solo allungandola — vorrebbe dire non ritrovare più nulla e ripagare Azure
+ * per tradurre di nuovo tutto lo storico già tradotto.
+ */
 function hash(s: string): string {
   return createHash("sha1").update(s).digest("hex").slice(0, 20);
-}
-
-async function loadCache(): Promise<Record<string, CacheEntry>> {
-  if (cache) return cache;
-  try {
-    cache = JSON.parse(await readFile(CACHE_FILE, "utf8")) as Record<string, CacheEntry>;
-  } catch {
-    cache = {};
-  }
-  return cache;
-}
-
-async function persistCache(): Promise<void> {
-  if (!cache) return;
-  try {
-    await mkdir(path.dirname(CACHE_FILE), { recursive: true });
-    await writeFile(CACHE_FILE, JSON.stringify(cache, null, 2), "utf8");
-  } catch {
-    // La cache è un'ottimizzazione: se non si riesce a scrivere si prosegue.
-  }
 }
 
 /**
@@ -58,24 +41,30 @@ export async function translateToItalian(texts: string[]): Promise<(Translated |
   const cfg = await resolveTranslator();
   if (!cfg.key || !cfg.region) return result;
 
-  const store = await loadCache();
+  // Una sola interrogazione per tutto il lotto, invece di una per testo.
+  const chiavi = texts.map((t) => (t.trim() ? hash(t.trim()) : ""));
+  const store = cercaTraduzioni(chiavi.filter(Boolean));
   const daTradurre: { index: number; text: string; key: string }[] = [];
+  const usate: string[] = [];
 
   texts.forEach((text, i) => {
     const clean = text.trim();
     if (!clean) return;
-    const k = hash(clean);
-    const hit = store[k];
+    const k = chiavi[i];
+    const hit = store.get(k);
     if (hit) {
       result[i] = {
-        italian: hit.italian,
-        detected: hit.detected,
-        alreadyItalian: hit.detected === "it",
+        italian: hit.italiano,
+        detected: hit.linguaRilevata,
+        alreadyItalian: hit.linguaRilevata === "it",
       };
+      usate.push(k);
     } else {
       daTradurre.push({ index: i, text: clean, key: k });
     }
   });
+
+  segnaUso(usate);
 
   if (daTradurre.length === 0) return result;
 
@@ -105,17 +94,26 @@ export async function translateToItalian(texts: string[]): Promise<(Translated |
         translations?: { text?: string }[];
       }[];
 
-      data.forEach((row, j) => {
+      const nuove = data.flatMap((row, j) => {
         const item = lotto[j];
-        if (!item) return;
+        if (!item) return [];
         const detected = row.detectedLanguage?.language ?? "";
         const italian = row.translations?.[0]?.text ?? item.text;
-        store[item.key] = { italian, detected };
         result[item.index] = { italian, detected, alreadyItalian: detected === "it" };
+        return [
+          {
+            chiave: item.key,
+            // Adesso si conserva anche il testo di partenza: sul file c'era
+            // solo la traduzione, e non si poteva più sapere da cosa venisse.
+            testoOriginale: item.text,
+            italiano: italian,
+            linguaRilevata: detected,
+          },
+        ];
       });
-    }
 
-    await persistCache();
+      salvaTraduzioni(nuove);
+    }
   } catch (e) {
     console.error("[translate] errore:", e instanceof Error ? e.message : e);
   }

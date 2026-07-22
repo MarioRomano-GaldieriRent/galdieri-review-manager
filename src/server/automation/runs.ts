@@ -1,48 +1,71 @@
-import { mkdir, readFile, writeFile } from "fs/promises";
-import path from "path";
+import "@/server/db/avvio";
+import {
+  annullaEsecuzione,
+  archiviaTutte,
+  inserisciEsecuzione,
+  leggiEsecuzioni,
+  ultimePerChiave,
+  type Scostamento,
+} from "@/server/db/esecuzioni";
+import { versioneCorrente } from "@/server/db/regole";
 import type { Esecuzione } from "./types";
 
-// Registro delle esecuzioni: serve a rivedere cosa è successo dopo aver
-// premuto "Esegui". Si conservano le ultime 100, in ordine dalla più recente.
-const DATA_DIR = path.join(process.cwd(), "data");
-const FILE = path.join(DATA_DIR, "automation-runs.json");
-const MAX = 100;
+// Registro delle esecuzioni, ora nel database.
+//
+// Due cose sono cambiate rispetto al file JSON, ed erano il motivo per cui
+// serviva un database:
+//
+//   — il taglio a 100 non c'è più. Il registro è la base delle statistiche:
+//     buttare via le righe vecchie significava buttare via le statistiche.
+//   — non si cancella più niente. "Rimetti in coda" e "svuota registro"
+//     marcano la riga invece di eliminarla: l'esecuzione è comunque avvenuta,
+//     e in modalità reale può aver pubblicato davvero una risposta. Farla
+//     sparire sarebbe riscrivere la storia.
+//
+// Le firme restano identiche a prima: nessun chiamante è stato toccato.
 
-export async function caricaEsecuzioni(): Promise<Esecuzione[]> {
+export async function caricaEsecuzioni(limite = 200): Promise<Esecuzione[]> {
   try {
-    const parsed = JSON.parse(await readFile(FILE, "utf8")) as Esecuzione[];
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
+    return leggiEsecuzioni(limite);
+  } catch (e) {
+    console.error("[esecuzioni] lettura non riuscita:", e);
     return [];
   }
 }
 
-export async function registraEsecuzione(e: Esecuzione): Promise<void> {
-  const tutte = await caricaEsecuzioni();
-  tutte.unshift(e);
-  await mkdir(DATA_DIR, { recursive: true });
-  await writeFile(FILE, JSON.stringify(tutte.slice(0, MAX), null, 2), "utf8");
+export async function registraEsecuzione(
+  e: Esecuzione,
+  scostamenti: Scostamento[] = [],
+): Promise<void> {
+  try {
+    // Aggancio alla versione di regola in vigore adesso: è ciò che permette di
+    // rileggere fra sei mesi con quale testo esatto è partito questo flusso.
+    // L'inoltro manuale non è una regola persistita e resta senza versione.
+    const versione = versioneCorrente(e.regolaId);
+    inserisciEsecuzione(e, { regolaVersioneId: versione, scostamenti });
+  } catch (errore) {
+    // Il flusso è già stato eseguito: se la registrazione fallisce si perde la
+    // traccia, non il lavoro. Sollevare qui mostrerebbe un errore all'utente
+    // per qualcosa che invece è andato a buon fine.
+    console.error("[esecuzioni] registrazione non riuscita:", errore);
+  }
 }
 
 export async function svuotaEsecuzioni(): Promise<void> {
-  await mkdir(DATA_DIR, { recursive: true });
-  await writeFile(FILE, "[]", "utf8");
+  archiviaTutte();
 }
 
-/** Cancella una singola esecuzione, così la si può rifare da capo. */
+/** Toglie una singola prova dal registro: la recensione torna in coda. */
 export async function eliminaEsecuzione(id: string): Promise<void> {
-  const tutte = await caricaEsecuzioni();
-  const rimaste = tutte.filter((e) => e.id !== id);
-  if (rimaste.length === tutte.length) return;
-  await mkdir(DATA_DIR, { recursive: true });
-  await writeFile(FILE, JSON.stringify(rimaste, null, 2), "utf8");
+  annullaEsecuzione(id);
 }
 
 /** Ultima esecuzione per ciascuna recensione. */
 export async function ultimePerRecensione(): Promise<Map<string, Esecuzione>> {
-  const m = new Map<string, Esecuzione>();
-  for (const e of await caricaEsecuzioni()) {
-    if (!m.has(e.recensione.chiave)) m.set(e.recensione.chiave, e);
+  try {
+    return ultimePerChiave();
+  } catch (e) {
+    console.error("[esecuzioni] lettura non riuscita:", e);
+    return new Map();
   }
-  return m;
 }

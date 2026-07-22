@@ -1982,3 +1982,166 @@ main.dash {
     max-height: none;
   }
 }
+
+/* ===========================================================================
+   Statistiche.
+
+   I numeri hanno sempre la loro base scritta sotto: una percentuale senza
+   denominatore non è un'informazione. Le barre delle settimane parziali sono
+   tratteggiate perché non vanno lette come le altre.
+   =========================================================================== */
+
+.stat-griglia {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.stat-tile {
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 14px 16px;
+}
+
+.stat-valore {
+  font-size: 1.7rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+}
+
+.stat-titolo {
+  font-size: 0.85rem;
+  font-weight: 600;
+  margin-top: 4px;
+}
+
+.stat-base {
+  font-size: 0.74rem;
+  color: var(--text-soft);
+  margin-top: 3px;
+  line-height: 1.35;
+}
+
+/* ------------------------------------------------------ barre settimanali */
+
+.stat-barre {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  height: 190px;
+  margin-top: 16px;
+  padding-top: 20px;
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+}
+
+.stat-barra-gruppo {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  height: 100%;
+  min-width: 34px;
+  flex: 1 1 34px;
+}
+
+.stat-barra {
+  width: 100%;
+  min-height: 3px;
+  background: var(--brand-red);
+  border-radius: 4px 4px 0 0;
+  position: relative;
+  transition: opacity 0.15s ease;
+}
+
+.stat-barra:hover {
+  opacity: 0.82;
+}
+
+/* Settimana in corso: sempre parziale, quindi visibilmente diversa. */
+.stat-barra-parziale {
+  background: repeating-linear-gradient(
+    45deg,
+    var(--brand-red),
+    var(--brand-red) 4px,
+    transparent 4px,
+    transparent 8px
+  );
+  border: 1px dashed var(--brand-red);
+}
+
+.stat-barra-valore {
+  position: absolute;
+  top: -18px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text-soft);
+}
+
+.stat-barra-etichetta {
+  font-size: 0.68rem;
+  color: var(--text-soft);
+  margin-top: 6px;
+  white-space: nowrap;
+}
+
+/* ------------------------------------------------ distribuzione punteggio */
+
+.stat-righe {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 14px 0;
+}
+
+.stat-riga {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.stat-riga-barra {
+  flex: 1;
+  height: 12px;
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.stat-riga-piena {
+  height: 100%;
+  background: var(--g-green);
+}
+
+.stat-riga-piena.s3 {
+  background: var(--g-yellow-dark);
+}
+
+.stat-riga-piena.s2,
+.stat-riga-piena.s1 {
+  background: var(--brand-red);
+}
+
+.stat-riga-valore {
+  min-width: 92px;
+  text-align: right;
+  font-size: 0.86rem;
+  font-weight: 600;
+}
+
+.stat-limiti {
+  margin: 10px 0 0;
+  padding-left: 20px;
+  line-height: 1.65;
+  color: var(--text-soft);
+}
+
+.stat-limiti strong {
+  color: var(--text);
+}

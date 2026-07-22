@@ -1,10 +1,19 @@
-import { mkdir, readFile, writeFile } from "fs/promises";
-import path from "path";
+import "@/server/db/avvio";
+import {
+  leggiEtichette,
+  leggiSegreti,
+  leggiValori,
+  scriviImpostazioni,
+} from "@/server/db/impostazioni";
 
-// Impostazioni persistite su file (niente database): data/settings.json
-// Precedenza: valore salvato qui > variabile d'ambiente del .env
-const DATA_DIR = path.join(process.cwd(), "data");
-const FILE = path.join(DATA_DIR, "settings.json");
+// Impostazioni persistite nel database locale (data/galdieri.db).
+// Precedenza invariata: valore salvato qui > variabile d'ambiente del .env.
+//
+// I valori segreti (client secret, API key, refresh token) NON stanno nel
+// database ma nel .env, e in data/segreti.json se digitati dal pannello: il
+// .db è il file che si copia e si apre per guardare le statistiche, e una
+// credenziale non deve poter comparire in un SELECT fatto per curiosità.
+// La differenza è invisibile da qui: pick() continua a funzionare identico.
 
 export type Label = {
   id: string;
@@ -107,30 +116,65 @@ export const DEFAULT_SETTINGS: Settings = {
   automation: {},
 };
 
+/** Ricompone una sezione dalle chiavi puntate: "graph.tenantId" -> graph.tenantId */
+function sezione(valori: Record<string, string>, nome: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  const prefisso = `${nome}.`;
+  for (const [chiave, valore] of Object.entries(valori)) {
+    if (chiave.startsWith(prefisso)) out[chiave.slice(prefisso.length)] = valore;
+  }
+  return out;
+}
+
 export async function loadSettings(): Promise<Settings> {
   try {
-    const raw = await readFile(FILE, "utf8");
-    const p = JSON.parse(raw) as Partial<Settings>;
+    // I segreti arrivano dal file dedicato e si sovrappongono ai valori del
+    // database, dove per costruzione non possono esistere.
+    const valori = { ...leggiValori(), ...leggiSegreti() };
+    const labels = leggiEtichette();
+
     return {
-      mailbox: typeof p.mailbox === "string" ? p.mailbox : "",
-      // Qualsiasi valore diverso da "reale" ricade su simulazione: un file
-      // corrotto o troncato non deve mai poter abilitare le scritture.
-      modo: p.modo === "reale" ? "reale" : "simulazione",
-      labels: Array.isArray(p.labels) && p.labels.length > 0 ? p.labels : DEFAULT_SETTINGS.labels,
-      graph: p.graph ?? {},
-      translator: p.translator ?? {},
-      freshdesk: p.freshdesk ?? {},
-      googleReviews: p.googleReviews ?? {},
-      automation: p.automation ?? {},
+      mailbox: valori.mailbox ?? "",
+      // Qualsiasi valore diverso da "reale" ricade su simulazione. Il CHECK
+      // sulla colonna lo rinforza, ma la lettura resta prudente comunque:
+      // sbagliare qui abilita scritture vere su Freshdesk, Google e posta.
+      modo: valori.modo === "reale" ? "reale" : "simulazione",
+      // Nessuna etichetta = quella di default, come prima: cancellare l'ultima
+      // dal pannello la fa riapparire al ricaricamento.
+      labels: labels.length > 0 ? labels : DEFAULT_SETTINGS.labels,
+      graph: sezione(valori, "graph"),
+      translator: sezione(valori, "translator"),
+      freshdesk: sezione(valori, "freshdesk"),
+      googleReviews: sezione(valori, "googleReviews"),
+      automation: sezione(valori, "automation"),
     };
-  } catch {
+  } catch (e) {
+    // Database irraggiungibile: si lavora sui default e sul .env invece di
+    // lasciare tutta l'applicazione senza impostazioni.
+    console.error("[impostazioni] lettura non riuscita:", e);
     return DEFAULT_SETTINGS;
   }
 }
 
+/**
+ * Scrive lo snapshot completo.
+ *
+ * Le action del pannello fanno tutte "carica tutto → muta un pezzo → risalva
+ * tutto", ed è quel meccanismo a far funzionare keep(), cioè "campo lasciato
+ * vuoto = tieni quello che c'era". Un aggiornamento per singolo campo
+ * cancellerebbe i segreti non ripresentati dal form.
+ */
 export async function saveSettings(settings: Settings): Promise<void> {
-  await mkdir(DATA_DIR, { recursive: true });
-  await writeFile(FILE, JSON.stringify(settings, null, 2), "utf8");
+  const valori: Record<string, string> = {
+    mailbox: settings.mailbox ?? "",
+    modo: settings.modo === "reale" ? "reale" : "simulazione",
+  };
+  for (const nome of ["graph", "translator", "freshdesk", "googleReviews", "automation"] as const) {
+    for (const [chiave, valore] of Object.entries(settings[nome] ?? {})) {
+      if (typeof valore === "string") valori[`${nome}.${chiave}`] = valore;
+    }
+  }
+  scriviImpostazioni(valori, settings.labels ?? []);
 }
 
 /** Casella effettivamente in uso: override dalle impostazioni, altrimenti .env */
