@@ -96,7 +96,9 @@ export async function salvaNodoAction(formData: FormData): Promise<void> {
 
 /** Riporta le regole a quelle iniziali, ricavate dai ticket reali. */
 export async function ripristinaRegoleAction(): Promise<void> {
-  await salvaRegole(regoleDiDefault());
+  // "ripristino" e non "interfaccia": nella cronologia un reset totale non
+  // deve somigliare a una modifica ragionata di un singolo testo.
+  await salvaRegole(regoleDiDefault(), "ripristino");
   refresh();
 }
 

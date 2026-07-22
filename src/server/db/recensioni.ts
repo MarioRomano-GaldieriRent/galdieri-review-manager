@@ -136,6 +136,26 @@ export function salvaRecensioni(
              -- flag monotoni: una risposta data non viene mai ritirata
              ha_risposta       = MAX(excluded.ha_risposta, recensioni.ha_risposta),
              risolto           = MAX(excluded.risolto, recensioni.risolto),
+             -- La riga ricostruita dal registro porta come "ricevuta" la data
+             -- dell'esecuzione, che è posteriore all'arrivo vero. Quando la
+             -- recensione viene riletta dalla posta vince la data più antica,
+             -- che è quella giusta.
+             ricevuta_il        = MIN(excluded.ricevuta_il, recensioni.ricevuta_il),
+             ricevuta_il_locale = CASE WHEN excluded.ricevuta_il < recensioni.ricevuta_il
+                                       THEN excluded.ricevuta_il_locale ELSE recensioni.ricevuta_il_locale END,
+             giorno_settimana   = CASE WHEN excluded.ricevuta_il < recensioni.ricevuta_il
+                                       THEN excluded.giorno_settimana ELSE recensioni.giorno_settimana END,
+             settimana_iso      = CASE WHEN excluded.ricevuta_il < recensioni.ricevuta_il
+                                       THEN excluded.settimana_iso ELSE recensioni.settimana_iso END,
+             -- Rileggendola per intero dalla posta, la ricostruzione dal
+             -- registro smette di essere tale: torna in coda e il testo non è
+             -- più troncato.
+             archiviata_il = CASE WHEN recensioni.motivo_archiviazione = 'ricostruita-dal-registro'
+                                  THEN NULL ELSE recensioni.archiviata_il END,
+             motivo_archiviazione = CASE WHEN recensioni.motivo_archiviazione = 'ricostruita-dal-registro'
+                                         THEN '' ELSE recensioni.motivo_archiviazione END,
+             testo_troncato = CASE WHEN nullif(excluded.testo_originale,'') IS NOT NULL
+                                   THEN 0 ELSE recensioni.testo_troncato END,
              ultima_vista_il   = excluded.ultima_vista_il,
              risposta_rilevata_il = CASE
                WHEN recensioni.risposta_rilevata_il IS NOT NULL THEN recensioni.risposta_rilevata_il
@@ -165,6 +185,7 @@ export function salvaRecensioni(
           locale,
           giornoSettimana(r.ricevutaIl),
           settimanaIso(r.ricevutaIl),
+          // (settimanaIso converte già in ora italiana al suo interno)
           ora,
           ora,
           r.haRisposta ? ora : null,

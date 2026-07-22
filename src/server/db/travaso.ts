@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, renameSync } from "node:fs";
+import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { conta, esegui, transazione, unaRiga } from "./connessione";
 import { scriviRegole } from "./regole";
@@ -80,6 +80,9 @@ function travasaImpostazioni(): void {
 
   const ora = adesso();
   let righe = 0;
+  // Segreti trovati nel vecchio settings.json: vanno messi al sicuro nel file
+  // dedicato prima di archiviare l'originale.
+  const segretiRecuperati: Record<string, string> = {};
 
   transazione(() => {
     const piatte: Record<string, string> = {};
@@ -96,12 +99,19 @@ function travasaImpostazioni(): void {
 
     for (const [chiave, valore] of Object.entries(piatte)) {
       // I segreti non entrano nel database: il trigger li rifiuterebbe
-      // comunque, ma è meglio non provarci nemmeno.
+      // comunque, ma è meglio non provarci nemmeno. Vanno però SALVATI
+      // altrove prima di archiviare il file, altrimenti una chiave inserita
+      // dal pannello e non presente nel .env sparirebbe con la migrazione e
+      // l'integrazione smetterebbe di funzionare senza spiegazione.
       const segreta = unaRiga<{ segreto: number }>(
         "SELECT segreto FROM impostazioni_catalogo WHERE chiave = ?",
         chiave,
       );
-      if (!segreta || segreta.segreto === 1) continue;
+      if (segreta?.segreto === 1) {
+        if (valore.trim()) segretiRecuperati[chiave] = valore;
+        continue;
+      }
+      if (!segreta) continue;
       esegui(
         `INSERT INTO impostazioni (chiave, valore, aggiornata_il) VALUES (?,?,?)
          ON CONFLICT(chiave) DO NOTHING`,
@@ -128,7 +138,38 @@ function travasaImpostazioni(): void {
     segnaFatto(nome, righe);
   });
 
+  // Solo DOPO che i segreti sono stati messi al sicuro si archivia il file
+  // originale: se la scrittura fallisce, settings.json resta dov'è ed è
+  // ancora possibile recuperarli a mano.
+  if (Object.keys(segretiRecuperati).length > 0) {
+    if (!salvaSegretiRecuperati(segretiRecuperati)) {
+      console.error(
+        `[travaso] ${nome} NON archiviato: i segreti che conteneva non sono stati messi al sicuro.`,
+      );
+      return;
+    }
+  }
+
   archiviaFile(nome);
+}
+
+/**
+ * Salva in data/segreti.json i segreti recuperati dal vecchio settings.json,
+ * senza sovrascrivere quelli eventualmente già presenti.
+ */
+function salvaSegretiRecuperati(segreti: Record<string, string>): boolean {
+  const percorso = path.join(DATA, "segreti.json");
+  try {
+    let esistenti: Record<string, string> = {};
+    if (existsSync(percorso)) {
+      esistenti = JSON.parse(readFileSync(percorso, "utf8")) as Record<string, string>;
+    }
+    writeFileSync(percorso, JSON.stringify({ ...segreti, ...esistenti }, null, 2), "utf8");
+    return true;
+  } catch (e) {
+    console.error("[travaso] segreti non messi al sicuro:", e);
+    return false;
+  }
 }
 
 // ---------------------------------------------------------------- le regole

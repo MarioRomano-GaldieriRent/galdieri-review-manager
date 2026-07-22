@@ -168,10 +168,14 @@ export async function caricaRecensioni(
   // Archiviazione: da qui in poi la recensione esiste anche quando uscirà
   // dalle ultime 50 email. È fuori dal percorso critico — se fallisce, lo
   // dice in console e le pagine funzionano lo stesso.
+  // Gli scarti si contano sulla stessa unità degli interpretati, cioè le
+  // CONVERSAZIONI: sottrarre le conversazioni dalle email darebbe come
+  // "non interpretabile" ogni risposta dentro un flusso già riconosciuto.
+  const conversazioni = new Set(messaggi.map((m) => m.conversationId || m.id)).size;
   salvaRecensioni(recensioni, label.id, {
     letti: messaggi.length,
     interpretati,
-    scartati: Math.max(0, messaggi.length - interpretati),
+    scartati: Math.max(0, conversazioni - interpretati),
   });
 
   return { recensioni, analizzate: messaggi.length };

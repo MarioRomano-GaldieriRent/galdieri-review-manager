@@ -141,7 +141,11 @@ export async function loadSettings(): Promise<Settings> {
       modo: valori.modo === "reale" ? "reale" : "simulazione",
       // Nessuna etichetta = quella di default, come prima: cancellare l'ultima
       // dal pannello la fa riapparire al ricaricamento.
-      labels: labels.length > 0 ? labels : DEFAULT_SETTINGS.labels,
+      //
+      // COPIA, mai il riferimento: le action del pannello mutano l'oggetto che
+      // ricevono prima di risalvarlo, e passando la costante si finirebbe per
+      // modificare il default per tutta la vita del processo.
+      labels: labels.length > 0 ? labels : DEFAULT_SETTINGS.labels.map((l) => ({ ...l })),
       graph: sezione(valori, "graph"),
       translator: sezione(valori, "translator"),
       freshdesk: sezione(valori, "freshdesk"),
@@ -151,8 +155,14 @@ export async function loadSettings(): Promise<Settings> {
   } catch (e) {
     // Database irraggiungibile: si lavora sui default e sul .env invece di
     // lasciare tutta l'applicazione senza impostazioni.
+    //
+    // structuredClone e non la costante: se il database resta irraggiungibile
+    // ogni lettura ripassa di qui, e un'action che avesse mutato l'oggetto
+    // ricevuto — per esempio scrivendo modo = "reale" — lascerebbe quel valore
+    // incollato al ripiego, facendo passare scritture vere senza che da
+    // nessuna parte risulti la modalità reale.
     console.error("[impostazioni] lettura non riuscita:", e);
-    return DEFAULT_SETTINGS;
+    return structuredClone(DEFAULT_SETTINGS);
   }
 }
 

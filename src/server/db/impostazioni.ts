@@ -76,8 +76,16 @@ export function scriviImpostazioni(
   const segreti: Record<string, string> = {};
   const normali: Record<string, string> = {};
   for (const [chiave, valore] of Object.entries(valori)) {
-    if (eSegreta(chiave)) segreti[chiave] = valore;
-    else normali[chiave] = valore;
+    if (!eSegreta(chiave)) {
+      normali[chiave] = valore;
+      continue;
+    }
+    // Su un campo segreto la stringa vuota significa "non toccarlo" — è
+    // quello che dice il pannello con «lascia vuoto per non cambiarlo».
+    // Trattarla come un azzeramento scriverebbe nello storico un segreto
+    // "svuotato" che nessuno ha toccato, ogni volta che si salva la sezione
+    // per cambiare tutt'altro.
+    if (valore.trim()) segreti[chiave] = valore;
   }
 
   transazione(() => {

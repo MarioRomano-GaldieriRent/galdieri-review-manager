@@ -31,11 +31,17 @@ export function copertura(): Copertura {
   const estremi = unaRiga<{ prima: string | null; ultima: string | null }>(
     "SELECT MIN(prima_vista_il) AS prima, MAX(ultima_vista_il) AS ultima FROM recensioni",
   );
-  const sync = unaRiga<{ n: number; letti: number; scartati: number; giorni: number }>(
-    `SELECT COUNT(*) AS n, coalesce(SUM(messaggi_letti),0) AS letti,
-            coalesce(SUM(messaggi_scartati),0) AS scartati,
-            COUNT(DISTINCT substr(iniziata_il,1,10)) AS giorni
+  const sync = unaRiga<{ n: number; giorni: number }>(
+    `SELECT COUNT(*) AS n, COUNT(DISTINCT substr(iniziata_il,1,10)) AS giorni
        FROM sincronizzazioni`,
+  );
+  // Le email lette NON si sommano fra le passate: ogni caricamento di pagina
+  // rilegge le stesse 50 email, e sommarle direbbe "2000 email lette" dopo
+  // quaranta aperture della dashboard. Vale l'ultima passata, che è una
+  // fotografia della finestra corrente.
+  const ultimaPassata = unaRiga<{ letti: number; scartati: number }>(
+    `SELECT messaggi_letti AS letti, messaggi_scartati AS scartati
+       FROM sincronizzazioni ORDER BY id DESC LIMIT 1`,
   );
 
   const prima = estremi?.prima ?? null;
@@ -56,8 +62,8 @@ export function copertura(): Copertura {
     archiviate: conta("SELECT COUNT(*) FROM recensioni WHERE archiviata_il IS NOT NULL"),
     ricostruite: conta("SELECT COUNT(*) FROM recensioni WHERE testo_troncato = 1"),
     sincronizzazioni: sync?.n ?? 0,
-    messaggiLetti: sync?.letti ?? 0,
-    messaggiScartati: sync?.scartati ?? 0,
+    messaggiLetti: ultimaPassata?.letti ?? 0,
+    messaggiScartati: ultimaPassata?.scartati ?? 0,
     senzaPunteggio: conta("SELECT COUNT(*) FROM recensioni WHERE stelle IS NULL"),
     senzaSede: conta("SELECT COUNT(*) FROM recensioni WHERE sede_id = 0"),
     possibiliDoppioni: conta(
@@ -197,6 +203,7 @@ export type Lavorazione = {
   flussiSimulati: number;
   flussiReali: number;
   pubblicateDavvero: number;
+  scrittureRiuscite: number;
   conErrore: number;
   riscritture: number;
   copertePerRegola: { regola: string; quante: number }[];
@@ -213,14 +220,25 @@ export function lavorazione(): Lavorazione {
     flussiReali: conta(
       "SELECT COUNT(*) FROM esecuzioni WHERE modo = 'reale' AND annullata_il IS NULL",
     ),
-    // Pubblicata davvero = un nodo di scrittura andato a buon fine in modalità
-    // reale. In simulazione questo numero è zero, e deve restare zero: è la
-    // differenza fra "il flusso ha girato" e "il cliente ha visto la risposta".
+    // Pubblicata davvero = la RISPOSTA PUBBLICA al cliente è andata a buon
+    // fine. Solo google.rispondi: un inoltro a Cherubina o una PUT su
+    // Freshdesk sono scritture riuscite, ma il cliente non vede niente.
+    // Contarle qui trasformerebbe ogni escalation in una "risposta
+    // pubblicata", che è esattamente la confusione che questo numero deve
+    // impedire.
     pubblicateDavvero: conta(
       `SELECT COUNT(DISTINCT n.esecuzione_id) FROM esiti_nodi n
          JOIN esecuzioni e ON e.id = n.esecuzione_id
-        WHERE n.stato = 'ok' AND n.chiamata_url IS NOT NULL
+        WHERE n.stato = 'ok' AND n.tipo = 'google.rispondi'
           AND e.modo = 'reale' AND e.annullata_il IS NULL`,
+    ),
+    // Scritture riuscite di qualunque tipo: utile, ma è un'altra domanda e
+    // porta un'altra etichetta.
+    scrittureRiuscite: conta(
+      `SELECT COUNT(DISTINCT n.esecuzione_id) FROM esiti_nodi n
+         JOIN esecuzioni e ON e.id = n.esecuzione_id
+         JOIN tipi_azione t ON t.tipo = n.tipo AND t.scrittura = 1
+        WHERE n.stato = 'ok' AND e.modo = 'reale' AND e.annullata_il IS NULL`,
     ),
     conErrore: conta("SELECT COUNT(*) FROM esecuzioni WHERE esito = 'errore' AND annullata_il IS NULL"),
     riscritture: conta(
@@ -231,19 +249,25 @@ export function lavorazione(): Lavorazione {
         WHERE annullata_il IS NULL GROUP BY regola_nome ORDER BY quante DESC`,
     ),
     // freshdesk.trovaTicket è una GET: gira davvero anche in simulazione,
-    // quindi questi due numeri sono affidabili da subito.
+    // quindi questi due numeri sono affidabili da subito. Le esecuzioni
+    // annullate restano fuori, come in tutti gli altri numeri della sezione:
+    // altrimenti una prova rimessa in coda e rifatta conterebbe due volte.
     ticketTrovati: conta(
-      `SELECT COUNT(*) FROM esiti_nodi WHERE tipo = 'freshdesk.trovaTicket'
-        AND messaggio LIKE 'Ticket #%'`,
+      `SELECT COUNT(*) FROM esiti_nodi n JOIN esecuzioni e ON e.id = n.esecuzione_id
+        WHERE n.tipo = 'freshdesk.trovaTicket' AND n.messaggio LIKE 'Ticket #%'
+          AND e.annullata_il IS NULL`,
     ),
     ticketNonTrovati: conta(
-      `SELECT COUNT(*) FROM esiti_nodi WHERE tipo = 'freshdesk.trovaTicket'
-        AND messaggio LIKE 'Nessun ticket%'`,
+      `SELECT COUNT(*) FROM esiti_nodi n JOIN esecuzioni e ON e.id = n.esecuzione_id
+        WHERE n.tipo = 'freshdesk.trovaTicket' AND n.messaggio LIKE 'Nessun ticket%'
+          AND e.annullata_il IS NULL`,
     ),
     erroriPerNodo: tutteLeRighe<{ titolo: string; quanti: number }>(
       `SELECT t.titolo, COUNT(*) AS quanti FROM esiti_nodi n
          JOIN tipi_azione t ON t.tipo = n.tipo
-        WHERE n.stato = 'errore' GROUP BY n.tipo ORDER BY quanti DESC`,
+         JOIN esecuzioni e ON e.id = n.esecuzione_id
+        WHERE n.stato = 'errore' AND e.annullata_il IS NULL
+        GROUP BY n.tipo ORDER BY quanti DESC`,
     ),
   };
 }

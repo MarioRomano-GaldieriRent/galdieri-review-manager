@@ -49,7 +49,12 @@ export function aOraItaliana(isoUtc: string): string {
  * occasioni di divergere.
  */
 export function settimanaIso(iso: string): string {
-  const d = new Date(iso);
+  // Si converte prima in ora italiana, come fa giornoSettimana(): senza,
+  // una recensione arrivata domenica alle 23:30 UTC finirebbe con data_locale
+  // di lunedì e settimana ISO della domenica — due colonne della stessa riga
+  // che si contraddicono, e una barra del grafico nella settimana sbagliata.
+  const locale = aOraItaliana(iso);
+  const d = new Date(locale ? `${locale}Z` : iso);
   if (Number.isNaN(d.getTime())) return "";
 
   // Si ragiona in UTC su una data "spostata" al giovedì della sua settimana:

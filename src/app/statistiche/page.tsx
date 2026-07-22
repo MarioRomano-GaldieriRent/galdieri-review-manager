@@ -176,8 +176,13 @@ export default async function StatistichePage() {
                   {"★".repeat(n)}
                   <span className="stars-empty">{"★".repeat(5 - n)}</span>
                 </span>
+                {/* Sotto soglia la barra non si disegna: nascondere il numero
+                    "67%" ma lasciare una barra che occupa due terzi della riga
+                    comunica esattamente la percentuale che si voleva tacere. */}
                 <div className="stat-riga-barra">
-                  <div className={`stat-riga-piena s${n}`} style={{ width: `${quota}%` }} />
+                  {p.base >= SOGLIA_SEDE && (
+                    <div className={`stat-riga-piena s${n}`} style={{ width: `${quota}%` }} />
+                  )}
                 </div>
                 <span className="stat-riga-valore">
                   {quante}
@@ -278,10 +283,22 @@ export default async function StatistichePage() {
         <div className="stat-griglia">
           <Riquadro titolo="Flussi simulati" valore={lav.flussiSimulati} base="nessuna scrittura verso l'esterno" />
           <Riquadro titolo="Flussi eseguiti davvero" valore={lav.flussiReali} base="in modalità reale" />
+          {/* La didascalia segue il VALORE, non la modalità di adesso: dopo
+              una mattinata in reale e un ritorno alla simulazione, un numero
+              diverso da zero sotto la scritta «zero» è solo confusione. */}
           <Riquadro
-            titolo="Risposte pubblicate"
+            titolo="Risposte pubblicate su Google"
             valore={lav.pubblicateDavvero}
-            base={simulazione ? "zero: in simulazione non parte niente" : "scritture andate a buon fine"}
+            base={
+              lav.pubblicateDavvero === 0 && simulazione
+                ? "zero: in simulazione non parte niente"
+                : "solo risposte pubbliche al cliente, non inoltri né ticket"
+            }
+          />
+          <Riquadro
+            titolo="Altre scritture riuscite"
+            valore={lav.scrittureRiuscite}
+            base="inoltri, ticket e risposte email in modalità reale"
           />
           <Riquadro titolo="Testi riscritti a mano" valore={lav.riscritture} base="misura la qualità delle regole" />
           <Riquadro titolo="Flussi con errore" valore={lav.conErrore} />
