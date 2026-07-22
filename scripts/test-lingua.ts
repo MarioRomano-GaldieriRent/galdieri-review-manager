@@ -63,16 +63,19 @@ async function main() {
 
   const cfg = await resolveGraph();
   const mbx = await activeMailbox();
-  const tk = await fetchVero(`https://login.microsoftonline.com/${cfg.tenantId}/oauth2/v2.0/token`, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      client_id: cfg.clientId,
-      client_secret: cfg.clientSecret,
-      scope: "https://graph.microsoft.com/.default",
-      grant_type: "client_credentials",
-    }),
-  });
+  const tk = await fetchVero(
+    `https://login.microsoftonline.com/${cfg.tenantId}/oauth2/v2.0/token`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        client_id: cfg.clientId,
+        client_secret: cfg.clientSecret,
+        scope: "https://graph.microsoft.com/.default",
+        grant_type: "client_credentials",
+      }),
+    },
+  );
   const token = ((await tk.json()) as { access_token: string }).access_token;
   const H = { Authorization: `Bearer ${token}` };
   const base = `${cfg.graphUrl}/users/${encodeURIComponent(mbx)}`;

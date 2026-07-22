@@ -74,9 +74,8 @@ function settimana(d: Date): string {
 async function main() {
   const mesi = Number(process.argv[2]) || 5;
   const { activeMailbox, resolveGraph } = await import("@/server/settings");
-  const { htmlToText, parseReview, splitTranslation, locationFromSubject } = await import(
-    "@/server/reviews/parse"
-  );
+  const { htmlToText, parseReview, splitTranslation, locationFromSubject } =
+    await import("@/server/reviews/parse");
 
   const cfg = await resolveGraph();
   const mailbox = await activeMailbox();
@@ -128,8 +127,7 @@ async function main() {
   // inoltri) citano la recensione ma non hanno i campi.
   const candidate = tutti.filter(
     (m) =>
-      /recensione/i.test(m.subject ?? "") &&
-      /zapier/i.test(m.from?.emailAddress?.address ?? ""),
+      /recensione/i.test(m.subject ?? "") && /zapier/i.test(m.from?.emailAddress?.address ?? ""),
   );
 
   // Una sola email per conversazione: la più vecchia, cioè l'originale.
@@ -192,9 +190,7 @@ async function main() {
   for (const m of conCorpo) {
     if (!m?.body?.content) continue;
     const testo =
-      m.body.contentType?.toLowerCase() === "html"
-        ? htmlToText(m.body.content)
-        : m.body.content;
+      m.body.contentType?.toLowerCase() === "html" ? htmlToText(m.body.content) : m.body.content;
     const p = parseReview(testo);
     if (!p) {
       nonInterpretabili++;
@@ -244,12 +240,22 @@ async function main() {
   }
 
   console.log("\nI DUE CASI CHE INTERESSANO");
-  console.log(`  ${"".padEnd(30)} ${"totale".padStart(6)} ${"quota".padStart(6)} ${"a settimana".padStart(11)}`);
+  console.log(
+    `  ${"".padEnd(30)} ${"totale".padStart(6)} ${"quota".padStart(6)} ${"a settimana".padStart(11)}`,
+  );
   console.log(`  ${"-".repeat(30)} ${"-".repeat(6)} ${"-".repeat(6)} ${"-".repeat(11)}`);
-  console.log(`  ${"5 stelle SENZA commento".padEnd(30)} ${String(cinqueSenza.length).padStart(6)} ${pct(cinqueSenza.length)} ${set(cinqueSenza.length)}`);
-  console.log(`  ${"5 stelle con commento".padEnd(30)} ${String(cinqueCon.length).padStart(6)} ${pct(cinqueCon.length)} ${set(cinqueCon.length)}`);
-  console.log(`  ${"1 e 2 stelle".padEnd(30)} ${String(negative.length).padStart(6)} ${pct(negative.length)} ${set(negative.length)}`);
-  console.log(`  ${"tutte le recensioni".padEnd(30)} ${String(tot).padStart(6)} ${pct(tot)} ${set(tot)}`);
+  console.log(
+    `  ${"5 stelle SENZA commento".padEnd(30)} ${String(cinqueSenza.length).padStart(6)} ${pct(cinqueSenza.length)} ${set(cinqueSenza.length)}`,
+  );
+  console.log(
+    `  ${"5 stelle con commento".padEnd(30)} ${String(cinqueCon.length).padStart(6)} ${pct(cinqueCon.length)} ${set(cinqueCon.length)}`,
+  );
+  console.log(
+    `  ${"1 e 2 stelle".padEnd(30)} ${String(negative.length).padStart(6)} ${pct(negative.length)} ${set(negative.length)}`,
+  );
+  console.log(
+    `  ${"tutte le recensioni".padEnd(30)} ${String(tot).padStart(6)} ${pct(tot)} ${set(tot)}`,
+  );
 
   // Andamento settimanale
   const perSettimana = new Map<string, { tot: number; cinqueSenza: number; neg: number }>();
@@ -277,8 +283,12 @@ async function main() {
   if (complete.length >= 2) {
     const m = (f: (v: (typeof complete)[0]) => number) =>
       (complete.reduce((s, v) => s + f(v), 0) / complete.length).toFixed(1);
-    console.log(`\n  media su ${complete.length} settimane intere (escluse prima e ultima, parziali):`);
-    console.log(`    totale ${m((v) => v.tot)} · 5★ senza commento ${m((v) => v.cinqueSenza)} · 1-2★ ${m((v) => v.neg)}`);
+    console.log(
+      `\n  media su ${complete.length} settimane intere (escluse prima e ultima, parziali):`,
+    );
+    console.log(
+      `    totale ${m((v) => v.tot)} · 5★ senza commento ${m((v) => v.cinqueSenza)} · 1-2★ ${m((v) => v.neg)}`,
+    );
   }
 
   console.log(`\nRichieste HTTP di lettura: ${letture}. Scritture: 0 (bloccate per costruzione).`);

@@ -83,7 +83,9 @@ async function main() {
     for (const m of j.value ?? []) {
       const from = m.from?.emailAddress?.address ?? "?";
       const stato = m.isRead === false ? "NON LETTA" : "letta";
-      console.log(`   • [${stato}] ${String(m.receivedDateTime).slice(0, 16)} | ${from} | ${m.subject}`);
+      console.log(
+        `   • [${stato}] ${String(m.receivedDateTime).slice(0, 16)} | ${from} | ${m.subject}`,
+      );
     }
 
     // Quante non lette ci sono in totale nella Posta in arrivo?

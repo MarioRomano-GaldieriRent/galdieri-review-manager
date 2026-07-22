@@ -38,7 +38,7 @@ let tentativiBloccati = 0;
 
 const fetchVero = globalThis.fetch;
 globalThis.fetch = (async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
-  const url = typeof input === "string" ? input : (input as Request).url ?? String(input);
+  const url = typeof input === "string" ? input : ((input as Request).url ?? String(input));
   const metodo = (init?.method ?? "GET").toUpperCase();
   chiamate.push({ metodo, url });
 
@@ -101,7 +101,8 @@ async function main() {
   console.log(`Regole attive con un caso reale: ${campione.size} su ${attive.length}`);
 
   const scoperte = attive.filter((r) => !campione.has(r.id)).map((r) => r.nome);
-  if (scoperte.length) console.log(`Attive ma senza casi nelle ultime email: ${scoperte.join(", ")}`);
+  if (scoperte.length)
+    console.log(`Attive ma senza casi nelle ultime email: ${scoperte.join(", ")}`);
   if (senzaRegola.length) {
     console.log(
       `Recensioni fuori dalla coda: ${senzaRegola.length} ` +
@@ -116,7 +117,9 @@ async function main() {
     const regola = regole.find((x) => x.id === regolaId)!;
     console.log("=".repeat(78));
     console.log(`REGOLA     ${regola.nome}`);
-    console.log(`RECENSIONE ${rec.nome} — ${rec.stelle}★ — ${rec.sede} → tag "${tagSede(rec.sede)}"`);
+    console.log(
+      `RECENSIONE ${rec.nome} — ${rec.stelle}★ — ${rec.sede} → tag "${tagSede(rec.sede)}"`,
+    );
     console.log(`TESTO      ${testoRecensione(rec).slice(0, 90) || "(nessun commento)"}`);
     console.log("-".repeat(78));
 
