@@ -18,6 +18,7 @@ export const TIPI_AZIONE = [
   "freshdesk.assegna",
   "freshdesk.stato",
   "google.rispondi",
+  "email.rispondi",
   "email.inoltra",
   "sistema.attendiRisposta",
 ] as const;
@@ -102,6 +103,21 @@ export const CATALOGO: Record<TipoAzione, DescrizioneAzione> = {
         multilinea: true,
         aiuto: "Segnaposto disponibili: {nome} {sede} {stelle}",
       },
+    ],
+  },
+  "email.rispondi": {
+    servizio: "email",
+    titolo: "Rispondi all'email",
+    descrizione:
+      "Risponde all'email della recensione scrivendo a Customer Care. È questo passaggio che APRE il ticket su Freshdesk: nei dati reali il «Ticket Creato» arriva circa 6 secondi dopo la risposta. Va quindi prima dei nodi Freshdesk.",
+    scrittura: true,
+    parametri: [
+      {
+        nome: "a",
+        etichetta: "Destinatario",
+        aiuto: "Vuoto = segue il Reply-To dell'email (customer.care@galdierirent.it)",
+      },
+      { nome: "testo", etichetta: "Testo della risposta", multilinea: true },
     ],
   },
   "email.inoltra": {

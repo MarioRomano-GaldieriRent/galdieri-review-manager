@@ -289,6 +289,44 @@ export async function setReadState(id: string, isRead: boolean, mailbox?: string
 }
 
 /**
+ * Risponde a un messaggio.
+ *
+ * Senza destinatari espliciti la risposta segue l'intestazione Reply-To del
+ * messaggio originale: le email di Zapier hanno Reply-To
+ * customer.care@galdierirent.it, ed è lì che finisce la risposta di Stefania.
+ *
+ * ATTENZIONE: invia posta reale. Passa dal connettore in
+ * automation/connectors.ts, che prima verifica la modalità operativa.
+ */
+export async function replyToMessage(
+  id: string,
+  commento: string,
+  destinatari: string[] = [],
+  mailbox?: string,
+): Promise<void> {
+  const { token, base } = await ctx(mailbox);
+
+  const corpo: Record<string, unknown> = { comment: commento };
+  if (destinatari.length > 0) {
+    corpo.message = {
+      toRecipients: destinatari.map((address) => ({ emailAddress: { address } })),
+    };
+  }
+
+  const res = await fetch(`${base}/messages/${encodeURIComponent(id)}/reply`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify(corpo),
+    cache: "no-store",
+  });
+
+  if (!res.ok) {
+    const json = (await res.json().catch(() => ({}))) as { error?: { message?: string } };
+    throw new Error(`Graph ${res.status}: ${json.error?.message ?? "risposta non inviata"}`);
+  }
+}
+
+/**
  * Inoltra un messaggio a uno o più destinatari.
  *
  * ATTENZIONE: invia posta reale. Non va mai chiamata direttamente da una

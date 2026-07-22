@@ -1,5 +1,5 @@
-import { forwardMessage } from "@/server/graph/client";
-import { cercaTicketPerOggetto, STATO, type FdTicket } from "@/server/integrations/freshdesk";
+import { forwardMessage, replyToMessage } from "@/server/graph/client";
+import { cercaTicketPerRecensione, STATO, type FdTicket } from "@/server/integrations/freshdesk";
 import { rispondiARecensione } from "@/server/integrations/googleReviews";
 import {
   activeMailbox,
@@ -53,17 +53,42 @@ export function interpola(testo: string, r: Recensione): string {
 async function trovaTicket(ctx: Contesto): Promise<RisultatoNodo> {
   // Questa è una GET: gira davvero anche in simulazione, ed è ciò che permette
   // di dire con precisione quale ticket sarebbe stato toccato.
-  const t = await cercaTicketPerOggetto(ctx.recensione.oggetto, ctx.recensione.ricevutaIl);
-  if (!t) {
+  //
+  // In modalità reale il nodo precedente ha appena risposto all'email, e il
+  // ticket nasce da quella risposta: nei dati reali ci mette circa 6 secondi.
+  // Cercarlo subito darebbe "non trovato", quindi si riprova per un po'.
+  // In simulazione la risposta non è partita, quindi non c'è nulla da
+  // aspettare: si guarda una volta sola.
+  const attendiCreazione = await scritturaConsentita();
+  const tentativi = attendiCreazione ? 5 : 1;
+
+  let esito: Awaited<ReturnType<typeof cercaTicketPerRecensione>> = {
+    ticket: null,
+    motivo: "",
+  };
+  for (let i = 0; i < tentativi; i++) {
+    if (i > 0) await new Promise((ok) => setTimeout(ok, 5000));
+    esito = await cercaTicketPerRecensione(
+      ctx.recensione.oggetto,
+      ctx.recensione.ricevutaIl,
+      ctx.recensione.nome,
+    );
+    if (esito.ticket) break;
+  }
+
+  if (!esito.ticket) {
+    const attesa = attendiCreazione ? ` dopo ${(tentativi - 1) * 5} secondi di attesa` : "";
     return {
-      messaggio: `Nessun ticket trovato per «${ctx.recensione.oggetto}». I nodi successivi su Freshdesk verranno saltati.`,
+      messaggio: `Nessun ticket agganciato${attesa}: ${esito.motivo}. I nodi Freshdesk verranno saltati — meglio fermarsi che lavorare il ticket di un altro cliente.`,
       chiamata: null,
       eseguita: false,
       ticket: null,
     };
   }
+
+  const t = esito.ticket;
   return {
-    messaggio: `Ticket #${t.id} — stato «${STATO[t.status] ?? t.status}», tag [${t.tags.join(", ") || "nessuno"}]`,
+    messaggio: `Ticket #${t.id} — stato «${STATO[t.status] ?? t.status}», tag [${t.tags.join(", ") || "nessuno"}] · ${esito.motivo}`,
     chiamata: null,
     eseguita: false,
     ticket: t,
@@ -208,6 +233,45 @@ async function rispondiSuGoogle(a: Azione, ctx: Contesto): Promise<RisultatoNodo
   };
 }
 
+/**
+ * Risponde all'email della recensione. Nel flusso reale è questo passaggio ad
+ * aprire il ticket su Freshdesk, non una chiamata all'API di ticketing.
+ */
+async function rispondiEmail(a: Azione, ctx: Contesto): Promise<RisultatoNodo> {
+  const testo = interpola(a.parametri.testo ?? "", ctx.recensione);
+  const destinatario = (a.parametri.a ?? "").trim();
+  const mailbox = await activeMailbox();
+
+  const corpo: Record<string, unknown> = { comment: testo };
+  if (destinatario) {
+    corpo.message = { toRecipients: [{ emailAddress: { address: destinatario } }] };
+  }
+
+  const chiamata = {
+    metodo: "POST",
+    url: `https://graph.microsoft.com/v1.0/users/${mailbox}/messages/${ctx.recensione.messaggioId}/reply`,
+    corpo: JSON.stringify(corpo, null, 2),
+  };
+
+  const dove = destinatario || "il Reply-To dell'email (customer.care)";
+
+  if (!(await scritturaConsentita())) {
+    return {
+      messaggio: `Risposta «${testo}» a ${dove} — non inviata (modalità simulazione). Nel flusso reale è questo passaggio ad aprire il ticket.`,
+      chiamata,
+      eseguita: false,
+    };
+  }
+
+  await replyToMessage(
+    ctx.recensione.messaggioId,
+    testo,
+    destinatario ? [destinatario] : [],
+    mailbox,
+  );
+  return { messaggio: `Risposta «${testo}» inviata a ${dove}.`, chiamata, eseguita: true };
+}
+
 async function inoltraEmail(a: Azione, ctx: Contesto): Promise<RisultatoNodo> {
   const a_ = a.parametri.a || ctx.automation.emailEscalation;
   const testo = interpola(a.parametri.testo || ctx.automation.testoEscalation, ctx.recensione);
@@ -251,6 +315,8 @@ export async function eseguiAzione(a: Azione, ctx: Contesto): Promise<RisultatoN
       return cambiaStato(a, ctx);
     case "google.rispondi":
       return rispondiSuGoogle(a, ctx);
+    case "email.rispondi":
+      return rispondiEmail(a, ctx);
     case "email.inoltra":
       return inoltraEmail(a, ctx);
     case "sistema.attendiRisposta":

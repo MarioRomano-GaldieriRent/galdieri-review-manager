@@ -48,18 +48,26 @@ export function regoleDiDefault(): Regola[] {
       attiva: true,
       condizione: { stelle: [5], testo: "senza" },
       azioni: [
-        azione("a1", "freshdesk.trovaTicket"),
-        azione("a2", "freshdesk.classifica", {
+        // Primo passaggio, ed è quello che apre il ticket: Stefania risponde
+        // "Grazie." all'email, il messaggio arriva a customer.care e Freshdesk
+        // genera il ticket. Verificato sulla conversazione di Nadia Mari:
+        //   20/07 10:35:06  Stefania → customer.care  "Grazie."
+        //   20/07 10:35:12  ← "Ticket Creato"
+        // Destinatario lasciato vuoto: si segue il Reply-To dell'email, che
+        // Zapier imposta già a customer.care@galdierirent.it.
+        azione("a1", "email.rispondi", { a: "", testo: "Grazie." }),
+        azione("a2", "freshdesk.trovaTicket"),
+        azione("a3", "freshdesk.classifica", {
           tipo: TIPO_TICKET_GMB,
           specifica1: "positiva",
           specifica2: "5 stelle",
         }),
-        azione("a3", "freshdesk.tag", { tag: "{sede}" }),
-        azione("a4", "freshdesk.assegna", { agenteId: AGENTE_MARKETING }),
+        azione("a4", "freshdesk.tag", { tag: "{sede}" }),
+        azione("a5", "freshdesk.assegna", { agenteId: AGENTE_MARKETING }),
         // Recensione senza commento: si risponde solo "Grazie.", niente di più.
         // Non c'è nulla nel merito a cui replicare.
-        azione("a5", "google.rispondi", { testo: "Grazie." }),
-        azione("a6", "freshdesk.stato", { stato: "4" }),
+        azione("a6", "google.rispondi", { testo: "Grazie." }),
+        azione("a7", "freshdesk.stato", { stato: "4" }),
       ],
     },
     {

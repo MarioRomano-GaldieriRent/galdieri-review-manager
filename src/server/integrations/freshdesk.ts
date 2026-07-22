@@ -171,35 +171,93 @@ function normalizzaOggetto(s: string): string {
     .toLowerCase();
 }
 
+function soloTesto(html: string): string {
+  return html
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
 /**
- * Cerca il ticket nato da una recensione. La ricerca di Freshdesk non copre
- * l'oggetto, quindi si scorrono i ticket recenti e si confronta l'oggetto
- * normalizzato, preferendo quelli creati vicino alla data dell'email.
+ * Cerca il ticket nato da una recensione.
  *
- * Sola lettura: è una GET, non modifica nulla.
+ * L'oggetto da solo NON basta a identificarlo: ogni recensione della stessa
+ * sede produce un oggetto identico ("NUOVA RECENSIONE GOOGLE Point Cagliari"),
+ * quindi confrontare solo l'oggetto aggancia il ticket di un altro cliente.
+ * Servono tre condizioni insieme:
+ *
+ *   1. stesso oggetto, tolti i prefissi di risposta/inoltro;
+ *   2. il ticket non può essere nato prima dell'email che lo ha generato
+ *      (si concede qualche minuto di tolleranza sugli orologi);
+ *   3. il nome di chi ha scritto la recensione deve comparire nel corpo.
+ *
+ * Se nessun ticket soddisfa tutte e tre, si restituisce null con il motivo:
+ * meglio saltare i passaggi su Freshdesk che lavorare il ticket sbagliato.
+ *
+ * Sola lettura: solo GET, non modifica nulla.
  */
-export async function cercaTicketPerOggetto(
+export async function cercaTicketPerRecensione(
   oggetto: string,
   ricevutaIl: string,
-  pagine = 3,
-): Promise<FdTicket | null> {
+  nomeRecensore: string,
+  opts: { pagine?: number; candidatiMax?: number } = {},
+): Promise<{ ticket: FdTicket | null; motivo: string }> {
   const atteso = normalizzaOggetto(oggetto);
-  if (!atteso) return null;
-  const riferimento = new Date(ricevutaIl).getTime();
+  if (!atteso) return { ticket: null, motivo: "oggetto vuoto" };
 
-  let migliore: { t: FdTicket; distanza: number } | null = null;
+  // Tolleranza: il ticket nasce dalla risposta all'email, quindi dopo di essa.
+  const soglia = new Date(ricevutaIl).getTime() - 5 * 60 * 1000;
+  const nome = nomeRecensore.trim().toLowerCase();
 
-  for (let page = 1; page <= pagine; page++) {
+  const candidati: { t: FdTicket; distanza: number }[] = [];
+  let stessoOggetto = 0;
+
+  for (let page = 1; page <= (opts.pagine ?? 3); page++) {
     const { tickets, hasMore } = await listTickets({ page, perPage: 100 });
     for (const t of tickets) {
       if (normalizzaOggetto(t.subject) !== atteso) continue;
-      const distanza = Math.abs(new Date(t.createdAt).getTime() - riferimento);
-      if (!migliore || distanza < migliore.distanza) migliore = { t, distanza };
+      stessoOggetto++;
+      const creato = new Date(t.createdAt).getTime();
+      if (creato < soglia) continue;
+      candidati.push({ t, distanza: creato - soglia });
     }
     if (!hasMore) break;
   }
 
-  return migliore?.t ?? null;
+  if (candidati.length === 0) {
+    return {
+      ticket: null,
+      motivo: stessoOggetto
+        ? `${stessoOggetto} ticket con lo stesso oggetto, ma tutti precedenti all'email: nessuno nato da questa recensione`
+        : "nessun ticket con questo oggetto",
+    };
+  }
+
+  // Dal più vicino nel tempo; il corpo si legge solo per i primi candidati.
+  candidati.sort((a, b) => a.distanza - b.distanza);
+  const daControllare = candidati.slice(0, opts.candidatiMax ?? 5);
+
+  if (!nome) {
+    return {
+      ticket: daControllare[0].t,
+      motivo: "nome del recensore non disponibile: agganciato il ticket più vicino nel tempo",
+    };
+  }
+
+  for (const { t } of daControllare) {
+    const completo = await getTicket(t.id);
+    if (soloTesto(completo.descriptionHtml).includes(nome)) {
+      return { ticket: completo, motivo: `nome «${nomeRecensore}» trovato nel corpo` };
+    }
+  }
+
+  return {
+    ticket: null,
+    motivo: `${daControllare.length} ticket con oggetto e data compatibili, ma in nessuno compare «${nomeRecensore}»`,
+  };
 }
 
 // Elenco agenti in cache: serve solo a mostrare un nome al posto di un id.
