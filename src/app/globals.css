@@ -64,13 +64,7 @@
 :root {
   --radius: 16px;
   --radius-sm: 10px;
-  --rainbow: linear-gradient(
-    90deg,
-    #4285f4 0%,
-    #ea4335 33%,
-    #fbbc04 66%,
-    #34a853 100%
-  );
+  --rainbow: linear-gradient(90deg, #4285f4 0%, #ea4335 33%, #fbbc04 66%, #34a853 100%);
 }
 
 * {
@@ -87,7 +81,14 @@ body {
   background: var(--bg);
   color: var(--text);
   font-family:
-    "Google Sans", "Product Sans", Roboto, "Segoe UI", system-ui, -apple-system, Helvetica, Arial,
+    "Google Sans",
+    "Product Sans",
+    Roboto,
+    "Segoe UI",
+    system-ui,
+    -apple-system,
+    Helvetica,
+    Arial,
     sans-serif;
   min-height: 100vh;
   line-height: 1.55;
@@ -1203,4 +1204,574 @@ code {
 }
 .review-card.gia-eseguita:hover {
   opacity: 1;
+}
+
+/* ===========================================================================
+   LIQUID GLASS
+   Strato finale: rifà l'aspetto senza toccare il layout definito sopra.
+   Superfici traslucide sfocate, bordi con riflesso, colore pieno per servizio.
+   Vale sia in chiaro sia in scuro.
+   =========================================================================== */
+
+:root,
+:root[data-theme="light"] {
+  /* Colori dei servizi, saturi: il nodo si riconosce dal colore, non dal testo. */
+  --srv-freshdesk: #00a37a;
+  --srv-google: #1a73e8;
+  --srv-email: #ff7a18;
+  --srv-sistema: #7c6cf0;
+
+  /* Colori per il TESTO. Quelli sopra riempiono i riquadri; su fondo chiaro
+     non reggono il contrasto, quindi per le scritte se ne usano di piu' cupi. */
+  --srv-freshdesk-txt: #006b50;
+  --srv-google-txt: #1558c0;
+  --srv-email-txt: #a8480a;
+  --err-txt: #b3261e;
+
+  /* Vetro */
+  --glass: rgba(255, 255, 255, 0.62);
+  --glass-strong: rgba(255, 255, 255, 0.8);
+  --glass-brd-out: rgba(16, 24, 40, 0.09);
+  --glass-hi: rgba(255, 255, 255, 0.95);
+  --glass-shadow: 0 1px 2px rgba(16, 24, 40, 0.06), 0 12px 32px -8px rgba(16, 24, 40, 0.16);
+  --glass-shadow-lg: 0 2px 6px rgba(16, 24, 40, 0.08), 0 24px 60px -12px rgba(16, 24, 40, 0.24);
+
+  /* Quanto colore entra nel riempimento dei nodi */
+  --tinta: 12%;
+  --tinta-forte: 24%;
+}
+
+:root[data-theme="dark"] {
+  --srv-freshdesk: #2ee6ac;
+  --srv-google: #7cb0ff;
+  --srv-email: #ff9d4d;
+  --srv-sistema: #a99cff;
+
+  /* Su fondo scuro i colori accesi si leggono benissimo: restano quelli. */
+  --srv-freshdesk-txt: #2ee6ac;
+  --srv-google-txt: #9cc4ff;
+  --srv-email-txt: #ffb072;
+  --err-txt: #ff9b93;
+
+  --glass: rgba(30, 34, 42, 0.58);
+  --glass-strong: rgba(32, 36, 45, 0.8);
+  --glass-brd-out: rgba(0, 0, 0, 0.5);
+  --glass-hi: rgba(255, 255, 255, 0.14);
+  --glass-shadow: 0 1px 2px rgba(0, 0, 0, 0.5), 0 12px 32px -8px rgba(0, 0, 0, 0.6);
+  --glass-shadow-lg: 0 2px 8px rgba(0, 0, 0, 0.6), 0 28px 64px -12px rgba(0, 0, 0, 0.75);
+
+  --tinta: 18%;
+  --tinta-forte: 32%;
+}
+
+:root {
+  --vetro: blur(24px) saturate(180%);
+  --vetro-leggero: blur(14px) saturate(160%);
+  --radius: 20px;
+  --radius-sm: 14px;
+}
+
+/* --- Sfondo ambientale: senza qualcosa da sfocare, il vetro non si vede. --- */
+body {
+  position: relative;
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: -20%;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(
+      38% 42% at 12% 8%,
+      color-mix(in srgb, var(--srv-google) 42%, transparent),
+      transparent 70%
+    ),
+    radial-gradient(
+      34% 38% at 88% 12%,
+      color-mix(in srgb, var(--srv-email) 34%, transparent),
+      transparent 70%
+    ),
+    radial-gradient(
+      40% 44% at 78% 88%,
+      color-mix(in srgb, var(--srv-freshdesk) 32%, transparent),
+      transparent 70%
+    ),
+    radial-gradient(
+      34% 40% at 18% 92%,
+      color-mix(in srgb, var(--srv-sistema) 30%, transparent),
+      transparent 70%
+    );
+  filter: blur(40px);
+  opacity: 0.5;
+}
+
+:root[data-theme="dark"] body::before {
+  opacity: 0.4;
+}
+
+/* ------------------------------- intestazione ------------------------------ */
+.app-header {
+  background: var(--glass-strong);
+  -webkit-backdrop-filter: var(--vetro);
+  backdrop-filter: var(--vetro);
+  border-bottom: 1px solid var(--glass-brd-out);
+  box-shadow: inset 0 1px 0 var(--glass-hi);
+}
+
+.app-nav a {
+  border-radius: 999px;
+  transition:
+    background 0.18s ease,
+    color 0.18s ease;
+}
+
+.app-nav a:hover {
+  background: color-mix(in srgb, var(--srv-google) 14%, transparent);
+}
+
+/* ------------------------------- riquadri ---------------------------------- */
+.card,
+.review-card,
+.notice,
+.form-error,
+.test-ok,
+.table-wrap {
+  background: var(--glass);
+  -webkit-backdrop-filter: var(--vetro);
+  backdrop-filter: var(--vetro);
+  border: 1px solid var(--glass-brd-out);
+  border-radius: var(--radius);
+  box-shadow:
+    var(--glass-shadow),
+    inset 0 1px 0 var(--glass-hi);
+}
+
+.review-card {
+  transition:
+    transform 0.18s ease,
+    box-shadow 0.18s ease;
+}
+
+.review-card:hover {
+  transform: translateY(-2px);
+  box-shadow:
+    var(--glass-shadow-lg),
+    inset 0 1px 0 var(--glass-hi);
+}
+
+/* --------------------------- nodi: colore pieno ---------------------------- */
+/* Il servizio colora tutto il riquadro, non solo un filetto sul bordo. */
+.nodo-freshdesk {
+  --nodo: var(--srv-freshdesk);
+}
+.nodo-google {
+  --nodo: var(--srv-google);
+}
+.nodo-email {
+  --nodo: var(--srv-email);
+}
+.nodo-sistema {
+  --nodo: var(--srv-sistema);
+}
+
+.nodo,
+.run-nodo {
+  background:
+    linear-gradient(
+      165deg,
+      color-mix(in srgb, var(--nodo) var(--tinta-forte), transparent) 0%,
+      color-mix(in srgb, var(--nodo) var(--tinta), transparent) 55%,
+      transparent 100%
+    ),
+    var(--glass);
+  -webkit-backdrop-filter: var(--vetro);
+  backdrop-filter: var(--vetro);
+  border: 1px solid color-mix(in srgb, var(--nodo) 38%, var(--glass-brd-out));
+  border-radius: var(--radius-sm);
+  box-shadow:
+    0 8px 24px -10px color-mix(in srgb, var(--nodo) 55%, transparent),
+    inset 0 1px 0 var(--glass-hi);
+  color: var(--text);
+}
+
+/* La barra colorata resta, ma piena e più marcata. */
+.run-nodo {
+  border-left: 5px solid var(--nodo);
+}
+
+.nodo {
+  border-top: 4px solid var(--nodo);
+}
+
+.nodo:hover,
+.run-nodo:hover {
+  box-shadow:
+    0 14px 36px -12px color-mix(in srgb, var(--nodo) 70%, transparent),
+    inset 0 1px 0 var(--glass-hi);
+}
+
+.nodo-icona {
+  color: var(--nodo);
+  filter: drop-shadow(0 1px 4px color-mix(in srgb, var(--nodo) 60%, transparent));
+}
+
+.nodo-titolo {
+  color: var(--text);
+  font-weight: 650;
+}
+
+.nodo-corpo {
+  border-top: 1px solid color-mix(in srgb, var(--nodo) 25%, transparent);
+  background: color-mix(in srgb, var(--glass-strong) 60%, transparent);
+  border-radius: 0 0 var(--radius-sm) var(--radius-sm);
+}
+
+/* Etichette "legge" / "scrive" */
+.nodo-tipo {
+  -webkit-backdrop-filter: var(--vetro-leggero);
+  backdrop-filter: var(--vetro-leggero);
+  border: 1px solid transparent;
+}
+
+.nodo-legge {
+  background: color-mix(in srgb, var(--text-soft) 16%, transparent);
+  border-color: color-mix(in srgb, var(--text-soft) 26%, transparent);
+  color: var(--text-soft);
+}
+
+.nodo-scrive {
+  background: color-mix(in srgb, var(--srv-email) 22%, transparent);
+  border-color: color-mix(in srgb, var(--srv-email) 45%, transparent);
+  color: var(--srv-email-txt);
+}
+
+/* ------------------------- esito dei nodi eseguiti ------------------------- */
+/* Il colore del riquadro dice il servizio; il simbolo dice com'è andata. */
+.run-ok .run-simbolo {
+  color: var(--srv-freshdesk);
+}
+.run-simulato .run-simbolo {
+  color: var(--srv-google);
+}
+.run-saltato .run-simbolo {
+  color: var(--text-soft);
+}
+
+.run-saltato {
+  opacity: 0.5;
+  filter: saturate(0.35);
+}
+
+.run-errore {
+  --nodo: var(--error-text);
+  border-color: color-mix(in srgb, var(--error-text) 55%, transparent);
+}
+
+.run-errore .run-simbolo {
+  color: var(--error-text);
+}
+
+.run-durata {
+  background: color-mix(in srgb, var(--text-soft) 12%, transparent);
+  border-radius: 999px;
+  padding: 1px 9px;
+}
+
+.run-chiamata pre {
+  background: color-mix(in srgb, var(--glass-strong) 70%, transparent);
+  -webkit-backdrop-filter: var(--vetro-leggero);
+  backdrop-filter: var(--vetro-leggero);
+  border: 1px solid var(--glass-brd-out);
+  border-radius: var(--radius-sm);
+}
+
+.flow-freccia {
+  color: var(--text-soft);
+  opacity: 0.65;
+  font-weight: 700;
+}
+
+/* --------------------------------- tasti ----------------------------------- */
+.btn-primary,
+.btn-secondary,
+.btn-mini,
+.star-chip {
+  -webkit-backdrop-filter: var(--vetro-leggero);
+  backdrop-filter: var(--vetro-leggero);
+  border-radius: 999px;
+  transition:
+    transform 0.14s ease,
+    box-shadow 0.18s ease,
+    background 0.18s ease;
+}
+
+.btn-primary {
+  background: linear-gradient(
+    165deg,
+    color-mix(in srgb, var(--srv-google) 88%, white) 0%,
+    var(--srv-google) 100%
+  );
+  border: 1px solid color-mix(in srgb, var(--srv-google) 70%, transparent);
+  color: #fff;
+  box-shadow:
+    0 8px 22px -8px color-mix(in srgb, var(--srv-google) 75%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, 0.45);
+}
+
+.btn-secondary,
+.btn-mini {
+  background: var(--glass);
+  border: 1px solid var(--glass-brd-out);
+  box-shadow: inset 0 1px 0 var(--glass-hi);
+}
+
+.btn-primary:hover,
+.btn-secondary:hover,
+.btn-mini:hover {
+  transform: translateY(-1px);
+}
+
+.btn-primary:active,
+.btn-secondary:active,
+.btn-mini:active {
+  transform: translateY(0);
+}
+
+/* Azioni che scrivono davvero: rosso pieno, si devono notare. */
+.btn-danger {
+  background: linear-gradient(
+    165deg,
+    color-mix(in srgb, var(--error-text) 85%, white) 0%,
+    var(--error-text) 100%
+  );
+  border-color: color-mix(in srgb, var(--error-text) 70%, transparent);
+  color: #fff;
+  box-shadow:
+    0 8px 22px -8px color-mix(in srgb, var(--error-text) 70%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, 0.35);
+}
+
+.btn-secondary.disabled,
+.btn-primary:disabled {
+  opacity: 0.45;
+  box-shadow: none;
+  transform: none;
+}
+
+/* ------------------------- pastiglie, stelle, stati ------------------------ */
+.star-chip {
+  background: var(--glass);
+  border: 1px solid var(--glass-brd-out);
+  box-shadow: inset 0 1px 0 var(--glass-hi);
+}
+
+.star-chip.is-active {
+  background: linear-gradient(
+    165deg,
+    color-mix(in srgb, var(--srv-google) 30%, transparent),
+    color-mix(in srgb, var(--srv-google) 14%, transparent)
+  );
+  border-color: color-mix(in srgb, var(--srv-google) 55%, transparent);
+  box-shadow:
+    0 8px 20px -10px color-mix(in srgb, var(--srv-google) 70%, transparent),
+    inset 0 1px 0 var(--glass-hi);
+}
+
+.flag,
+.conn-badge,
+.status-badge,
+.regola-cond,
+.chip-count {
+  -webkit-backdrop-filter: var(--vetro-leggero);
+  backdrop-filter: var(--vetro-leggero);
+  border-radius: 999px;
+}
+
+.flag-green {
+  background: color-mix(in srgb, var(--srv-freshdesk) 20%, transparent);
+  color: var(--srv-freshdesk-txt);
+  border: 1px solid color-mix(in srgb, var(--srv-freshdesk) 40%, transparent);
+}
+
+.flag-amber {
+  background: color-mix(in srgb, var(--srv-email) 20%, transparent);
+  color: var(--srv-email-txt);
+  border: 1px solid color-mix(in srgb, var(--srv-email) 40%, transparent);
+}
+
+.flag-red {
+  background: color-mix(in srgb, var(--error-text) 20%, transparent);
+  color: var(--err-txt);
+  border: 1px solid color-mix(in srgb, var(--error-text) 42%, transparent);
+}
+
+.flag-gray {
+  background: color-mix(in srgb, var(--text-soft) 14%, transparent);
+  color: var(--text-soft);
+  border: 1px solid color-mix(in srgb, var(--text-soft) 26%, transparent);
+}
+
+.conn-ok {
+  background: color-mix(in srgb, var(--srv-freshdesk) 22%, transparent);
+  color: var(--srv-freshdesk-txt);
+  border: 1px solid color-mix(in srgb, var(--srv-freshdesk) 45%, transparent);
+}
+
+.conn-ko {
+  background: color-mix(in srgb, var(--error-text) 22%, transparent);
+  color: var(--err-txt);
+  border: 1px solid color-mix(in srgb, var(--error-text) 45%, transparent);
+}
+
+.regola-cond {
+  background: linear-gradient(
+    165deg,
+    color-mix(in srgb, var(--srv-google) 32%, transparent),
+    color-mix(in srgb, var(--srv-google) 16%, transparent)
+  );
+  border: 1px solid color-mix(in srgb, var(--srv-google) 50%, transparent);
+  color: var(--srv-google-txt);
+}
+
+/* ------------------------- avvisi e riga modalità -------------------------- */
+.notice {
+  border-left: 5px solid var(--srv-email);
+  background:
+    linear-gradient(165deg, color-mix(in srgb, var(--srv-email) 14%, transparent), transparent 70%),
+    var(--glass);
+}
+
+.form-error {
+  border-left: 5px solid var(--error-text);
+  background:
+    linear-gradient(
+      165deg,
+      color-mix(in srgb, var(--error-text) 16%, transparent),
+      transparent 70%
+    ),
+    var(--glass);
+  color: var(--error-text);
+}
+
+.test-ok {
+  border-left: 5px solid var(--srv-freshdesk);
+  background:
+    linear-gradient(
+      165deg,
+      color-mix(in srgb, var(--srv-freshdesk) 16%, transparent),
+      transparent 70%
+    ),
+    var(--glass);
+}
+
+.modo-banner,
+.modo-riga {
+  border-left: 6px solid var(--srv-freshdesk);
+  background:
+    linear-gradient(
+      165deg,
+      color-mix(in srgb, var(--srv-freshdesk) 16%, transparent),
+      transparent 70%
+    ),
+    var(--glass);
+}
+
+.modo-banner.modo-reale,
+.modo-riga.modo-reale {
+  border-left-color: var(--error-text);
+  background:
+    linear-gradient(
+      165deg,
+      color-mix(in srgb, var(--error-text) 22%, transparent),
+      transparent 70%
+    ),
+    var(--glass);
+}
+
+.run-card {
+  border-left: 6px solid var(--srv-google);
+}
+
+.run-card-ko {
+  border-left-color: var(--error-text);
+}
+
+/* ---------------------------- campi e tabelle ------------------------------ */
+.field input,
+.field textarea,
+.filters input {
+  background: color-mix(in srgb, var(--glass-strong) 75%, transparent);
+  -webkit-backdrop-filter: var(--vetro-leggero);
+  backdrop-filter: var(--vetro-leggero);
+  border: 1px solid var(--glass-brd-out);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  transition:
+    border-color 0.16s ease,
+    box-shadow 0.16s ease;
+}
+
+.field input:focus,
+.field textarea:focus,
+.filters input:focus {
+  outline: none;
+  border-color: color-mix(in srgb, var(--srv-google) 65%, transparent);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--srv-google) 20%, transparent);
+}
+
+.data-table thead th {
+  background: color-mix(in srgb, var(--glass-strong) 70%, transparent);
+  -webkit-backdrop-filter: var(--vetro-leggero);
+  backdrop-filter: var(--vetro-leggero);
+  border-bottom: 1px solid var(--glass-brd-out);
+}
+
+.data-table tbody tr:hover {
+  background: color-mix(in srgb, var(--srv-google) 9%, transparent);
+}
+
+/* La conversazione email resta leggibile: vetro chiaro, non colorato. */
+.thread-item {
+  background: color-mix(in srgb, var(--glass) 70%, transparent);
+  border: 1px solid var(--glass-brd-out);
+  border-radius: var(--radius-sm);
+}
+
+.thread-item.is-selected {
+  border-color: color-mix(in srgb, var(--srv-google) 45%, transparent);
+  box-shadow: 0 8px 22px -12px color-mix(in srgb, var(--srv-google) 60%, transparent);
+}
+
+/* Chi non regge il backdrop-filter vede superfici piene, non trasparenze. */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .card,
+  .review-card,
+  .nodo,
+  .run-nodo,
+  .app-header,
+  .notice,
+  .form-error,
+  .test-ok {
+    background-color: var(--surface);
+  }
+}
+
+/* Chi ha chiesto meno animazioni non le subisce. */
+@media (prefers-reduced-motion: reduce) {
+  .review-card,
+  .btn-primary,
+  .btn-secondary,
+  .btn-mini,
+  .star-chip {
+    transition: none;
+  }
+
+  .review-card:hover,
+  .btn-primary:hover,
+  .btn-secondary:hover,
+  .btn-mini:hover {
+    transform: none;
+  }
 }
