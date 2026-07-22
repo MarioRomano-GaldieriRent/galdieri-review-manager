@@ -971,9 +971,9 @@ code {
 
 /* ------------------------------------------------------ le regole */
 
-.regola-spenta {
-  opacity: 0.55;
-}
+/* Le regole spente si smorzano nell'intestazione, non nell'intero riquadro:
+   una volta aperta, una regola spenta va letta bene quanto le altre.
+   Vedi .regola-spenta .regola-nome più in basso. */
 
 .regola-cond {
   display: inline-block;
@@ -1369,5 +1369,257 @@ code {
   }
   .passo-corpo {
     padding: 10px 12px;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Regole a fisarmonica: chiuse di default, si apre solo quella che serve.
+   Con cinque regole da sette passaggi l'una la pagina era illeggibile.
+   --------------------------------------------------------------------------- */
+
+.regole-elenco {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 24px;
+}
+
+.regole-elenco .regola {
+  padding: 0;
+  overflow: hidden;
+}
+
+.regola-testa {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 16px 20px;
+  cursor: pointer;
+  list-style: none;
+  transition: background 0.15s ease;
+}
+
+.regola-testa::-webkit-details-marker {
+  display: none;
+}
+
+.regola-testa:hover {
+  background: var(--row-hover);
+}
+
+.regola-nome {
+  font-weight: 650;
+  font-size: 1.05rem;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.regola-conteggio {
+  font-size: 0.85rem;
+  color: var(--text-soft);
+  white-space: nowrap;
+}
+
+/* Freccia che ruota all'apertura: dice che c'è dell'altro sotto. */
+.regola-freccia {
+  flex: 0 0 auto;
+  width: 10px;
+  height: 10px;
+  border-right: 2px solid var(--text-soft);
+  border-bottom: 2px solid var(--text-soft);
+  transform: rotate(45deg);
+  transition: transform 0.2s ease;
+  margin-left: 2px;
+}
+
+.regola[open] > .regola-testa {
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-alt);
+}
+
+.regola[open] > .regola-testa .regola-freccia {
+  transform: rotate(-135deg);
+}
+
+.regola-dentro {
+  padding: 18px 20px 20px;
+}
+
+/* Una regola spenta si vede lo stesso, ma non si prende la scena. */
+.regola-spenta .regola-nome,
+.regola-spenta .regola-cond {
+  opacity: 0.65;
+}
+
+.regola-spenta[open] {
+  opacity: 1;
+}
+
+.regola-interruttore {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.regola-interruttore .hint {
+  flex: 1 1 220px;
+  margin: 0;
+}
+
+@media (max-width: 620px) {
+  .regola-testa {
+    padding: 14px 16px;
+  }
+  .regola-dentro {
+    padding: 16px;
+  }
+  .regola-conteggio {
+    display: none;
+  }
+}
+
+/* ===========================================================================
+   PANNELLO IMPOSTAZIONI
+   Voci laterali a sinistra, una sezione alla volta a destra. Prima era una
+   pagina unica lunghissima in cui modalità, regole, parametri e credenziali
+   si accavallavano.
+   =========================================================================== */
+
+main.pannello {
+  max-width: 1180px;
+}
+
+.pannello-testa {
+  margin-bottom: 22px;
+}
+
+.pannello-corpo {
+  display: grid;
+  grid-template-columns: 236px minmax(0, 1fr);
+  gap: 28px;
+  align-items: start;
+}
+
+/* ------------------------------------------------------- voci laterali */
+
+.pannello-menu {
+  position: sticky;
+  top: 78px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.menu-gruppo-titolo {
+  margin: 0 0 6px;
+  padding: 0 12px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-soft);
+}
+
+.menu-voce {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  text-decoration: none;
+  font-size: 0.94rem;
+  border-left: 3px solid transparent;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease;
+}
+
+.menu-voce:hover {
+  background: var(--row-hover);
+}
+
+.menu-voce.is-active {
+  background: var(--accent-soft);
+  border-left-color: var(--g-blue);
+  font-weight: 600;
+  color: var(--g-blue-dark);
+}
+
+.menu-voce-testo {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* Pastiglia con lo stato della sezione: si vede cosa manca senza entrarci. */
+.menu-voce-stato {
+  flex: 0 0 auto;
+  font-size: 0.7rem;
+  font-weight: 700;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--surface-alt);
+  color: var(--text-soft);
+  border: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.menu-voce-stato.ko {
+  background: var(--error-bg);
+  border-color: var(--error-border);
+  color: var(--error-text);
+}
+
+/* --------------------------------------------------------- contenuto */
+
+.pannello-contenuto > .card:first-child,
+.pannello-contenuto > .regole-elenco:first-child {
+  margin-top: 0;
+}
+
+/* ------------------------------------------------------------ stretto */
+
+@media (max-width: 900px) {
+  .pannello-corpo {
+    grid-template-columns: 1fr;
+    gap: 18px;
+  }
+
+  /* Le voci diventano una fila che scorre, come le linguette di un blocco. */
+  .pannello-menu {
+    position: static;
+    flex-direction: row;
+    gap: 18px;
+    overflow-x: auto;
+    padding-bottom: 6px;
+  }
+
+  .menu-gruppo {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex: 0 0 auto;
+  }
+
+  .menu-gruppo-titolo {
+    margin: 0;
+    padding: 0 4px 0 0;
+    white-space: nowrap;
+  }
+
+  .menu-voce {
+    border-left: none;
+    border: 1px solid var(--border);
+    white-space: nowrap;
+    padding: 7px 12px;
+  }
+
+  .menu-voce.is-active {
+    border-color: var(--g-blue);
   }
 }
