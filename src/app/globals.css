@@ -1243,12 +1243,8 @@ code {
   --bordo: rgba(16, 24, 40, 0.1);
 
   /* Ombre: il vetro galleggia */
-  --ombra:
-    0 1px 1px rgba(16, 24, 40, 0.04), 0 6px 14px -6px rgba(16, 24, 40, 0.12),
-    0 22px 48px -16px rgba(16, 24, 40, 0.2);
-  --ombra-alta:
-    0 2px 4px rgba(16, 24, 40, 0.06), 0 12px 28px -8px rgba(16, 24, 40, 0.18),
-    0 40px 80px -20px rgba(16, 24, 40, 0.3);
+  --ombra: 0 1px 2px rgba(16, 24, 40, 0.05), 0 6px 16px -10px rgba(16, 24, 40, 0.16);
+  --ombra-alta: 0 2px 4px rgba(16, 24, 40, 0.07), 0 10px 24px -12px rgba(16, 24, 40, 0.22);
 
   --tinta: 10%;
   --tinta-forte: 26%;
@@ -1275,12 +1271,8 @@ code {
   --riflesso-anello: rgba(255, 255, 255, 0.65);
   --bordo: rgba(0, 0, 0, 0.55);
 
-  --ombra:
-    0 1px 1px rgba(0, 0, 0, 0.3), 0 6px 16px -6px rgba(0, 0, 0, 0.55),
-    0 24px 56px -18px rgba(0, 0, 0, 0.7);
-  --ombra-alta:
-    0 2px 5px rgba(0, 0, 0, 0.4), 0 14px 32px -8px rgba(0, 0, 0, 0.6),
-    0 44px 88px -20px rgba(0, 0, 0, 0.8);
+  --ombra: 0 1px 2px rgba(0, 0, 0, 0.28), 0 6px 16px -10px rgba(0, 0, 0, 0.5);
+  --ombra-alta: 0 2px 4px rgba(0, 0, 0, 0.34), 0 10px 26px -12px rgba(0, 0, 0, 0.6);
 
   --tinta: 16%;
   --tinta-forte: 34%;
@@ -1480,7 +1472,7 @@ body {
 }
 
 .review-card:hover {
-  transform: translateY(-3px) scale(1.006);
+  transform: translateY(-2px);
   box-shadow:
     var(--ombra-alta),
     inset 0 1px 0 var(--riflesso-alto),
@@ -1541,11 +1533,12 @@ body {
     var(--vetro-corpo);
   -webkit-backdrop-filter: var(--sfoca);
   backdrop-filter: var(--sfoca);
-  border: 1px solid color-mix(in srgb, var(--nodo) 34%, var(--bordo));
+  /* Bordo uniforme su tutti e quattro i lati: nessun lato piu' spesso degli
+     altri, e nessuna ombra colorata che sbordi fuori dal riquadro. */
+  border: 1.5px solid color-mix(in srgb, var(--nodo) 62%, var(--bordo));
   border-radius: var(--radius-sm);
   box-shadow:
-    0 10px 30px -14px color-mix(in srgb, var(--nodo) 70%, transparent),
-    0 2px 6px -2px rgba(16, 24, 40, 0.12),
+    var(--ombra),
     inset 0 1px 0 var(--riflesso-alto),
     inset 0 -1px 0 var(--riflesso-basso);
   color: var(--text);
@@ -1570,27 +1563,20 @@ body {
   padding: 1.5px;
 }
 
-/* Spigolo colorato: dice il servizio a colpo d'occhio. */
-.run-nodo {
-  border-left: 5px solid var(--nodo);
-}
-
-.nodo {
-  border-top: 4px solid var(--nodo);
-}
-
+/* Il servizio si riconosce dal colore del bordo e del vetro, non da un lato
+   piu' spesso degli altri. */
 .nodo:hover,
 .run-nodo:hover {
+  border-color: color-mix(in srgb, var(--nodo) 82%, var(--bordo));
   box-shadow:
-    0 18px 44px -16px color-mix(in srgb, var(--nodo) 85%, transparent),
-    0 2px 8px -2px rgba(16, 24, 40, 0.16),
+    var(--ombra-alta),
     inset 0 1px 0 var(--riflesso-alto),
     inset 0 -1px 0 var(--riflesso-basso);
 }
 
 .nodo-icona {
   color: var(--nodo);
-  filter: drop-shadow(0 1px 6px color-mix(in srgb, var(--nodo) 70%, transparent));
+  filter: none;
 }
 
 .nodo-titolo {
@@ -1699,7 +1685,7 @@ body {
   border: 1px solid color-mix(in srgb, var(--srv-google) 65%, transparent);
   color: #fff;
   box-shadow:
-    0 10px 26px -10px color-mix(in srgb, var(--srv-google) 85%, transparent),
+    var(--ombra),
     inset 0 1px 0 rgba(255, 255, 255, 0.6),
     inset 0 -1px 0 rgba(0, 0, 0, 0.12);
 }
@@ -1709,9 +1695,9 @@ body {
   background: var(--vetro-corpo);
   border: 1px solid var(--bordo);
   box-shadow:
+    var(--ombra),
     inset 0 1px 0 var(--riflesso-alto),
-    inset 0 -1px 0 var(--riflesso-basso),
-    0 4px 12px -6px rgba(16, 24, 40, 0.18);
+    inset 0 -1px 0 var(--riflesso-basso);
 }
 
 .btn-primary:hover,
@@ -1737,7 +1723,7 @@ body {
   border-color: color-mix(in srgb, var(--error-text) 65%, transparent);
   color: #fff;
   box-shadow:
-    0 10px 26px -10px color-mix(in srgb, var(--error-text) 80%, transparent),
+    var(--ombra),
     inset 0 1px 0 rgba(255, 255, 255, 0.45),
     inset 0 -1px 0 rgba(0, 0, 0, 0.12);
 }
@@ -1754,8 +1740,8 @@ body {
   background: var(--vetro-corpo);
   border: 1px solid var(--bordo);
   box-shadow:
-    inset 0 1px 0 var(--riflesso-alto),
-    0 4px 12px -6px rgba(16, 24, 40, 0.16);
+    var(--ombra),
+    inset 0 1px 0 var(--riflesso-alto);
 }
 
 .star-chip.is-active {
@@ -1766,7 +1752,7 @@ body {
   );
   border-color: color-mix(in srgb, var(--srv-google) 58%, transparent);
   box-shadow:
-    0 10px 24px -12px color-mix(in srgb, var(--srv-google) 85%, transparent),
+    var(--ombra),
     inset 0 1px 0 var(--riflesso-alto);
 }
 
@@ -1828,7 +1814,7 @@ body {
 
 /* ------------------------- avvisi e riga modalita' ------------------------- */
 .notice {
-  border-left: 5px solid var(--srv-email);
+  border: 1.5px solid color-mix(in srgb, var(--srv-email) 55%, var(--bordo));
   background:
     radial-gradient(
       120% 100% at 0% 0%,
@@ -1839,7 +1825,7 @@ body {
 }
 
 .form-error {
-  border-left: 5px solid var(--error-text);
+  border: 1.5px solid color-mix(in srgb, var(--error-text) 55%, var(--bordo));
   background:
     radial-gradient(
       120% 100% at 0% 0%,
@@ -1851,7 +1837,7 @@ body {
 }
 
 .test-ok {
-  border-left: 5px solid var(--srv-freshdesk);
+  border: 1.5px solid color-mix(in srgb, var(--srv-freshdesk) 55%, var(--bordo));
   background:
     radial-gradient(
       120% 100% at 0% 0%,
@@ -1864,7 +1850,7 @@ body {
 
 .modo-banner,
 .modo-riga {
-  border-left: 6px solid var(--srv-freshdesk);
+  border: 1.5px solid color-mix(in srgb, var(--srv-freshdesk) 55%, var(--bordo));
   background:
     radial-gradient(
       110% 100% at 0% 0%,
@@ -1876,7 +1862,7 @@ body {
 
 .modo-banner.modo-reale,
 .modo-riga.modo-reale {
-  border-left-color: var(--error-text);
+  border-color: color-mix(in srgb, var(--error-text) 65%, var(--bordo));
   background:
     radial-gradient(
       110% 100% at 0% 0%,
@@ -1887,11 +1873,11 @@ body {
 }
 
 .run-card {
-  border-left: 6px solid var(--srv-google);
+  border: 1.5px solid color-mix(in srgb, var(--srv-google) 55%, var(--bordo));
 }
 
 .run-card-ko {
-  border-left-color: var(--error-text);
+  border-color: color-mix(in srgb, var(--error-text) 65%, var(--bordo));
 }
 
 /* ---------------------------- campi e tabelle ------------------------------ */
@@ -1943,7 +1929,7 @@ body {
 
 .thread-item.is-selected {
   border-color: color-mix(in srgb, var(--srv-google) 45%, transparent);
-  box-shadow: 0 10px 26px -14px color-mix(in srgb, var(--srv-google) 70%, transparent);
+  box-shadow: var(--ombra);
 }
 
 /* ===========================================================================
