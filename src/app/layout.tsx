@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import "./globals.css";
-import { GlassFilters } from "./GlassFilters";
 import { ThemeToggle } from "./ThemeToggle";
 
 export const metadata: Metadata = {
@@ -27,11 +26,6 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
         <script dangerouslySetInnerHTML={{ __html: themeScript }} />
       </head>
       <body>
-        <GlassFilters />
-        {/* Ambiente dietro al vetro: senza qualcosa da rifrangere, il vetro
-            non esiste. Sono due livelli, non uno sfondo piatto. */}
-        <div className="ambiente" aria-hidden="true" />
-        <div className="ambiente-grana" aria-hidden="true" />
         <header className="app-header">
           <div className="app-header-inner">
             <div className="brand">
