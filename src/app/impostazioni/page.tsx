@@ -10,7 +10,12 @@ import {
 } from "@/server/settings";
 import { getGoogleReviewsStatus } from "@/server/integrations/googleReviews";
 import { caricaRegole } from "@/server/automation/rules";
-import { descriviCondizione, NodoEditor } from "../_ui/automazioni";
+import {
+  descriviCondizione,
+  PassoRegola,
+  quandoScatta,
+  quantiModificano,
+} from "../_ui/automazioni";
 import {
   addLabelAction,
   cambiaModoAction,
@@ -152,29 +157,44 @@ export default async function ImpostazioniPage({
         </div>
       </section>
 
-      {regole.map((r) => (
-        <section key={r.id} className={`card regola ${r.attiva ? "" : "regola-spenta"}`}>
-          <div className="sec-head">
-            <h2>
-              <span className="regola-cond">{descriviCondizione(r)}</span> {r.nome}
-            </h2>
-            <form action={cambiaStatoRegolaAction}>
-              <input type="hidden" name="id" value={r.id} />
-              <button type="submit" className={r.attiva ? "btn-mini" : "btn-mini btn-danger"}>
-                {r.attiva ? "Attiva — disattiva" : "Disattivata — attiva"}
-              </button>
-            </form>
-          </div>
-          <div className="flow">
-            {r.azioni.map((a, i) => (
-              <div key={a.id} className="flow-step">
-                {i > 0 && <span className="flow-freccia">→</span>}
-                <NodoEditor regola={r} azione={a} />
-              </div>
-            ))}
-          </div>
-        </section>
-      ))}
+      {regole.map((r) => {
+        return (
+          <section key={r.id} className={`card regola ${r.attiva ? "" : "regola-spenta"}`}>
+            <div className="sec-head">
+              <h2>
+                <span className="regola-cond">{descriviCondizione(r)}</span> {r.nome}
+              </h2>
+              <form action={cambiaStatoRegolaAction}>
+                <input type="hidden" name="id" value={r.id} />
+                <button
+                  type="submit"
+                  className={r.attiva ? "btn-mini" : "btn-mini btn-danger"}
+                  title={r.attiva ? "Premi per disattivarla" : "Premi per attivarla"}
+                >
+                  {r.attiva ? "Attiva — disattiva" : "Disattivata — attiva"}
+                </button>
+              </form>
+            </div>
+
+            <p className="regola-quando">
+              {quandoScatta(r)}, l&apos;applicazione esegue questi {r.azioni.length} passaggi in
+              ordine. {quantiModificano(r)}
+            </p>
+
+            <ol className="passi">
+              {r.azioni.map((a, i) => (
+                <PassoRegola
+                  key={a.id}
+                  regola={r}
+                  azione={a}
+                  numero={i + 1}
+                  ultimo={i === r.azioni.length - 1}
+                />
+              ))}
+            </ol>
+          </section>
+        );
+      })}
 
       {/* -------------------------------------------- Parametri automazioni */}
       <section className="card">

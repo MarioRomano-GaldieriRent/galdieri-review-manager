@@ -1205,3 +1205,169 @@ code {
 .review-card.gia-eseguita:hover {
   opacity: 1;
 }
+
+/* ===========================================================================
+   REGOLE — sequenza dei passaggi
+   Prima erano scatolette da aprire una a una, in orizzontale: si vedeva il
+   nome del passo ma non cosa facesse. Ora sono passi numerati in verticale,
+   ognuno con scritto in chiaro cosa succederà, e il modulo di modifica
+   nascosto finché non serve.
+   =========================================================================== */
+
+.regola-quando {
+  margin: 4px 0 18px;
+  padding: 12px 16px;
+  background: var(--accent-soft);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: 0.95rem;
+  line-height: 1.55;
+}
+
+.passi {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  counter-reset: passo;
+}
+
+.passo {
+  position: relative;
+  display: flex;
+  gap: 14px;
+  padding: 0 0 18px 0;
+}
+
+/* Il filo che unisce un passo al successivo: rende visibile la sequenza. */
+.passo::before {
+  content: "";
+  position: absolute;
+  left: 15px;
+  top: 34px;
+  bottom: 0;
+  width: 2px;
+  background: var(--border);
+}
+
+.passo-ultimo::before {
+  display: none;
+}
+
+.passo-numero {
+  flex: 0 0 32px;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 0.92rem;
+  background: var(--surface);
+  color: var(--nodo, var(--text-soft));
+  border: 2px solid var(--nodo, var(--border));
+  position: relative;
+  z-index: 1;
+}
+
+.passo-corpo {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--nodo, var(--border));
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  padding: 12px 16px;
+}
+
+.passo-testa {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex-wrap: wrap;
+}
+
+.passo-titolo {
+  font-weight: 650;
+  font-size: 1rem;
+}
+
+.passo-righe {
+  margin: 8px 0 0;
+  padding: 0 0 0 18px;
+  color: var(--text-soft);
+  font-size: 0.92rem;
+  line-height: 1.6;
+}
+
+.passo-righe li {
+  margin: 2px 0;
+}
+
+.passo-modifica {
+  margin-top: 10px;
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+}
+
+.passo-modifica > summary {
+  cursor: pointer;
+  font-size: 0.86rem;
+  color: var(--g-blue-dark);
+  font-weight: 500;
+  list-style: none;
+}
+
+.passo-modifica > summary::-webkit-details-marker {
+  display: none;
+}
+
+.passo-modifica > summary::before {
+  content: "▸ ";
+}
+
+.passo-modifica[open] > summary::before {
+  content: "▾ ";
+}
+
+.passo-modifica .field {
+  margin-top: 10px;
+}
+
+.passo-modifica textarea {
+  font: inherit;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  resize: vertical;
+}
+
+.passo-modifica .btn-mini {
+  margin-top: 12px;
+}
+
+/* Colore del servizio: lo stesso che si vede negli esiti delle esecuzioni. */
+.passo.nodo-freshdesk {
+  --nodo: var(--g-green);
+}
+.passo.nodo-google {
+  --nodo: var(--g-blue);
+}
+.passo.nodo-email {
+  --nodo: #ff7a18;
+}
+.passo.nodo-sistema {
+  --nodo: var(--text-soft);
+}
+
+@media (max-width: 620px) {
+  .passo {
+    gap: 10px;
+  }
+  .passo-corpo {
+    padding: 10px 12px;
+  }
+}
