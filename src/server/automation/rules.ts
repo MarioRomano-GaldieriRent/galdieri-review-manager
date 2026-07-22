@@ -14,6 +14,8 @@ export const AGENTE_MARKETING = "80108775423";
 export const AGENTE_ESCALATION = "80128977810";
 export const TIPO_TICKET_GMB = "Recensioni clienti GMB";
 export const EMAIL_ESCALATION = "cherubina.panico@galdierirent.it";
+/** Casella che genera i ticket: va sempre in copia, altrimenti niente ticket. */
+export const EMAIL_TICKETING = "customer.care@galdierirent.it";
 export const TESTO_ESCALATION = "Si trasmette per quanto di competenza.";
 
 const azione = (id: string, tipo: TipoAzione, parametri: Record<string, string> = {}): Azione => ({
@@ -55,7 +57,11 @@ export function regoleDiDefault(): Regola[] {
         //   20/07 10:35:12  ← "Ticket Creato"
         // Destinatario lasciato vuoto: si segue il Reply-To dell'email, che
         // Zapier imposta già a customer.care@galdierirent.it.
-        azione("a1", "email.rispondi", { a: "", testo: "Grazie." }),
+        azione("a1", "email.rispondi", {
+          a: "",
+          testo: "Grazie.",
+          testoInglese: "Thank you.",
+        }),
         azione("a2", "freshdesk.trovaTicket"),
         azione("a3", "freshdesk.classifica", {
           tipo: TIPO_TICKET_GMB,
@@ -66,7 +72,7 @@ export function regoleDiDefault(): Regola[] {
         azione("a5", "freshdesk.assegna", { agenteId: AGENTE_MARKETING }),
         // Recensione senza commento: si risponde solo "Grazie.", niente di più.
         // Non c'è nulla nel merito a cui replicare.
-        azione("a6", "google.rispondi", { testo: "Grazie." }),
+        azione("a6", "google.rispondi", { testo: "Grazie.", testoInglese: "Thank you." }),
         azione("a7", "freshdesk.stato", { stato: "4" }),
       ],
     },
@@ -133,15 +139,28 @@ export function regoleDiDefault(): Regola[] {
     {
       id: "1-2-stelle",
       nome: "1 e 2 stelle — escalation",
-      attiva: false,
+      attiva: true,
       condizione: { stelle: [1, 2], testo: "qualsiasi" },
+      // Ricalca il ciclo osservato sui casi reali, per esempio Amelia
+      // Castanheira, Guy Cohen, Maureen Nicolas:
+      //   1. Stefania inoltra a Cherubina, in copia a customer.care
+      //   2. il CC fa nascere il ticket entro un minuto
+      //   3. dopo 4-6 giorni Cherubina rimanda il testo della risposta
+      //   4. Stefania lo pubblica e il ticket si chiude
+      // Qui automatizziamo il passo 1 e prepariamo il terreno; dal passo 3 in
+      // poi serve una persona, e il flusso resta in attesa.
       azioni: [
-        azione("e1", "freshdesk.trovaTicket"),
-        azione("e2", "freshdesk.tag", { tag: "{sede}" }),
-        azione("e3", "freshdesk.assegna", { agenteId: AGENTE_ESCALATION }),
-        azione("e4", "email.inoltra", { a: EMAIL_ESCALATION, testo: TESTO_ESCALATION }),
-        azione("e5", "freshdesk.stato", { stato: "2" }),
-        azione("e6", "sistema.attendiRisposta", { da: EMAIL_ESCALATION }),
+        azione("e1", "email.inoltra", {
+          a: EMAIL_ESCALATION,
+          // Senza questa copia il messaggio arriva a Cherubina ma nessun
+          // ticket viene aperto: verificato su 40 inoltri reali su 41.
+          cc: EMAIL_TICKETING,
+          testo: TESTO_ESCALATION,
+        }),
+        azione("e2", "freshdesk.trovaTicket"),
+        azione("e3", "freshdesk.tag", { tag: "{sede}" }),
+        azione("e4", "freshdesk.assegna", { agenteId: AGENTE_ESCALATION }),
+        azione("e5", "sistema.attendiRisposta", { da: EMAIL_ESCALATION }),
       ],
     },
   ];

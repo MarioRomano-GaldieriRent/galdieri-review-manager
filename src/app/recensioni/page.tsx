@@ -178,7 +178,9 @@ export default async function RecensioniPage({
 
                 {mostraOriginale && (
                   <details className="review-original">
-                    <summary>Testo originale{c.lingua ? ` (${c.lingua.toUpperCase()})` : ""}</summary>
+                    <summary>
+                      Testo originale{c.lingua ? ` (${c.lingua.toUpperCase()})` : ""}
+                    </summary>
                     <p>{c.originale}</p>
                   </details>
                 )}
@@ -198,7 +200,10 @@ export default async function RecensioniPage({
                   )}
                   {c.risolto && <span className="flag flag-gray">ticket risolto</span>}
                   <span className="flag flag-gray">{c.numeroMessaggi} messaggi</span>
-                  <Link className="btn-mini" href={`/email?id=${encodeURIComponent(c.messaggioId)}`}>
+                  <Link
+                    className="btn-mini"
+                    href={`/email?id=${encodeURIComponent(c.messaggioId)}`}
+                  >
                     Vedi il flusso →
                   </Link>
                 </footer>

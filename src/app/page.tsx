@@ -21,11 +21,7 @@ function buildQuery(params: Record<string, string | undefined>): string {
   return s ? `/?${s}` : "/";
 }
 
-export default async function InboxPage({
-  searchParams,
-}: {
-  searchParams: Promise<SearchParams>;
-}) {
+export default async function InboxPage({ searchParams }: { searchParams: Promise<SearchParams> }) {
   const sp = await searchParams;
   const page = Math.max(1, Number(sp.page ?? "1") || 1);
   const q = sp.q?.trim() || "";

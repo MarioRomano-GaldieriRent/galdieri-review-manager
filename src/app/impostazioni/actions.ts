@@ -115,9 +115,12 @@ export async function cambiaModoAction(formData: FormData): Promise<void> {
 
   if (richiesto === "reale") {
     if (str(formData, "conferma").toUpperCase() !== "REALE") {
-      redirect("/impostazioni?test=modo&ok=0&msg=" + encodeURIComponent(
-        "Per attivare la modalità reale scrivi REALE nella casella di conferma.",
-      ));
+      redirect(
+        "/impostazioni?test=modo&ok=0&msg=" +
+          encodeURIComponent(
+            "Per attivare la modalità reale scrivi REALE nella casella di conferma.",
+          ),
+      );
     }
     s.modo = "reale";
   } else {

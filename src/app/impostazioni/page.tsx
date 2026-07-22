@@ -112,7 +112,10 @@ export default async function ImpostazioniPage({
             </label>
           )}
           <div className="filters-actions">
-            <button type="submit" className={simulazione ? "btn-secondary btn-danger" : "btn-primary"}>
+            <button
+              type="submit"
+              className={simulazione ? "btn-secondary btn-danger" : "btn-primary"}
+            >
               {simulazione ? "Attiva modalità reale" : "Torna in simulazione"}
             </button>
           </div>
@@ -135,9 +138,10 @@ export default async function ImpostazioniPage({
           <a href="/automazioni">Automazioni</a>.
         </p>
         <p className="notice">
-          <strong>In questa fase è attiva solo «5 stelle senza testo».</strong> È il caso più
-          semplice e meno rischioso: un ringraziamento non può essere sbagliato nel merito. Le altre
-          regole restano scritte e pronte ma spente — accendile una alla volta, quando vuoi provarle.
+          <strong>Attive: «5 stelle senza testo» e «1 e 2 stelle».</strong> Le altre restano scritte
+          ma spente, da accendere una alla volta. Nelle regole con una risposta al cliente il testo
+          si scrive due volte, in italiano e in inglese: si usa l&apos;italiano se la recensione è
+          in italiano, altrimenti l&apos;inglese — è come si risponde oggi.
         </p>
         <div className="label-actions">
           <form action={ripristinaRegoleAction}>
@@ -222,11 +226,19 @@ export default async function ImpostazioniPage({
           <div className="form-grid">
             <label className="field">
               <span>Tenant ID</span>
-              <input name="tenantId" defaultValue={settings.graph.tenantId ?? ""} placeholder={graph.tenantId} />
+              <input
+                name="tenantId"
+                defaultValue={settings.graph.tenantId ?? ""}
+                placeholder={graph.tenantId}
+              />
             </label>
             <label className="field">
               <span>Client ID</span>
-              <input name="clientId" defaultValue={settings.graph.clientId ?? ""} placeholder={graph.clientId} />
+              <input
+                name="clientId"
+                defaultValue={settings.graph.clientId ?? ""}
+                placeholder={graph.clientId}
+              />
             </label>
             <label className="field">
               <span>Client secret</span>
@@ -239,7 +251,11 @@ export default async function ImpostazioniPage({
             </label>
             <label className="field">
               <span>Endpoint Graph</span>
-              <input name="graphUrl" defaultValue={settings.graph.graphUrl ?? ""} placeholder={graph.graphUrl} />
+              <input
+                name="graphUrl"
+                defaultValue={settings.graph.graphUrl ?? ""}
+                placeholder={graph.graphUrl}
+              />
             </label>
           </div>
           <div className="label-actions">
@@ -427,9 +443,9 @@ export default async function ImpostazioniPage({
           <strong>Come si attiva.</strong> 1) In Google Cloud Console crea un client OAuth e abilita
           la <em>Business Profile API</em>. 2) Compila il modulo di richiesta accesso: Google
           assegna <strong>quota 0</strong> di default e finché non approva ogni chiamata risponde
-          403. 3) Ottieni una volta sola un refresh token con scope{" "}
-          <code>business.manage</code>. Nel frattempo le recensioni continuano ad arrivare via email
-          (Zapier), che è la sorgente usata ora.
+          403. 3) Ottieni una volta sola un refresh token con scope <code>business.manage</code>.
+          Nel frattempo le recensioni continuano ad arrivare via email (Zapier), che è la sorgente
+          usata ora.
         </p>
       </section>
 
@@ -455,7 +471,11 @@ export default async function ImpostazioniPage({
               </label>
               <label className="field">
                 <span>Mittente contiene (facoltativo)</span>
-                <input name="fromContains" defaultValue={l.fromContains} placeholder="es. zapiermail" />
+                <input
+                  name="fromContains"
+                  defaultValue={l.fromContains}
+                  placeholder="es. zapiermail"
+                />
               </label>
             </div>
             <div className="label-actions">

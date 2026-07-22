@@ -214,9 +214,16 @@ export async function cercaTicketPerRecensione(
 
   const candidati: { t: FdTicket; distanza: number }[] = [];
   let stessoOggetto = 0;
+  let esaminati = 0;
 
-  for (let page = 1; page <= (opts.pagine ?? 3); page++) {
+  // Sei pagine da cento. Con circa 120 recensioni a settimana più il resto del
+  // traffico, trecento ticket coprivano appena due giorni: le recensioni di
+  // qualche giorno prima restavano fuori e risultavano "senza ticket".
+  const pagine = opts.pagine ?? 6;
+
+  for (let page = 1; page <= pagine; page++) {
     const { tickets, hasMore } = await listTickets({ page, perPage: 100 });
+    esaminati += tickets.length;
     for (const t of tickets) {
       if (normalizzaOggetto(t.subject) !== atteso) continue;
       stessoOggetto++;
@@ -232,7 +239,7 @@ export async function cercaTicketPerRecensione(
       ticket: null,
       motivo: stessoOggetto
         ? `${stessoOggetto} ticket con lo stesso oggetto, ma tutti precedenti all'email: nessuno nato da questa recensione`
-        : "nessun ticket con questo oggetto",
+        : `nessun ticket con questo oggetto fra gli ultimi ${esaminati} esaminati`,
     };
   }
 

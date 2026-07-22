@@ -48,7 +48,12 @@ export async function getGoogleReviewsStatus(): Promise<GoogleReviewsStatus> {
 /** Nome risorsa della recensione secondo lo schema dell'API v4. */
 export function nomeRisorsaRecensione(accountId: string, sede: string, recensione: string): string {
   const acc = accountId || "accounts/DEMO";
-  const loc = sede ? sede.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") : "sede";
+  const loc = sede
+    ? sede
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-|-$/g, "")
+    : "sede";
   return `${acc}/locations/${loc}/reviews/${recensione}`;
 }
 

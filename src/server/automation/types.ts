@@ -99,9 +99,15 @@ export const CATALOGO: Record<TipoAzione, DescrizioneAzione> = {
     parametri: [
       {
         nome: "testo",
-        etichetta: "Testo della risposta",
+        etichetta: "Testo in italiano",
         multilinea: true,
         aiuto: "Segnaposto disponibili: {nome} {sede} {stelle}",
+      },
+      {
+        nome: "testoInglese",
+        etichetta: "Testo in inglese",
+        multilinea: true,
+        aiuto: "Usato quando la recensione non è in italiano. Vuoto = si usa comunque l'italiano.",
       },
     ],
   },
@@ -117,17 +123,24 @@ export const CATALOGO: Record<TipoAzione, DescrizioneAzione> = {
         etichetta: "Destinatario",
         aiuto: "Vuoto = segue il Reply-To dell'email (customer.care@galdierirent.it)",
       },
-      { nome: "testo", etichetta: "Testo della risposta", multilinea: true },
+      { nome: "testo", etichetta: "Testo in italiano", multilinea: true },
+      {
+        nome: "testoInglese",
+        etichetta: "Testo in inglese",
+        multilinea: true,
+        aiuto: "Usato quando la recensione non è in italiano. Vuoto = si usa comunque l'italiano.",
+      },
     ],
   },
   "email.inoltra": {
     servizio: "email",
     titolo: "Inoltra l'email",
     descrizione:
-      "Inoltra il messaggio originale della recensione a un'altra casella, con un testo di accompagnamento.",
+      "Inoltra il messaggio della recensione a un collega, con un testo di accompagnamento. La copia conoscenza NON è un dettaglio: nelle recensioni negative è il CC a customer.care che fa nascere il ticket su Freshdesk. Senza, il messaggio arriva al collega ma non viene tracciato.",
     scrittura: true,
     parametri: [
       { nome: "a", etichetta: "Destinatario" },
+      { nome: "cc", etichetta: "Copia conoscenza", aiuto: "È questa che apre il ticket" },
       { nome: "testo", etichetta: "Testo di accompagnamento", multilinea: true },
     ],
   },

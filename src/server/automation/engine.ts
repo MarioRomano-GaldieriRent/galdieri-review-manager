@@ -17,10 +17,7 @@ function nuovoId(): string {
   return `run-${Date.now().toString(36)}-${contatore}`;
 }
 
-export async function eseguiRegola(
-  regola: Regola,
-  recensione: Recensione,
-): Promise<Esecuzione> {
+export async function eseguiRegola(regola: Regola, recensione: Recensione): Promise<Esecuzione> {
   const modo = await modoOperativo();
   const automation = await resolveAutomation();
 

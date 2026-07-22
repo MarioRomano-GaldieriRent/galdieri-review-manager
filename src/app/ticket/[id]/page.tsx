@@ -105,8 +105,7 @@ export default async function TicketDetail({ params }: { params: Promise<{ id: s
           <div className="mail-meta-row">
             <span className="mail-meta-label">Richiedente</span>
             <span>
-              {ticket.requesterName || "—"}{" "}
-              <span className="muted">{ticket.requesterEmail}</span>
+              {ticket.requesterName || "—"} <span className="muted">{ticket.requesterEmail}</span>
             </span>
           </div>
           <div className="mail-meta-row">
@@ -153,7 +152,9 @@ export default async function TicketDetail({ params }: { params: Promise<{ id: s
             <summary className="thread-summary">
               <span className="thread-from">Richiesta iniziale</span>
               <span className="thread-date">{fmt.format(new Date(ticket.createdAt))}</span>
-              <span className="thread-preview">{ticket.requesterName || ticket.requesterEmail}</span>
+              <span className="thread-preview">
+                {ticket.requesterName || ticket.requesterEmail}
+              </span>
             </summary>
             <div className="thread-body">
               <iframe

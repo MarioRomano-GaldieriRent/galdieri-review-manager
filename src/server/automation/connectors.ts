@@ -9,6 +9,12 @@ import {
 } from "@/server/settings";
 import type { Recensione } from "@/server/reviews/load";
 import { testoRecensione } from "@/server/reviews/load";
+import {
+  etichettaLingua,
+  riconosciLingua,
+  testoNellaLingua,
+  type Lingua,
+} from "@/server/reviews/lingua";
 import { citaIlPersonale, tagSede } from "./sedi";
 import { CATALOGO, type Azione } from "./types";
 
@@ -35,17 +41,36 @@ export type RisultatoNodo = {
   ticket?: FdTicket | null;
 };
 
+/**
+ * Sceglie il testo nella lingua giusta e ci sostituisce i segnaposto.
+ *
+ * La regola non è "rispondi nella lingua della recensione" ma la più semplice
+ * a due vie che si vede nei dati: italiano se la recensione è in italiano,
+ * altrimenti inglese. Quando la lingua non è riconoscibile si resta
+ * sull'italiano.
+ */
+export function testoPerRecensione(a: Azione, r: Recensione): { testo: string; lingua: Lingua } {
+  const lingua = riconosciLingua(testoRecensione(r));
+  const scelto = testoNellaLingua(lingua, a.parametri.testo ?? "", a.parametri.testoInglese ?? "");
+  return { testo: interpola(scelto, r), lingua };
+}
+
 /** Sostituisce i segnaposto con i dati della recensione. */
 export function interpola(testo: string, r: Recensione): string {
   const commento = testoRecensione(r);
-  return testo
-    .replace(/\{nome\}/g, r.nome || "cliente")
-    .replace(/\{sede\}/g, tagSede(r.sede) || r.sede || "")
-    .replace(/\{sedeEstesa\}/g, r.sede || "")
-    .replace(/\{stelle\}/g, r.stelle ? String(r.stelle) : "")
-    .replace(/\{commento\}/g, commento)
-    .replace(/\{personale\}/g, citaIlPersonale(commento) ? "personale" : "")
-    .trim();
+  return (
+    testo
+      .replace(/\{nome\}/g, r.nome || "cliente")
+      // Sede non riconosciuta = nessun tag. Ripiegare sul nome esteso creava
+      // tag inventati come "Point Verona Nord", che non è il formato usato su
+      // Freshdesk: meglio non taggare che sporcare il ticket.
+      .replace(/\{sede\}/g, tagSede(r.sede))
+      .replace(/\{sedeEstesa\}/g, r.sede || "")
+      .replace(/\{stelle\}/g, r.stelle ? String(r.stelle) : "")
+      .replace(/\{commento\}/g, commento)
+      .replace(/\{personale\}/g, citaIlPersonale(commento) ? "personale" : "")
+      .trim()
+  );
 }
 
 // ------------------------------------------------------------------ lettura
@@ -220,14 +245,14 @@ async function cambiaStato(a: Azione, ctx: Contesto): Promise<RisultatoNodo> {
 }
 
 async function rispondiSuGoogle(a: Azione, ctx: Contesto): Promise<RisultatoNodo> {
-  const testo = interpola(a.parametri.testo ?? "", ctx.recensione);
+  const { testo, lingua } = testoPerRecensione(a, ctx.recensione);
   const esito = await rispondiARecensione({
     sede: ctx.recensione.sede,
     idRecensione: ctx.recensione.chiave.slice(0, 24),
     testo,
   });
   return {
-    messaggio: `«${testo}» — ${esito.messaggio}`,
+    messaggio: `«${testo}» (${etichettaLingua(lingua)}) — ${esito.messaggio}`,
     chiamata: esito.chiamata,
     eseguita: esito.pubblicata,
   };
@@ -238,7 +263,7 @@ async function rispondiSuGoogle(a: Azione, ctx: Contesto): Promise<RisultatoNodo
  * aprire il ticket su Freshdesk, non una chiamata all'API di ticketing.
  */
 async function rispondiEmail(a: Azione, ctx: Contesto): Promise<RisultatoNodo> {
-  const testo = interpola(a.parametri.testo ?? "", ctx.recensione);
+  const { testo, lingua } = testoPerRecensione(a, ctx.recensione);
   const destinatario = (a.parametri.a ?? "").trim();
   const mailbox = await activeMailbox();
 
@@ -257,7 +282,7 @@ async function rispondiEmail(a: Azione, ctx: Contesto): Promise<RisultatoNodo> {
 
   if (!(await scritturaConsentita())) {
     return {
-      messaggio: `Risposta «${testo}» a ${dove} — non inviata (modalità simulazione). Nel flusso reale è questo passaggio ad aprire il ticket.`,
+      messaggio: `Risposta «${testo}» (${etichettaLingua(lingua)}) a ${dove} — non inviata (modalità simulazione). Nel flusso reale è questo passaggio ad aprire il ticket.`,
       chiamata,
       eseguita: false,
     };
@@ -273,30 +298,44 @@ async function rispondiEmail(a: Azione, ctx: Contesto): Promise<RisultatoNodo> {
 }
 
 async function inoltraEmail(a: Azione, ctx: Contesto): Promise<RisultatoNodo> {
-  const a_ = a.parametri.a || ctx.automation.emailEscalation;
+  const destinatario = a.parametri.a || ctx.automation.emailEscalation;
   const testo = interpola(a.parametri.testo || ctx.automation.testoEscalation, ctx.recensione);
   const mailbox = await activeMailbox();
+
+  // Il CC vale quanto il destinatario: è la copia a customer.care che apre il
+  // ticket. Sui 41 inoltri reali degli ultimi 30 giorni, 40 avevano quel CC.
+  const cc = (a.parametri.cc ?? "")
+    .split(",")
+    .map((x) => x.trim())
+    .filter(Boolean);
+
+  const corpo: Record<string, unknown> = {
+    comment: testo,
+    toRecipients: [{ emailAddress: { address: destinatario } }],
+  };
+  if (cc.length > 0) {
+    corpo.ccRecipients = cc.map((address) => ({ emailAddress: { address } }));
+  }
 
   const chiamata = {
     metodo: "POST",
     url: `https://graph.microsoft.com/v1.0/users/${mailbox}/messages/${ctx.recensione.messaggioId}/forward`,
-    corpo: JSON.stringify(
-      { comment: testo, toRecipients: [{ emailAddress: { address: a_ } }] },
-      null,
-      2,
-    ),
+    corpo: JSON.stringify(corpo, null, 2),
   };
+
+  const conCc =
+    cc.length > 0 ? `, in copia a ${cc.join(", ")}` : " — SENZA copia: il ticket non nascerà";
 
   if (!(await scritturaConsentita())) {
     return {
-      messaggio: `Inoltro a ${a_} con «${testo}» — non inviato (modalità simulazione).`,
+      messaggio: `Inoltro a ${destinatario}${conCc}, con «${testo}» — non inviato (modalità simulazione).`,
       chiamata,
       eseguita: false,
     };
   }
 
-  await forwardMessage(ctx.recensione.messaggioId, [a_], testo, mailbox);
-  return { messaggio: `Inoltrata a ${a_}.`, chiamata, eseguita: true };
+  await forwardMessage(ctx.recensione.messaggioId, [destinatario], testo, mailbox, cc);
+  return { messaggio: `Inoltrata a ${destinatario}${conCc}.`, chiamata, eseguita: true };
 }
 
 // ------------------------------------------------------------------ dispatch

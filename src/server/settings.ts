@@ -116,8 +116,7 @@ export async function loadSettings(): Promise<Settings> {
       // Qualsiasi valore diverso da "reale" ricade su simulazione: un file
       // corrotto o troncato non deve mai poter abilitare le scritture.
       modo: p.modo === "reale" ? "reale" : "simulazione",
-      labels:
-        Array.isArray(p.labels) && p.labels.length > 0 ? p.labels : DEFAULT_SETTINGS.labels,
+      labels: Array.isArray(p.labels) && p.labels.length > 0 ? p.labels : DEFAULT_SETTINGS.labels,
       graph: p.graph ?? {},
       translator: p.translator ?? {},
       freshdesk: p.freshdesk ?? {},
@@ -175,7 +174,11 @@ export async function resolveGraph(s?: Settings): Promise<GraphConfig> {
     tenantId: pick(st.graph.tenantId, process.env.MICROSOFT_TENANT_ID),
     clientId: pick(st.graph.clientId, process.env.MICROSOFT_CLIENT_ID),
     clientSecret: pick(st.graph.clientSecret, process.env.MICROSOFT_CLIENT_SECRET),
-    graphUrl: pick(st.graph.graphUrl, process.env.GRAPH_API_URL, "https://graph.microsoft.com/v1.0"),
+    graphUrl: pick(
+      st.graph.graphUrl,
+      process.env.GRAPH_API_URL,
+      "https://graph.microsoft.com/v1.0",
+    ),
   };
 }
 

@@ -338,16 +338,25 @@ export async function forwardMessage(
   destinatari: string[],
   commento: string,
   mailbox?: string,
+  copiaConoscenza: string[] = [],
 ): Promise<void> {
   const { token, base } = await ctx(mailbox);
+
+  // Il CC non è un dettaglio: negli inoltri delle recensioni negative è la
+  // copia a customer.care che fa nascere il ticket su Freshdesk. Senza, il
+  // messaggio arriverebbe al collega ma non verrebbe tracciato.
+  const corpo: Record<string, unknown> = {
+    comment: commento,
+    toRecipients: destinatari.map((address) => ({ emailAddress: { address } })),
+  };
+  if (copiaConoscenza.length > 0) {
+    corpo.ccRecipients = copiaConoscenza.map((address) => ({ emailAddress: { address } }));
+  }
 
   const res = await fetch(`${base}/messages/${encodeURIComponent(id)}/forward`, {
     method: "POST",
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      comment: commento,
-      toRecipients: destinatari.map((address) => ({ emailAddress: { address } })),
-    }),
+    body: JSON.stringify(corpo),
     cache: "no-store",
   });
 

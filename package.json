@@ -13,7 +13,8 @@
     "format:check": "prettier --check .",
     "test:graph": "tsx scripts/test-graph.ts",
     "test:automazioni": "tsx --tsconfig tsconfig.json scripts/test-automazioni.ts",
-    "analisi": "tsx --tsconfig tsconfig.json scripts/analisi-recensioni.ts"
+    "analisi": "tsx --tsconfig tsconfig.json scripts/analisi-recensioni.ts",
+    "test:lingua": "tsx --tsconfig tsconfig.json scripts/test-lingua.ts"
   },
   "dependencies": {
     "next": "^15.1.0",

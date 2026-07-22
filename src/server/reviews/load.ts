@@ -65,12 +65,32 @@ function raggruppa(messaggi: MailDetail[], label: Label) {
   for (const [chiave, gruppo] of perConversazione) {
     // Il messaggio che contiene davvero i campi della recensione; si preferisce
     // l'originale di Zapier rispetto alle risposte che lo citano.
-    let best: { msg: MailDetail; parsed: NonNullable<ReturnType<typeof parseReview>> } | null = null;
+    let best: { msg: MailDetail; parsed: NonNullable<ReturnType<typeof parseReview>> } | null =
+      null;
+    // Zapier a volte manda la stessa recensione due volte. Fra i duplicati si
+    // tiene il PIÙ VECCHIO: è quello l'istante in cui la recensione è arrivata
+    // davvero, ed è rispetto a quello che nasce il ticket. Tenendo il più
+    // recente, il ticket vero risultava anteriore alla recensione e non veniva
+    // più agganciato.
     for (const m of gruppo) {
       const parsed = parseReview(m.bodyIsHtml ? htmlToText(m.bodyContent) : m.bodyContent);
       if (!parsed) continue;
-      const isZapier = m.fromAddress.toLowerCase().includes("zapier");
-      if (!best || (isZapier && !best.msg.fromAddress.toLowerCase().includes("zapier"))) {
+
+      if (!best) {
+        best = { msg: m, parsed };
+        continue;
+      }
+
+      const questoZapier = m.fromAddress.toLowerCase().includes("zapier");
+      const bestZapier = best.msg.fromAddress.toLowerCase().includes("zapier");
+
+      // Un messaggio di Zapier batte sempre una risposta che lo cita.
+      if (questoZapier && !bestZapier) {
+        best = { msg: m, parsed };
+        continue;
+      }
+      // A parità di provenienza vince il più vecchio.
+      if (questoZapier === bestZapier && m.receivedDateTime < best.msg.receivedDateTime) {
         best = { msg: m, parsed };
       }
     }

@@ -171,9 +171,7 @@ export default async function EmailPage({
             ← Torna alla posta
           </Link>
           <span className="page-info">
-            {thread.length === 1
-              ? "1 messaggio"
-              : `${thread.length} messaggi nella conversazione`}
+            {thread.length === 1 ? "1 messaggio" : `${thread.length} messaggi nella conversazione`}
           </span>
         </div>
 
@@ -182,8 +180,8 @@ export default async function EmailPage({
         {threadError && (
           <section className="card">
             <p className="form-error">
-              Non è stato possibile caricare l&apos;intera conversazione ({threadError}). Mostro solo
-              il messaggio selezionato.
+              Non è stato possibile caricare l&apos;intera conversazione ({threadError}). Mostro
+              solo il messaggio selezionato.
             </p>
           </section>
         )}

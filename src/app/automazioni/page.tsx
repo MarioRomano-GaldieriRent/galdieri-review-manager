@@ -9,11 +9,7 @@ import { tagSede } from "@/server/automation/sedi";
 import { caricaRecensioni, haTesto, testoRecensione, type Recensione } from "@/server/reviews/load";
 import { loadSettings } from "@/server/settings";
 import { NodoEseguito } from "../_ui/automazioni";
-import {
-  eliminaEsecuzioneAction,
-  eseguiSuRecensioneAction,
-  svuotaRegistroAction,
-} from "./actions";
+import { eliminaEsecuzioneAction, eseguiSuRecensioneAction, svuotaRegistroAction } from "./actions";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Automazioni — Galdieri rent" };
@@ -57,10 +53,19 @@ function Esito({ e }: { e: Esecuzione }) {
   );
 }
 
+/** Indirizzo del pannello conservando il filtro attivo. */
+function href(stelle?: number | null, run?: string): string {
+  const p = new URLSearchParams();
+  if (stelle) p.set("stelle", String(stelle));
+  if (run) p.set("run", run);
+  const s = p.toString();
+  return s ? `/automazioni?${s}` : "/automazioni";
+}
+
 export default async function AutomazioniPage({
   searchParams,
 }: {
-  searchParams: Promise<{ run?: string; errore?: string }>;
+  searchParams: Promise<{ run?: string; errore?: string; stelle?: string }>;
 }) {
   const sp = await searchParams;
   const settings = await loadSettings();
@@ -89,19 +94,31 @@ export default async function AutomazioniPage({
 
   // Solo le recensioni per cui una regola scatterebbe davvero: è questa la coda
   // di lavoro. Le altre restano visibili nel pannello Recensioni.
-  const inCoda = recensioni
+  const tuttaLaCoda = recensioni
     .map((r) => ({ r, regola: regolaPer(regole, r.stelle, haTesto(r)) }))
     .filter((x) => x.regola !== null);
-  const scartate = recensioni.length - inCoda.length;
-  const daFare = inCoda.filter((x) => !ultime.has(x.r.chiave)).length;
+  const scartate = recensioni.length - tuttaLaCoda.length;
   const attive = regole.filter((r) => r.attiva);
+
+  // Filtro per stelle. I conteggi si calcolano SEMPRE sull'intera coda, così i
+  // livelli restano visibili anche quando un filtro è attivo.
+  const stelleNum = Number(sp.stelle);
+  const stelleSel = stelleNum >= 1 && stelleNum <= 5 ? stelleNum : null;
+  const conteggi: Record<number, number> = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+  for (const { r } of tuttaLaCoda) {
+    if (r.stelle && conteggi[r.stelle] !== undefined) conteggi[r.stelle] += 1;
+  }
+
+  const inCoda = stelleSel ? tuttaLaCoda.filter((x) => x.r.stelle === stelleSel) : tuttaLaCoda;
+  const daFare = inCoda.filter((x) => !ultime.has(x.r.chiave)).length;
 
   return (
     <main>
       <h1>Automazioni</h1>
       <p className="subtitle">
         {inCoda.length} recensioni in coda, {daFare} mai eseguite — su {recensioni.length} lette
-        dalla posta.
+        dalla posta
+        {stelleSel ? ` · filtro ${stelleSel}★` : ""}
       </p>
 
       {/* Le recensioni escluse non spariscono in silenzio: si dice quante sono
@@ -111,12 +128,38 @@ export default async function AutomazioniPage({
           <strong>
             {scartate} recensioni su {recensioni.length} restano fuori dalla coda.
           </strong>{" "}
-          In questa fase è attiva una sola regola —{" "}
-          {attive.map((r) => r.nome).join(", ") || "nessuna"} — perché stiamo lavorando solo il caso
-          più semplice. Le altre regole sono già scritte ma spente: si accendono da{" "}
-          <Link href="/impostazioni#automazioni">Impostazioni</Link> una alla volta. Le recensioni
-          escluse restano tutte visibili in <Link href="/recensioni">Recensioni</Link>.
+          Nessuna regola attiva le copre. Attive adesso:{" "}
+          {attive.map((r) => r.nome).join(", ") || "nessuna"}. Le altre sono già scritte ma spente e
+          si accendono da <Link href="/impostazioni#automazioni">Impostazioni</Link> una alla volta.
+          Le recensioni escluse restano tutte visibili in <Link href="/recensioni">Recensioni</Link>
+          .
         </p>
+      )}
+
+      {/* Filtro per stelle: serve a simulare un livello alla volta. */}
+      {tuttaLaCoda.length > 0 && (
+        <div className="star-filter">
+          <Link href={href(null)} className={`star-chip chip-all${stelleSel ? "" : " is-active"}`}>
+            Tutte <span className="chip-count">{tuttaLaCoda.length}</span>
+          </Link>
+          {[1, 2, 3, 4, 5].map((n) => {
+            const attivo = stelleSel === n;
+            return (
+              <Link
+                key={n}
+                href={attivo ? href(null) : href(n)}
+                className={`star-chip s${n}${attivo ? " is-active" : ""}${conteggi[n] === 0 ? " is-empty" : ""}`}
+                aria-label={`${conteggi[n]} recensioni da ${n} stelle in coda`}
+              >
+                <span className="chip-stars">
+                  {"★".repeat(n)}
+                  <span className="stars-empty">{"★".repeat(5 - n)}</span>
+                </span>
+                <span className="chip-count">{conteggi[n]}</span>
+              </Link>
+            );
+          })}
+        </div>
       )}
 
       {/* Riga di stato: modalità in vigore e dove si configura il flusso. */}
@@ -166,8 +209,17 @@ export default async function AutomazioniPage({
       {inCoda.length === 0 && !errore ? (
         <section className="card">
           <p className="hint">
-            Nessuna recensione in coda. Controlla che ci siano regole attive in{" "}
-            <Link href="/impostazioni#automazioni">Impostazioni</Link>.
+            {stelleSel ? (
+              <>
+                Nessuna recensione da {stelleSel}★ in coda.{" "}
+                <Link href={href(null)}>Togli il filtro</Link> per vedere le altre.
+              </>
+            ) : (
+              <>
+                Nessuna recensione in coda. Controlla che ci siano regole attive in{" "}
+                <Link href="/impostazioni#automazioni">Impostazioni</Link>.
+              </>
+            )}
           </p>
         </section>
       ) : (
@@ -204,7 +256,9 @@ export default async function AutomazioniPage({
                   <span className="flag flag-green">{regola!.nome}</span>
                   <span className="flag flag-gray">{regola!.azioni.length} passaggi</span>
                   {ultima && (
-                    <span className={`flag ${ultima.esito === "errore" ? "flag-red" : "flag-gray"}`}>
+                    <span
+                      className={`flag ${ultima.esito === "errore" ? "flag-red" : "flag-gray"}`}
+                    >
                       eseguita {fmt.format(new Date(ultima.quando))}
                     </span>
                   )}
@@ -221,6 +275,7 @@ export default async function AutomazioniPage({
                   <form action={eseguiSuRecensioneAction}>
                     <input type="hidden" name="chiave" value={r.chiave} />
                     <input type="hidden" name="label" value={label?.id ?? ""} />
+                    <input type="hidden" name="stelle" value={stelleSel ?? ""} />
                     <button
                       type="submit"
                       className={simulazione ? "btn-primary" : "btn-primary btn-danger"}
@@ -241,7 +296,10 @@ export default async function AutomazioniPage({
                       </form>
                     </>
                   )}
-                  <Link className="btn-mini" href={`/email?id=${encodeURIComponent(r.messaggioId)}`}>
+                  <Link
+                    className="btn-mini"
+                    href={`/email?id=${encodeURIComponent(r.messaggioId)}`}
+                  >
                     Email →
                   </Link>
                 </footer>
@@ -298,7 +356,7 @@ export default async function AutomazioniPage({
                       </span>
                     </td>
                     <td className="thread-actions">
-                      <Link className="btn-mini" href={`/automazioni?run=${e.id}`}>
+                      <Link className="btn-mini" href={href(stelleSel, e.id)}>
                         Dettaglio
                       </Link>
                       <form action={eliminaEsecuzioneAction}>

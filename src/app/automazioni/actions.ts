@@ -4,11 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { caricaRegole, regolaPer } from "@/server/automation/rules";
 import { eseguiRegola } from "@/server/automation/engine";
-import {
-  eliminaEsecuzione,
-  registraEsecuzione,
-  svuotaEsecuzioni,
-} from "@/server/automation/runs";
+import { eliminaEsecuzione, registraEsecuzione, svuotaEsecuzioni } from "@/server/automation/runs";
 import { caricaRecensioni, haTesto } from "@/server/reviews/load";
 import { loadSettings } from "@/server/settings";
 
@@ -42,7 +38,11 @@ export async function eseguiSuRecensioneAction(formData: FormData): Promise<void
   await registraEsecuzione(esecuzione);
 
   revalidatePath("/automazioni");
-  redirect(`/automazioni?run=${encodeURIComponent(esecuzione.id)}`);
+  // Si torna al filtro da cui si era partiti, invece di riaprire tutta la coda.
+  const p = new URLSearchParams({ run: esecuzione.id });
+  const stelle = str(formData, "stelle");
+  if (stelle) p.set("stelle", stelle);
+  redirect(`/automazioni?${p}`);
 }
 
 /** Cancella una singola prova, così si può ripetere da capo. */

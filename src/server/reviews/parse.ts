@@ -99,5 +99,8 @@ export function locationFromSubject(subject: string, subjectContains: string): s
     .trim();
   const idx = cleaned.toUpperCase().indexOf(subjectContains.toUpperCase());
   if (idx === -1) return "";
-  return cleaned.slice(idx + subjectContains.length).trim().replace(/^[-–:]\s*/, "");
+  return cleaned
+    .slice(idx + subjectContains.length)
+    .trim()
+    .replace(/^[-–:]\s*/, "");
 }
