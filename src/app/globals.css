@@ -1623,3 +1623,362 @@ main.pannello {
     border-color: var(--g-blue);
   }
 }
+
+/* ===========================================================================
+   Dashboard operativa — tre colonne.
+
+   Al centro la coda di lavoro, ai lati le due destinazioni possibili: la
+   recensione lavorata (sinistra) e quella passata al customer care (destra).
+   Colori e superfici sono quelli del tema, così la schermata resta leggibile
+   sia in chiaro sia in scuro; il rosso del marchio marca solo ciò su cui si
+   decide, cioè la risposta proposta.
+   =========================================================================== */
+
+main.dash {
+  max-width: 1560px;
+}
+
+.dash-testa {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  flex-wrap: wrap;
+  margin-bottom: 18px;
+}
+
+.dash-stato-servizi {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding-top: 8px;
+}
+
+.dash-colonne {
+  display: grid;
+  grid-template-columns: 300px minmax(0, 1fr) 300px;
+  gap: 20px;
+  align-items: start;
+}
+
+/* ------------------------------------------------------- colonne laterali */
+
+.dash-col {
+  position: sticky;
+  top: 16px;
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+  max-height: calc(100vh - 40px);
+  overflow-y: auto;
+}
+
+.dash-col-testa {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.dash-col-titolo {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-soft);
+}
+
+.dash-conteggio {
+  font-size: 0.78rem;
+  font-weight: 700;
+  padding: 2px 9px;
+  border-radius: 999px;
+}
+
+.dash-conteggio-fatta {
+  color: var(--g-green);
+  background: rgba(52, 168, 83, 0.14);
+}
+
+.dash-conteggio-attesa {
+  color: #b06000;
+  background: rgba(249, 171, 0, 0.18);
+}
+
+:root[data-theme="dark"] .dash-conteggio-attesa {
+  color: var(--g-yellow-dark);
+}
+
+.dash-col-nota {
+  margin: 6px 0 14px;
+  font-size: 0.78rem;
+  color: var(--text-soft);
+  line-height: 1.4;
+}
+
+.dash-mini {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 11px 12px;
+  margin-bottom: 10px;
+}
+
+.dash-mini-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.dash-mini-name {
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.dash-mini-date {
+  font-size: 0.72rem;
+  color: var(--text-soft);
+  white-space: nowrap;
+}
+
+.dash-mini-text {
+  margin: 6px 0 0;
+  font-size: 0.8rem;
+  line-height: 1.45;
+  color: var(--text-soft);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.dash-mini-foot {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 9px;
+  font-size: 0.74rem;
+  font-weight: 600;
+}
+
+.dash-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+}
+
+.dash-dot-fatta {
+  background: var(--g-green);
+}
+
+.dash-dot-attesa {
+  background: var(--g-yellow-dark);
+}
+
+.dash-stato-fatta {
+  color: var(--g-green);
+}
+
+.dash-stato-attesa {
+  color: #b06000;
+}
+
+:root[data-theme="dark"] .dash-stato-attesa {
+  color: var(--g-yellow-dark);
+}
+
+.dash-mini-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 9px;
+}
+
+/* ------------------------------------------------------------- il centro */
+
+.dash-centro-testa h2 {
+  margin: 0;
+  font-size: 1.3rem;
+}
+
+.dash-centro-testa .hint {
+  margin: 2px 0 14px;
+}
+
+.dash-vuoto {
+  text-align: center;
+  color: var(--text-soft);
+  padding: 46px 20px;
+}
+
+.dash-card {
+  padding: 18px 20px;
+}
+
+.dash-card-testa {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.dash-autore {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+}
+
+.dash-iniziale {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
+  display: grid;
+  place-items: center;
+  font-weight: 700;
+  flex: 0 0 auto;
+}
+
+.dash-autore-riga {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.dash-fonte,
+.dash-lingua {
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+
+.dash-fonte {
+  color: var(--g-blue-dark);
+  border: 1px solid var(--g-blue);
+}
+
+.dash-lingua {
+  color: var(--text-soft);
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
+}
+
+.dash-meta {
+  font-size: 0.76rem;
+  color: var(--text-soft);
+  margin-top: 2px;
+}
+
+/* La risposta proposta: è il punto su cui si decide, quindi è marcata. */
+.dash-proposta {
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--brand-red);
+  border-radius: var(--radius-sm);
+  padding: 13px 15px;
+  margin-top: 12px;
+}
+
+.dash-proposta-testa {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--brand-red);
+  margin-bottom: 9px;
+}
+
+.dash-testo {
+  width: 100%;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 0.88rem;
+  line-height: 1.5;
+  padding: 9px 11px;
+  resize: vertical;
+}
+
+.dash-testo:focus {
+  outline: none;
+  border-color: var(--brand-red);
+}
+
+.dash-azioni {
+  display: flex;
+  gap: 9px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+
+.dash-senza-regola {
+  margin-top: 12px;
+}
+
+.dash-piede {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex-wrap: wrap;
+  margin-top: 13px;
+  padding-top: 13px;
+  border-top: 1px solid var(--border);
+}
+
+/* ------------------------------------------------- riepilogo dell'ultima */
+
+.dash-riepilogo {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+}
+
+.dash-nodo {
+  font-size: 0.83rem;
+  line-height: 1.5;
+  padding: 6px 0 6px 12px;
+  border-left: 3px solid var(--border);
+  margin-bottom: 4px;
+}
+
+.dash-nodo-ok {
+  border-left-color: var(--g-green);
+}
+
+.dash-nodo-simulato {
+  border-left-color: var(--g-blue);
+}
+
+.dash-nodo-saltato {
+  border-left-color: var(--border);
+  color: var(--text-soft);
+}
+
+.dash-nodo-errore {
+  border-left-color: var(--error-text);
+  color: var(--error-text);
+}
+
+/* Sotto i 1200px le colonne laterali passano sotto: restano leggibili senza
+   comprimere la coda, che è la parte che si legge davvero. */
+@media (max-width: 1200px) {
+  .dash-colonne {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .dash-col {
+    position: static;
+    max-height: none;
+  }
+}

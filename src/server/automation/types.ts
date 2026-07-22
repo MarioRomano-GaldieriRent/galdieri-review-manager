@@ -221,4 +221,6 @@ export type Esecuzione = {
   };
   nodi: EsitoNodo[];
   esito: "ok" | "errore";
+  /** true se il testo della risposta è stato riscritto a mano prima di eseguire. */
+  testoModificato?: boolean;
 };

@@ -17,7 +17,20 @@ function nuovoId(): string {
   return `run-${Date.now().toString(36)}-${contatore}`;
 }
 
-export async function eseguiRegola(regola: Regola, recensione: Recensione): Promise<Esecuzione> {
+/**
+ * Testo riscritto a mano prima di eseguire.
+ *
+ * Il testo mostrato nella dashboard è già stato scelto nella lingua giusta, per
+ * questo la riscrittura sostituisce sia la versione italiana sia quella
+ * inglese: quello che si legge è quello che parte, senza sorprese.
+ */
+export type TestoRiscritto = { azioneId: string; testo: string };
+
+export async function eseguiRegola(
+  regola: Regola,
+  recensione: Recensione,
+  riscritto?: TestoRiscritto | null,
+): Promise<Esecuzione> {
   const modo = await modoOperativo();
   const automation = await resolveAutomation();
 
@@ -25,8 +38,22 @@ export async function eseguiRegola(regola: Regola, recensione: Recensione): Prom
   const nodi: EsitoNodo[] = [];
   let esito: "ok" | "errore" = "ok";
   let interrotto = false;
+  let modificato = false;
 
-  for (const azione of regola.azioni) {
+  for (const originale of regola.azioni) {
+    const daRiscrivere = riscritto && riscritto.azioneId === originale.id;
+    if (daRiscrivere) modificato = true;
+    const azione = daRiscrivere
+      ? {
+          ...originale,
+          parametri: {
+            ...originale.parametri,
+            testo: riscritto.testo,
+            testoInglese: riscritto.testo,
+          },
+        }
+      : originale;
+
     const meta = CATALOGO[azione.tipo];
     const inizio = Date.now();
 
@@ -95,5 +122,6 @@ export async function eseguiRegola(regola: Regola, recensione: Recensione): Prom
     },
     nodi,
     esito,
+    testoModificato: modificato,
   };
 }
