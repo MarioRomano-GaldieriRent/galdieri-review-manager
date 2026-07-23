@@ -3,10 +3,13 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { eseguiRegola } from "@/server/automation/engine";
+import { testoPerRecensione } from "@/server/automation/connectors";
 import { caricaRegole, regolaPer, EMAIL_TICKETING } from "@/server/automation/rules";
 import { eliminaEsecuzione, registraEsecuzione } from "@/server/automation/runs";
-import type { Regola } from "@/server/automation/types";
-import { caricaRecensioni, haTesto, type Recensione } from "@/server/reviews/load";
+import type { Esecuzione, Regola } from "@/server/automation/types";
+import { caricaRecensioni, haTesto, testoRecensione, type Recensione } from "@/server/reviews/load";
+import { approvaPerPubblicazione } from "@/server/db/pubblicazioni";
+import { normalizzaSede } from "@/server/db/seed";
 import { loadSettings } from "@/server/settings";
 
 // Le tre azioni della dashboard: approvare la risposta, inoltrare al customer
@@ -64,8 +67,50 @@ export async function approvaAction(formData: FormData): Promise<void> {
   const esecuzione = await eseguiRegola(regola, recensione, riscritto);
   await registraEsecuzione(esecuzione);
 
+  // Aggancio alla coda di pubblicazione manuale: solo le recensioni con una
+  // risposta pubblica su Google (le positive) ci finiscono. Le negative vanno
+  // a Cherubina e restano nella colonna d'attesa, non in coda.
+  await accodaSePubblicabile(regola, recensione, testo, esecuzione);
+
   revalidatePath("/dashboard");
+  revalidatePath("/da-pubblicare");
   indietro(formData, { run: esecuzione.id });
+}
+
+/**
+ * Se la regola prevede una risposta su Google, mette la recensione nella coda
+ * "da pubblicare" con il testo approvato. L'id del ticket si legge dal nodo
+ * «Trova il ticket» dell'esecuzione appena fatta, senza rileggere Freshdesk.
+ */
+async function accodaSePubblicabile(
+  regola: Regola,
+  recensione: Recensione,
+  testoForm: string,
+  esecuzione: Esecuzione,
+): Promise<void> {
+  const nodoGoogle = regola.azioni.find((a) => a.tipo === "google.rispondi");
+  if (!nodoGoogle) return;
+
+  const testoRisposta = testoForm || testoPerRecensione(nodoGoogle, recensione).testo;
+  if (!testoRisposta.trim()) return; // niente da pubblicare
+
+  const nodoTicket = esecuzione.nodi.find((n) => n.tipo === "freshdesk.trovaTicket");
+  const idTicket = nodoTicket?.messaggio.match(/#(\d+)/);
+  const ticketId = idTicket ? Number(idTicket[1]) : null;
+
+  await approvaPerPubblicazione({
+    chiave: recensione.chiave,
+    origine: "google",
+    testoRisposta,
+    lingua: recensione.lingua,
+    nomeCliente: recensione.nome,
+    stelle: recensione.stelle,
+    sedeChiave: normalizzaSede(recensione.sede),
+    sedeNome: recensione.sede,
+    testoRecensione: testoRecensione(recensione),
+    messaggioId: recensione.messaggioId,
+    ticketId,
+  });
 }
 
 /**
