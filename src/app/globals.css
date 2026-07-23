@@ -2346,3 +2346,36 @@ main.dash {
   align-items: center;
   gap: 6px;
 }
+
+/* Pagina Sedi: righe con i campi link. */
+.sedi-lista {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sede-riga {
+  padding: 14px 0;
+  border-bottom: 1px solid var(--border);
+}
+.sede-riga:last-child {
+  border-bottom: none;
+}
+
+.sede-testa {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.sede-nome {
+  font-weight: 650;
+  font-size: 1rem;
+}
+
+.sede-salvata {
+  padding: 2px 10px;
+  font-size: 0.8rem;
+}
