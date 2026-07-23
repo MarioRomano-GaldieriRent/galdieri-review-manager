@@ -1,8 +1,10 @@
 import Link from "next/link";
 import {
   codaDaPubblicare,
+  codaDaRicontrollare,
   conteggiPubblicazione,
   linkGoogle,
+  ORE_RICONTROLLO,
   type VocePubblicazione,
 } from "@/server/db/pubblicazioni";
 import { ritentaChiusureInSospeso } from "@/server/pubblicazione";
@@ -10,7 +12,13 @@ import { isFreshdeskConfigured } from "@/server/integrations/freshdesk";
 import { loadSettings } from "@/server/settings";
 import { CopiaRisposta } from "./CopiaRisposta";
 import { TastieraCoda } from "./TastieraCoda";
-import { segnaPubblicataAction } from "./actions";
+import {
+  annullaPubblicazioneAction,
+  confermaOnlineAction,
+  riprovaFreshdeskAction,
+  segnalaSparitaAction,
+  segnaPubblicataAction,
+} from "./actions";
 
 // Coda "Da pubblicare": le risposte approvate, da incollare a mano su Google
 // finché l'API non è attiva. Per ogni riga tre controlli: apri su Google,
@@ -40,15 +48,17 @@ function href(p: { sede?: string; stelle?: number | null }): string {
 export default async function DaPubblicarePage({
   searchParams,
 }: {
-  searchParams: Promise<{ sede?: string; stelle?: string }>;
+  searchParams: Promise<{ sede?: string; stelle?: string; tab?: string }>;
 }) {
   const sp = await searchParams;
+  const tab = sp.tab === "ricontrollo" ? "ricontrollo" : "pubblicare";
 
   // All'apertura si ritentano, best-effort, le chiusure Freshdesk in sospeso.
   await ritentaChiusureInSospeso();
 
-  const [tutta, conteggi, fdOk, settings] = await Promise.all([
+  const [tutta, ricontrollo, conteggi, fdOk, settings] = await Promise.all([
     codaDaPubblicare(),
+    codaDaRicontrollare(),
     conteggiPubblicazione(),
     isFreshdeskConfigured(),
     loadSettings(),
@@ -103,80 +113,198 @@ export default async function DaPubblicarePage({
         </Link>
       </section>
 
-      {/* --------------------------------------------------------- filtri */}
-      {tutta.length > 0 && (
-        <div className="pub-filtri">
-          <div className="star-filter">
-            <Link
-              href={href({ sede: sedeSel ?? undefined })}
-              className={`star-chip chip-all${stelleSel ? "" : " is-active"}`}
-            >
-              Tutte <span className="chip-count">{tutta.length}</span>
-            </Link>
-            {[5, 4, 3, 2, 1].map((n) => {
-              const attivo = stelleSel === n;
-              return (
-                <Link
-                  key={n}
-                  href={href({ sede: sedeSel ?? undefined, stelle: attivo ? null : n })}
-                  className={`star-chip s${n}${attivo ? " is-active" : ""}${perStelle[n] === 0 ? " is-empty" : ""}`}
-                >
-                  <span className="chip-stars">
-                    {"★".repeat(n)}
-                    <span className="stars-empty">{"★".repeat(5 - n)}</span>
-                  </span>
-                  <span className="chip-count">{perStelle[n]}</span>
-                </Link>
-              );
-            })}
-          </div>
+      {/* ------------------------------------------------------------ schede */}
+      <div className="pub-tabs">
+        <Link
+          href="/da-pubblicare"
+          className={`pub-tab${tab === "pubblicare" ? " is-active" : ""}`}
+        >
+          Da pubblicare <span className="chip-count">{conteggi.daPubblicare}</span>
+        </Link>
+        <Link
+          href="/da-pubblicare?tab=ricontrollo"
+          className={`pub-tab${tab === "ricontrollo" ? " is-active" : ""}`}
+        >
+          Da ricontrollare <span className="chip-count">{conteggi.daRicontrollare}</span>
+        </Link>
+      </div>
 
-          {sedi.length > 1 && (
-            <div className="pub-sedi">
-              <Link
-                href={href({ stelle: stelleSel })}
-                className={`btn-mini${sedeSel ? "" : " is-active"}`}
-              >
-                Tutte le sedi
-              </Link>
-              {sedi.map((s) => (
+      {tab === "pubblicare" && (
+        <>
+          {/* ----------------------------------------------------- filtri */}
+          {tutta.length > 0 && (
+            <div className="pub-filtri">
+              <div className="star-filter">
                 <Link
-                  key={s}
-                  href={href({ sede: sedeSel === s ? undefined : s, stelle: stelleSel })}
-                  className={`btn-mini${sedeSel === s ? " is-active" : ""}`}
+                  href={href({ sede: sedeSel ?? undefined })}
+                  className={`star-chip chip-all${stelleSel ? "" : " is-active"}`}
                 >
-                  {s}
+                  Tutte <span className="chip-count">{tutta.length}</span>
                 </Link>
-              ))}
+                {[5, 4, 3, 2, 1].map((n) => {
+                  const attivo = stelleSel === n;
+                  return (
+                    <Link
+                      key={n}
+                      href={href({ sede: sedeSel ?? undefined, stelle: attivo ? null : n })}
+                      className={`star-chip s${n}${attivo ? " is-active" : ""}${perStelle[n] === 0 ? " is-empty" : ""}`}
+                    >
+                      <span className="chip-stars">
+                        {"★".repeat(n)}
+                        <span className="stars-empty">{"★".repeat(5 - n)}</span>
+                      </span>
+                      <span className="chip-count">{perStelle[n]}</span>
+                    </Link>
+                  );
+                })}
+              </div>
+
+              {sedi.length > 1 && (
+                <div className="pub-sedi">
+                  <Link
+                    href={href({ stelle: stelleSel })}
+                    className={`btn-mini${sedeSel ? "" : " is-active"}`}
+                  >
+                    Tutte le sedi
+                  </Link>
+                  {sedi.map((s) => (
+                    <Link
+                      key={s}
+                      href={href({ sede: sedeSel === s ? undefined : s, stelle: stelleSel })}
+                      className={`btn-mini${sedeSel === s ? " is-active" : ""}`}
+                    >
+                      {s}
+                    </Link>
+                  ))}
+                </div>
+              )}
             </div>
           )}
-        </div>
+
+          {/* --------------------------------------------------------- elenco */}
+          {voci.length === 0 ? (
+            <section className="card dash-vuoto">
+              {tutta.length === 0
+                ? "Nessuna risposta in attesa di pubblicazione. Le risposte approvate dalla dashboard compaiono qui."
+                : "Nessuna risposta con questi filtri."}
+            </section>
+          ) : (
+            <>
+              <TastieraCoda />
+              <ol className="pub-lista">
+                {voci.map((v, i) => (
+                  <VoceCoda
+                    key={v.chiave}
+                    v={v}
+                    numero={i + 1}
+                    sedeSel={sedeSel}
+                    stelleSel={stelleSel}
+                  />
+                ))}
+              </ol>
+            </>
+          )}
+        </>
       )}
 
-      {/* --------------------------------------------------------- elenco */}
-      {voci.length === 0 ? (
-        <section className="card dash-vuoto">
-          {tutta.length === 0
-            ? "Nessuna risposta in attesa di pubblicazione. Le risposte approvate dalla dashboard compaiono qui."
-            : "Nessuna risposta con questi filtri."}
-        </section>
-      ) : (
+      {tab === "ricontrollo" && (
         <>
-          <TastieraCoda />
-          <ol className="pub-lista">
-            {voci.map((v, i) => (
-              <VoceCoda
-                key={v.chiave}
-                v={v}
-                numero={i + 1}
-                sedeSel={sedeSel}
-                stelleSel={stelleSel}
-              />
-            ))}
-          </ol>
+          <p className="hint pub-ricontrollo-nota">
+            Le risposte pubblicate su Google a volte non risultano salvate. Dopo {ORE_RICONTROLLO}{" "}
+            ore si riaprono qui: controlla che la risposta ci sia e conferma, oppure rimettila in
+            coda se è sparita.
+          </p>
+          {ricontrollo.length === 0 ? (
+            <section className="card dash-vuoto">Niente da ricontrollare.</section>
+          ) : (
+            <ol className="pub-lista">
+              {ricontrollo.map((v, i) => (
+                <VoceRicontrollo key={v.chiave} v={v} numero={i + 1} />
+              ))}
+            </ol>
+          )}
         </>
       )}
     </main>
+  );
+}
+
+function EsitoFreshdesk({ v }: { v: VocePubblicazione }) {
+  if (v.freshdeskEsito === "ok") return <span className="flag flag-green">ticket chiuso</span>;
+  if (v.freshdeskEsito === "noniniziato")
+    return <span className="flag flag-gray">ticket non toccato (simulazione)</span>;
+  const testo =
+    v.freshdeskEsito === "inattesa"
+      ? `chiusura ticket in retry (tentativo ${v.freshdeskTentativi})`
+      : "chiusura ticket non riuscita";
+  return (
+    <span className="pub-fd-ko">
+      <span className="flag flag-red">Freshdesk: {testo}</span>
+      <form action={riprovaFreshdeskAction}>
+        <input type="hidden" name="chiave" value={v.chiave} />
+        <button type="submit" className="btn-mini">
+          Riprova
+        </button>
+      </form>
+    </span>
+  );
+}
+
+function VoceRicontrollo({ v, numero }: { v: VocePubblicazione; numero: number }) {
+  const link = linkGoogle(v);
+  const scaduto = v.promemoriaVerificaIl
+    ? new Date(v.promemoriaVerificaIl).getTime() <= Date.now()
+    : true;
+  const ore = v.promemoriaVerificaIl
+    ? Math.round((new Date(v.promemoriaVerificaIl).getTime() - Date.now()) / 3600000)
+    : 0;
+
+  return (
+    <li className="card pub-card">
+      <div className="pub-testa">
+        <span className="pub-numero" aria-hidden="true">
+          {numero}
+        </span>
+        <div className="pub-autore">
+          <span className="review-name">{v.nomeCliente}</span>
+          {v.sedeNome && <span className="dash-lingua">{v.sedeNome}</span>}
+          <span className={`flag ${scaduto ? "flag-amber" : "flag-gray"}`}>
+            {scaduto ? "pronta da ricontrollare" : `fra ~${ore}h`}
+          </span>
+          <EsitoFreshdesk v={v} />
+        </div>
+        <Stelle n={v.stelle} />
+      </div>
+
+      <div className="pub-risposta">
+        <span className="pub-etichetta">Risposta pubblicata</span>
+        <p className="pub-risposta-testo">{v.testoRisposta}</p>
+      </div>
+
+      <div className="pub-controlli">
+        <a className="btn-secondary" href={link.url} target="_blank" rel="noopener noreferrer">
+          Apri su Google ↗
+        </a>
+        <form action={confermaOnlineAction}>
+          <input type="hidden" name="chiave" value={v.chiave} />
+          <button type="submit" className="btn-primary">
+            Confermata online
+          </button>
+        </form>
+        <form action={segnalaSparitaAction}>
+          <input type="hidden" name="chiave" value={v.chiave} />
+          <button type="submit" className="btn-secondary btn-danger">
+            Sparita — ripubblica
+          </button>
+        </form>
+        <form action={annullaPubblicazioneAction}>
+          <input type="hidden" name="chiave" value={v.chiave} />
+          <button type="submit" className="btn-mini">
+            Annulla pubblicazione
+          </button>
+        </form>
+      </div>
+    </li>
   );
 }
 

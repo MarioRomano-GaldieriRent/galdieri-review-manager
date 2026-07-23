@@ -2306,3 +2306,43 @@ main.dash {
   border-bottom-width: 2px;
   color: var(--text);
 }
+
+/* Schede della coda di pubblicazione. */
+.pub-tabs {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 18px;
+  border-bottom: 1px solid var(--border);
+}
+
+.pub-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  text-decoration: none;
+  color: var(--text-soft);
+  font-weight: 600;
+  font-size: 0.95rem;
+  border-bottom: 3px solid transparent;
+  margin-bottom: -1px;
+}
+
+.pub-tab:hover {
+  color: var(--text);
+}
+
+.pub-tab.is-active {
+  color: var(--g-blue-dark);
+  border-bottom-color: var(--g-blue);
+}
+
+.pub-ricontrollo-nota {
+  margin: 0 0 16px;
+}
+
+.pub-fd-ko {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
