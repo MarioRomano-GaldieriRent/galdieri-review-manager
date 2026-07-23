@@ -93,6 +93,9 @@ export default async function DaPubblicarePage({
           </p>
         </div>
         <div className="dash-stato-servizi">
+          <Link href="/sedi" className="btn-secondary">
+            Link delle sedi →
+          </Link>
           <span className={`conn-badge ${fdOk ? "conn-ok" : "conn-ko"}`}>
             {fdOk ? "Freshdesk collegato" : "Freshdesk da configurare"}
           </span>
