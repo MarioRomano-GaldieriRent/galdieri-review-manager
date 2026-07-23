@@ -7,6 +7,13 @@
 // sbagliati; salvare solo il locale vorrebbe dire perdere l'istante esatto.
 // Si salvano entrambi, e la conversione avviene qui.
 
+/**
+ * Fuso orario di casa. Vive qui e in un posto solo: le pipeline MongoDB che
+ * calcolano le colonne locali e i formattatori di lettura lo importano da qui.
+ * Due copie della stringa "Europe/Rome" sono due occasioni di divergere.
+ */
+export const FUSO = "Europe/Rome";
+
 /** Istante di adesso in ISO-8601 UTC. È l'unico modo ammesso di dire "ora". */
 export function adesso(): string {
   return new Date().toISOString();
@@ -20,7 +27,7 @@ export function adesso(): string {
  * pezzo, che è il posto dove nascono gli errori di zero iniziale.
  */
 const FORMATO_ROMA = new Intl.DateTimeFormat("sv-SE", {
-  timeZone: "Europe/Rome",
+  timeZone: FUSO,
   year: "numeric",
   month: "2-digit",
   day: "2-digit",

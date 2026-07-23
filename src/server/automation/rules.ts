@@ -1,4 +1,3 @@
-import "@/server/db/avvio";
 import { leggiRegole, scriviRegole, type Origine } from "@/server/db/regole";
 import type { Azione, Regola, TipoAzione } from "./types";
 
@@ -167,7 +166,7 @@ export function regoleDiDefault(): Regola[] {
 
 export async function caricaRegole(): Promise<Regola[]> {
   try {
-    const regole = leggiRegole();
+    const regole = await leggiRegole();
     if (regole.length > 0) return regole;
   } catch (e) {
     console.error("[regole] lettura non riuscita:", e);
@@ -179,7 +178,7 @@ export async function caricaRegole(): Promise<Regola[]> {
 }
 
 export async function salvaRegole(regole: Regola[], origine: Origine = "interfaccia"): Promise<void> {
-  scriviRegole(regole, origine);
+  await scriviRegole(regole, origine);
 }
 
 /** Prima regola attiva che copre la recensione, oppure null. */

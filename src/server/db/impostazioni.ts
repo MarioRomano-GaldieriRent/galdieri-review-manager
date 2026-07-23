@@ -1,20 +1,15 @@
+import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { esegui, tutteLeRighe, transazione, unaRiga } from "./connessione";
+import type { Document } from "mongodb";
+import { SCRITTURA_CRITICA, coll } from "./connessione";
 import { eSegreta } from "./seed";
-import { adesso } from "@/server/tempo";
 
-// Impostazioni: i valori normali nel database, i segreti fuori.
-//
-// I segreti (client secret Microsoft, API key Freshdesk, chiave Azure, refresh
-// token Google) NON entrano nel .db. Il motivo è pratico, non ideologico: il
-// database è il file che circola — lo si copia per i backup, lo si apre con un
-// visualizzatore per guardare le statistiche. Un SELECT fatto per curiosità
-// non deve poter stampare una credenziale su uno schermo condiviso.
-//
-// La sede primaria dei segreti resta il .env. Quelli digitati dal pannello
-// finiscono in data/segreti.json, che ha lo stesso identico ruolo che aveva
-// data/settings.json: file locale, ignorato da git, letto solo da qui.
+// Impostazioni: i valori normali nel documento impostazioni/_id="correnti", i
+// segreti fuori dal database (nel .env, e in data/segreti.json se digitati dal
+// pannello). Il .db... pardon, il database circola — lo si copia, lo si apre
+// per guardare le statistiche — e una credenziale non deve poter comparire in
+// una query fatta per curiosità. A impedirlo è un validator, non il codice.
 
 const FILE_SEGRETI = path.join(process.cwd(), "data", "segreti.json");
 
@@ -25,53 +20,49 @@ export type Etichetta = {
   fromContains: string;
 };
 
+type DocCorrenti = {
+  _id: "correnti";
+  valori: { chiave: string; valore: string; aggiornataIl?: Date; aggiornataDa?: number }[];
+  etichette: { id: string; nome: string; oggettoContiene: string; mittenteContiene: string }[];
+  aggiornateIl: Date;
+};
+
+async function correnti(): Promise<DocCorrenti | null> {
+  return (await coll<DocCorrenti>("impostazioni")).findOne({ _id: "correnti" });
+}
+
 // ------------------------------------------------------------ valori normali
 
-/** Tutte le impostazioni non segrete presenti nel database. */
-export function leggiValori(): Record<string, string> {
+export async function leggiValori(): Promise<Record<string, string>> {
+  const doc = await correnti();
   const out: Record<string, string> = {};
-  for (const r of tutteLeRighe<{ chiave: string; valore: string }>(
-    "SELECT chiave, valore FROM impostazioni",
-  )) {
-    out[r.chiave] = r.valore;
-  }
+  for (const v of doc?.valori ?? []) out[v.chiave] = v.valore;
   return out;
 }
 
-export function leggiEtichette(): Etichetta[] {
-  return tutteLeRighe<{
-    id: string;
-    nome: string;
-    oggetto_contiene: string;
-    mittente_contiene: string;
-  }>(
-    // L'ordine è semantico: labels[0] è l'etichetta principale in sei punti
-    // del codice. Un SELECT senza ORDER BY qui cambierebbe quale casella si
-    // legge, in modo imprevedibile.
-    "SELECT id, nome, oggetto_contiene, mittente_contiene FROM etichette ORDER BY ordine, id",
-  ).map((r) => ({
-    id: r.id,
-    name: r.nome,
-    subjectContains: r.oggetto_contiene,
-    fromContains: r.mittente_contiene,
+export async function leggiEtichette(): Promise<Etichetta[]> {
+  const doc = await correnti();
+  // L'ordine dell'array è quello semantico: etichette[0] è la principale.
+  return (doc?.etichette ?? []).map((e) => ({
+    id: e.id,
+    name: e.nome,
+    subjectContains: e.oggettoContiene ?? "",
+    fromContains: e.mittenteContiene ?? "",
   }));
 }
 
 /**
- * Scrive lo snapshot completo: valori non segreti nel database, segreti su
- * file, ed etichette riscritte da capo.
- *
- * Snapshot completo e non UPDATE per singola colonna: il pannello lavora così
- * (carica tutto, muta un pezzo, risalva tutto) ed è quel meccanismo a far
- * funzionare keep(), cioè "campo lasciato vuoto = tieni quello che c'era".
+ * Scrive lo snapshot completo: valori non segreti nel documento corrente,
+ * segreti su file, storico dei cambiamenti (segreti compresi, ma senza valore).
+ * Storico PRIMA delle correnti, come per le regole.
  */
-export function scriviImpostazioni(
+export async function scriviImpostazioni(
   valori: Record<string, string>,
   etichette: Etichetta[],
   operatoreId = 1,
-): void {
-  const ora = adesso();
-  const precedenti = leggiValori();
+): Promise<void> {
+  const ora = new Date();
+  const precedenti = await leggiValori();
 
   const segreti: Record<string, string> = {};
   const normali: Record<string, string> = {};
@@ -80,88 +71,76 @@ export function scriviImpostazioni(
       normali[chiave] = valore;
       continue;
     }
-    // Su un campo segreto la stringa vuota significa "non toccarlo" — è
-    // quello che dice il pannello con «lascia vuoto per non cambiarlo».
-    // Trattarla come un azzeramento scriverebbe nello storico un segreto
-    // "svuotato" che nessuno ha toccato, ogni volta che si salva la sezione
-    // per cambiare tutt'altro.
+    // Su un campo segreto la stringa vuota significa "non toccarlo".
     if (valore.trim()) segreti[chiave] = valore;
   }
 
-  transazione(() => {
-    for (const [chiave, valore] of Object.entries(normali)) {
-      const prima = precedenti[chiave];
-      esegui(
-        `INSERT INTO impostazioni (chiave, valore, aggiornata_il, aggiornata_da) VALUES (?,?,?,?)
-         ON CONFLICT(chiave) DO UPDATE SET
-           valore = excluded.valore, aggiornata_il = excluded.aggiornata_il,
-           aggiornata_da = excluded.aggiornata_da`,
+  // 1) storico dei valori normali cambiati
+  const cambiamenti: Document[] = [];
+  for (const [chiave, valore] of Object.entries(normali)) {
+    if (precedenti[chiave] !== valore) {
+      cambiamenti.push(rigaStorico(chiave, false, precedenti[chiave], valore, ora, operatoreId));
+    }
+  }
+  if (cambiamenti.length > 0) {
+    await (await coll("impostazioni_storico")).insertMany(cambiamenti, { writeConcern: SCRITTURA_CRITICA });
+  }
+
+  // 2) documento corrente riscritto per intero (keep() dipende dallo snapshot completo)
+  await (await coll<DocCorrenti>("impostazioni")).replaceOne(
+    { _id: "correnti" },
+    {
+      valori: Object.entries(normali).map(([chiave, valore]) => ({
         chiave,
         valore,
-        ora,
-        operatoreId,
-      );
-      if (prima !== valore) {
-        registraCambio(chiave, false, prima, valore, ora, operatoreId);
-      }
-    }
+        aggiornataIl: ora,
+        aggiornataDa: operatoreId,
+      })),
+      etichette: etichette.map((e) => ({
+        id: e.id,
+        nome: e.name,
+        oggettoContiene: e.subjectContains ?? "",
+        mittenteContiene: e.fromContains ?? "",
+      })),
+      aggiornateIl: ora,
+    },
+    { upsert: true },
+  );
 
-    // Etichette riscritte da capo: sono poche e l'ordine conta. Riconciliare
-    // le differenze costerebbe più codice di quanto valga.
-    esegui("DELETE FROM etichette");
-    etichette.forEach((e, i) => {
-      esegui(
-        `INSERT INTO etichette (id, nome, oggetto_contiene, mittente_contiene, ordine)
-         VALUES (?,?,?,?,?)`,
-        e.id,
-        e.name,
-        e.subjectContains,
-        e.fromContains,
-        i,
-      );
-    });
-  });
-
-  // I segreti stanno fuori dalla transazione perché stanno fuori dal database.
-  if (Object.keys(segreti).length > 0) scriviSegreti(segreti, ora, operatoreId);
+  // 3) i segreti stanno fuori dal database; nel database va solo la traccia
+  if (Object.keys(segreti).length > 0) await scriviSegreti(segreti, ora, operatoreId);
 }
 
-/**
- * Riga di storico. Per un segreto si registrano solo il fatto, l'autore e
- * l'istante: le colonne dei valori restano vuote per costruzione, e a farlo
- * rispettare è un CHECK del database, non questa funzione.
- */
-function registraCambio(
+function rigaStorico(
   chiave: string,
   segreto: boolean,
   prima: string | undefined,
   dopo: string,
-  quando: string,
+  quando: Date,
   operatoreId: number,
-): void {
+): Document {
   const cePrima = Boolean(prima && prima.trim());
   const ceDopo = Boolean(dopo && dopo.trim());
-  const azione = !ceDopo ? "svuotata" : cePrima ? "modificata" : "impostata";
-
-  esegui(
-    `INSERT INTO impostazioni_storico
-       (chiave, segreto, quando, operatore_id, azione, valore_precedente, valore_nuovo,
-        presente_prima, presente_dopo)
-     VALUES (?,?,?,?,?,?,?,?,?)`,
+  const doc: Document = {
     chiave,
-    segreto ? 1 : 0,
+    segreto,
     quando,
     operatoreId,
-    azione,
-    segreto ? null : (prima ?? null),
-    segreto ? null : dopo,
-    cePrima ? 1 : 0,
-    ceDopo ? 1 : 0,
-  );
+    azione: !ceDopo ? "svuotata" : cePrima ? "modificata" : "impostata",
+    // Per i segreti: nessun valore, mai. È il validator a esigerlo, questo lo
+    // rispetta a monte.
+    valorePrecedente: segreto ? null : (prima ?? null),
+    valoreNuovo: segreto ? null : dopo,
+    presentePrima: cePrima,
+    presenteDopo: ceDopo,
+  };
+  doc.sigillo = createHash("sha1").update(JSON.stringify(doc)).digest("hex");
+  return doc;
 }
 
 // ------------------------------------------------------------------ segreti
 
+/** RESTA SINCRONA: legge un file locale, non il database. */
 export function leggiSegreti(): Record<string, string> {
   try {
     const parsed = JSON.parse(readFileSync(FILE_SEGRETI, "utf8")) as Record<string, unknown>;
@@ -171,32 +150,33 @@ export function leggiSegreti(): Record<string, string> {
     }
     return out;
   } catch {
-    // Non esiste al primo avvio, ed è la condizione normale: i segreti stanno
-    // nel .env e il pannello non è mai stato usato per cambiarli.
     return {};
   }
 }
 
-function scriviSegreti(nuovi: Record<string, string>, quando: string, operatoreId: number): void {
+async function scriviSegreti(
+  nuovi: Record<string, string>,
+  quando: Date,
+  operatoreId: number,
+): Promise<void> {
   const precedenti = leggiSegreti();
-  const uniti = { ...precedenti, ...nuovi };
-
   try {
     mkdirSync(path.dirname(FILE_SEGRETI), { recursive: true });
-    writeFileSync(FILE_SEGRETI, JSON.stringify(uniti, null, 2), "utf8");
+    writeFileSync(FILE_SEGRETI, JSON.stringify({ ...precedenti, ...nuovi }, null, 2), "utf8");
   } catch (e) {
     console.error("[impostazioni] segreti non salvati:", e);
     return;
   }
 
-  // Nel database va solo la traccia del cambiamento, mai il valore.
-  transazione(() => {
-    for (const [chiave, valore] of Object.entries(nuovi)) {
-      if (precedenti[chiave] !== valore) {
-        registraCambio(chiave, true, precedenti[chiave], valore, quando, operatoreId);
-      }
+  const righe: Document[] = [];
+  for (const [chiave, valore] of Object.entries(nuovi)) {
+    if (precedenti[chiave] !== valore) {
+      righe.push(rigaStorico(chiave, true, precedenti[chiave], valore, quando, operatoreId));
     }
-  });
+  }
+  if (righe.length > 0) {
+    await (await coll("impostazioni_storico")).insertMany(righe, { writeConcern: SCRITTURA_CRITICA });
+  }
 }
 
 // ------------------------------------------------------------------ storico
@@ -214,46 +194,35 @@ export type CambioImpostazione = {
   presenteDopo: boolean;
 };
 
-export function storicoImpostazioni(limite = 100): CambioImpostazione[] {
-  return tutteLeRighe<{
-    chiave: string;
-    etichetta: string | null;
-    segreto: number;
-    quando: string;
-    chi: string;
-    azione: string;
-    valore_precedente: string | null;
-    valore_nuovo: string | null;
-    presente_prima: number;
-    presente_dopo: number;
-  }>(
-    `SELECT s.chiave, c.etichetta, s.segreto, s.quando, o.nome AS chi, s.azione,
-            s.valore_precedente, s.valore_nuovo, s.presente_prima, s.presente_dopo
-       FROM impostazioni_storico s
-       LEFT JOIN impostazioni_catalogo c ON c.chiave = s.chiave
-       JOIN operatori o ON o.id = s.operatore_id
-      ORDER BY s.quando DESC, s.id DESC
-      LIMIT ?`,
-    limite,
-  ).map((r) => ({
-    chiave: r.chiave,
-    etichetta: r.etichetta ?? r.chiave,
-    segreto: r.segreto === 1,
-    quando: r.quando,
-    chi: r.chi,
-    azione: r.azione,
-    valorePrecedente: r.valore_precedente,
-    valoreNuovo: r.valore_nuovo,
-    presentePrima: r.presente_prima === 1,
-    presenteDopo: r.presente_dopo === 1,
+export async function storicoImpostazioni(limite = 100): Promise<CambioImpostazione[]> {
+  const righe = await (await coll("impostazioni_storico"))
+    .aggregate([
+      { $sort: { quando: -1, _id: -1 } },
+      { $limit: limite },
+      { $lookup: { from: "impostazioni_catalogo", localField: "chiave", foreignField: "_id", as: "_c" } },
+      { $lookup: { from: "operatori", localField: "operatoreId", foreignField: "_id", as: "_o" } },
+    ])
+    .toArray();
+
+  return righe.map((r) => ({
+    chiave: r.chiave as string,
+    etichetta: (r._c?.[0]?.etichetta as string) ?? (r.chiave as string),
+    segreto: Boolean(r.segreto),
+    quando: (r.quando as Date).toISOString(),
+    chi: (r._o?.[0]?.nome as string) ?? "Sistema",
+    azione: r.azione as string,
+    valorePrecedente: (r.valorePrecedente as string | null) ?? null,
+    valoreNuovo: (r.valoreNuovo as string | null) ?? null,
+    presentePrima: Boolean(r.presentePrima),
+    presenteDopo: Boolean(r.presenteDopo),
   }));
 }
 
-/** Da quando è in vigore la modalità operativa attuale. */
-export function modoInVigoreDa(): string | null {
-  const r = unaRiga<{ quando: string }>(
-    `SELECT quando FROM impostazioni_storico
-      WHERE chiave = 'modo' ORDER BY quando DESC, id DESC LIMIT 1`,
-  );
-  return r?.quando ?? null;
+export async function modoInVigoreDa(): Promise<string | null> {
+  const r = await (await coll("impostazioni_storico"))
+    .find({ chiave: "modo" })
+    .sort({ quando: -1, _id: -1 })
+    .limit(1)
+    .next();
+  return r ? (r.quando as Date).toISOString() : null;
 }

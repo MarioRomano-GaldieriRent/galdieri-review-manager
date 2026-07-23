@@ -1,4 +1,3 @@
-import "@/server/db/avvio";
 import {
   leggiEtichette,
   leggiSegreti,
@@ -6,13 +5,13 @@ import {
   scriviImpostazioni,
 } from "@/server/db/impostazioni";
 
-// Impostazioni persistite nel database locale (data/galdieri.db).
+// Impostazioni persistite nel database MongoDB (galdieri_recensioni).
 // Precedenza invariata: valore salvato qui > variabile d'ambiente del .env.
 //
 // I valori segreti (client secret, API key, refresh token) NON stanno nel
 // database ma nel .env, e in data/segreti.json se digitati dal pannello: il
-// .db è il file che si copia e si apre per guardare le statistiche, e una
-// credenziale non deve poter comparire in un SELECT fatto per curiosità.
+// database è il file che si copia e si apre per guardare le statistiche, e una
+// credenziale non deve poter comparire in una query fatta per curiosità.
 // La differenza è invisibile da qui: pick() continua a funzionare identico.
 
 export type Label = {
@@ -130,8 +129,8 @@ export async function loadSettings(): Promise<Settings> {
   try {
     // I segreti arrivano dal file dedicato e si sovrappongono ai valori del
     // database, dove per costruzione non possono esistere.
-    const valori = { ...leggiValori(), ...leggiSegreti() };
-    const labels = leggiEtichette();
+    const valori = { ...(await leggiValori()), ...leggiSegreti() };
+    const labels = await leggiEtichette();
 
     return {
       mailbox: valori.mailbox ?? "",
@@ -184,7 +183,7 @@ export async function saveSettings(settings: Settings): Promise<void> {
       if (typeof valore === "string") valori[`${nome}.${chiave}`] = valore;
     }
   }
-  scriviImpostazioni(valori, settings.labels ?? []);
+  await scriviImpostazioni(valori, settings.labels ?? []);
 }
 
 /** Casella effettivamente in uso: override dalle impostazioni, altrimenti .env */

@@ -1,139 +1,99 @@
-import { esegui, tutteLeRighe, transazione } from "./connessione";
+import type { Document } from "mongodb";
+import { coll } from "./connessione";
 import type { Esecuzione, EsitoNodo, StatoNodo, TipoAzione } from "@/server/automation/types";
 import { CATALOGO } from "@/server/automation/types";
-import { adesso } from "@/server/tempo";
 
-// Il registro delle esecuzioni.
-//
-// Due differenze rispetto al file JSON di prima, entrambe volute:
-//   — non c'è più il taglio a 100. Se il registro è la base delle statistiche,
-//     buttare via le righe vecchie significa buttare via le statistiche.
-//   — niente cancellazioni. "Rimetti in coda" e "svuota registro" marcano la
-//     riga (annullata_il, archiviata_il): l'esecuzione è comunque avvenuta, e
-//     in modalità reale può aver pubblicato davvero una risposta. Far sparire
-//     quel fatto sarebbe riscrivere la storia.
+// Il registro delle esecuzioni. Un'esecuzione con i suoi nodi e scostamenti è
+// UN SOLO DOCUMENTO: si scrive atomicamente, quindi l'assenza delle transazioni
+// (mongod standalone) non è un problema. Niente si cancella: "rimetti in coda"
+// e "svuota" marcano (annullata / archiviata), perché in modalità reale
+// un'esecuzione può aver pubblicato davvero una risposta.
 
-type RigaEsecuzione = {
-  id: string;
-  quando: string;
-  modo: string;
-  esito: string;
-  regola_id: string;
-  regola_nome: string;
-  recensione_chiave: string;
-  recensione_nome: string;
-  recensione_stelle: number | null;
-  recensione_sede: string;
-  recensione_testo: string;
-  testo_modificato: number;
-  annullata_il: string | null;
-  archiviata_il: string | null;
-};
+const LIMITE_CORPO = 8192; // il corpo della chiamata è l'unico campo che può gonfiare il documento
 
-type RigaNodo = {
-  esecuzione_id: string;
-  azione_codice: string;
+type DocNodo = {
+  azioneCodice: string;
   tipo: string;
   stato: string;
   messaggio: string;
-  chiamata_metodo: string | null;
-  chiamata_url: string | null;
-  chiamata_corpo: string | null;
-  durata_ms: number;
+  scrittura: boolean;
+  chiamata: { metodo: string; url: string; corpo: string | null } | null;
+  durataMs: number;
 };
 
-function componi(righe: RigaEsecuzione[], nodi: RigaNodo[]): Esecuzione[] {
-  const perEsecuzione = new Map<string, EsitoNodo[]>();
-  for (const n of nodi) {
-    const arr = perEsecuzione.get(n.esecuzione_id) ?? [];
+type DocEsecuzione = {
+  _id: string;
+  quando: Date;
+  modo: string;
+  esito: string;
+  regolaId: string;
+  regolaNome: string;
+  recensioneChiave: string;
+  recensioneNome: string;
+  recensioneStelle: number | null;
+  recensioneSede: string;
+  recensioneTesto: string;
+  testoModificato: boolean;
+  nodi: DocNodo[];
+  annullata: boolean;
+  archiviata: boolean;
+};
+
+function componi(d: DocEsecuzione): Esecuzione {
+  const nodi: EsitoNodo[] = (d.nodi ?? []).map((n) => {
     const meta = CATALOGO[n.tipo as TipoAzione];
-    arr.push({
-      azioneId: n.azione_codice,
+    return {
+      azioneId: n.azioneCodice,
       tipo: n.tipo as TipoAzione,
       servizio: meta?.servizio ?? "sistema",
       titolo: meta?.titolo ?? n.tipo,
       stato: n.stato as StatoNodo,
       messaggio: n.messaggio,
-      chiamata: n.chiamata_url
-        ? {
-            metodo: n.chiamata_metodo ?? "",
-            url: n.chiamata_url,
-            corpo: n.chiamata_corpo ?? undefined,
-          }
+      chiamata: n.chiamata
+        ? { metodo: n.chiamata.metodo, url: n.chiamata.url, corpo: n.chiamata.corpo ?? undefined }
         : null,
-      durataMs: n.durata_ms,
-    });
-    perEsecuzione.set(n.esecuzione_id, arr);
-  }
+      durataMs: n.durataMs,
+    };
+  });
 
-  return righe.map((r) => ({
-    id: r.id,
-    quando: r.quando,
-    modo: r.modo === "reale" ? "reale" : "simulazione",
-    regolaId: r.regola_id,
-    regolaNome: r.regola_nome,
+  return {
+    id: d._id,
+    quando: d.quando.toISOString(),
+    modo: d.modo === "reale" ? "reale" : "simulazione",
+    regolaId: d.regolaId,
+    regolaNome: d.regolaNome,
     recensione: {
-      chiave: r.recensione_chiave,
-      nome: r.recensione_nome,
-      stelle: r.recensione_stelle,
-      sede: r.recensione_sede,
-      testo: r.recensione_testo,
+      chiave: d.recensioneChiave,
+      nome: d.recensioneNome,
+      stelle: d.recensioneStelle,
+      sede: d.recensioneSede,
+      testo: d.recensioneTesto,
     },
-    nodi: perEsecuzione.get(r.id) ?? [],
-    esito: r.esito === "errore" ? "errore" : "ok",
-    testoModificato: r.testo_modificato === 1,
-  }));
+    nodi,
+    esito: d.esito === "errore" ? "errore" : "ok",
+    testoModificato: d.testoModificato,
+  };
 }
 
-const CAMPI = `id, quando, modo, esito, regola_id, regola_nome, recensione_chiave,
-               recensione_nome, recensione_stelle, recensione_sede, recensione_testo,
-               testo_modificato, annullata_il, archiviata_il`;
-
-/**
- * Esecuzioni visibili nel registro, dalla più recente.
- *
- * ORDER BY esplicito: prima l'ordine veniva dall'unshift sull'array in
- * memoria. Un SELECT senza ordinamento restituirebbe la più vecchia per prima
- * e "l'ultima esecuzione" diventerebbe la prima — con l'effetto che una
- * recensione già lavorata tornerebbe in coda e potrebbe ricevere una seconda
- * risposta.
- */
-export function leggiEsecuzioni(limite = 200): Esecuzione[] {
-  const righe = tutteLeRighe<RigaEsecuzione>(
-    `SELECT ${CAMPI} FROM esecuzioni
-      WHERE annullata_il IS NULL AND archiviata_il IS NULL
-      ORDER BY quando DESC, rowid DESC LIMIT ?`,
-    limite,
-  );
-  if (righe.length === 0) return [];
-  const id = righe.map((r) => `'${r.id.replace(/'/g, "''")}'`).join(",");
-  const nodi = tutteLeRighe<RigaNodo>(
-    `SELECT esecuzione_id, azione_codice, tipo, stato, messaggio,
-            chiamata_metodo, chiamata_url, chiamata_corpo, durata_ms
-       FROM esiti_nodi WHERE esecuzione_id IN (${id}) ORDER BY esecuzione_id, ordine`,
-  );
-  return componi(righe, nodi);
+export async function leggiEsecuzioni(limite = 200): Promise<Esecuzione[]> {
+  const righe = await (await coll<DocEsecuzione>("esecuzioni"))
+    .find({ annullata: false, archiviata: false })
+    .sort({ quando: -1, _id: -1 })
+    .limit(limite)
+    .toArray();
+  return righe.map(componi);
 }
 
-/** Ultima esecuzione valida per ciascuna recensione. */
-export function ultimePerChiave(): Map<string, Esecuzione> {
-  const righe = tutteLeRighe<RigaEsecuzione>(
-    `SELECT ${CAMPI} FROM (
-       SELECT ${CAMPI},
-              ROW_NUMBER() OVER (PARTITION BY recensione_chiave
-                                 ORDER BY quando DESC, rowid DESC) AS n
-         FROM esecuzioni
-        WHERE annullata_il IS NULL AND archiviata_il IS NULL
-     ) WHERE n = 1`,
-  );
-  if (righe.length === 0) return new Map();
-  const id = righe.map((r) => `'${r.id.replace(/'/g, "''")}'`).join(",");
-  const nodi = tutteLeRighe<RigaNodo>(
-    `SELECT esecuzione_id, azione_codice, tipo, stato, messaggio,
-            chiamata_metodo, chiamata_url, chiamata_corpo, durata_ms
-       FROM esiti_nodi WHERE esecuzione_id IN (${id}) ORDER BY esecuzione_id, ordine`,
-  );
-  return new Map(componi(righe, nodi).map((e) => [e.recensione.chiave, e]));
+export async function ultimePerChiave(): Promise<Map<string, Esecuzione>> {
+  const righe = await (await coll<DocEsecuzione>("esecuzioni"))
+    .aggregate<DocEsecuzione>([
+      { $match: { annullata: false, archiviata: false } },
+      { $sort: { recensioneChiave: 1, quando: -1, _id: -1 } },
+      { $group: { _id: "$recensioneChiave", ultima: { $first: "$$ROOT" } } },
+      { $replaceWith: "$ultima" },
+    ])
+    .toArray();
+  return new Map(righe.map((d) => [d.recensioneChiave, componi(d)]));
 }
 
 export type Scostamento = {
@@ -143,99 +103,80 @@ export type Scostamento = {
   valoreUsato: string;
 };
 
-/**
- * Scrive un'esecuzione con i suoi nodi. Testata e nodi in una sola
- * transazione: una testata senza nodi sarebbe un'esecuzione senza storia.
- */
-export function inserisciEsecuzione(
+export async function inserisciEsecuzione(
   e: Esecuzione,
   opzioni: {
     regolaVersioneId?: number | null;
-    recensioneId?: number | null;
+    recensioneId?: number | null; // accettato e ignorato: i chiamanti non cambiano
     operatoreId?: number;
     scostamenti?: Scostamento[];
   } = {},
-): void {
-  const durata = e.nodi.reduce((s, n) => s + (n.durataMs || 0), 0);
-
-  transazione(() => {
-    esegui(
-      `INSERT INTO esecuzioni
-         (id, quando, modo, esito, regola_id, regola_nome, regola_versione_id, operatore_id,
-          recensione_id, recensione_chiave, recensione_nome, recensione_stelle,
-          recensione_sede, recensione_testo, testo_modificato, durata_ms)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-      e.id,
-      e.quando,
-      e.modo,
-      e.esito,
-      e.regolaId,
-      e.regolaNome,
-      opzioni.regolaVersioneId ?? null,
-      opzioni.operatoreId ?? 1,
-      opzioni.recensioneId ?? null,
-      e.recensione.chiave,
-      e.recensione.nome,
-      e.recensione.stelle ?? null,
-      e.recensione.sede,
-      e.recensione.testo,
-      e.testoModificato ? 1 : 0,
-      durata,
-    );
-
-    e.nodi.forEach((n, i) => {
-      esegui(
-        `INSERT INTO esiti_nodi
-           (esecuzione_id, ordine, azione_codice, tipo, stato, messaggio,
-            chiamata_metodo, chiamata_url, chiamata_corpo, durata_ms)
-         VALUES (?,?,?,?,?,?,?,?,?,?)`,
-        e.id,
-        i,
-        n.azioneId,
-        n.tipo,
-        n.stato,
-        n.messaggio,
-        n.chiamata?.metodo ?? null,
-        n.chiamata?.url ?? null,
-        n.chiamata?.corpo ?? null,
-        n.durataMs ?? 0,
-      );
-    });
-
-    for (const s of opzioni.scostamenti ?? []) {
-      esegui(
-        `INSERT INTO esecuzioni_scostamenti
-           (esecuzione_id, azione_codice, parametro, valore_versione, valore_usato)
-         VALUES (?,?,?,?,?)`,
-        e.id,
-        s.azioneCodice,
-        s.parametro,
-        s.valoreVersione,
-        s.valoreUsato,
-      );
-    }
+): Promise<void> {
+  const nodi: DocNodo[] = e.nodi.map((n) => {
+    const meta = CATALOGO[n.tipo as TipoAzione];
+    return {
+      azioneCodice: n.azioneId,
+      tipo: n.tipo,
+      stato: n.stato,
+      messaggio: n.messaggio ?? "",
+      scrittura: Boolean(meta?.scrittura),
+      chiamata: n.chiamata
+        ? {
+            metodo: n.chiamata.metodo ?? "",
+            url: n.chiamata.url,
+            corpo: n.chiamata.corpo ? n.chiamata.corpo.slice(0, LIMITE_CORPO) : null,
+          }
+        : null,
+      durataMs: n.durataMs ?? 0,
+    };
   });
+
+  const doc: Document = {
+    _id: e.id,
+    quando: new Date(e.quando),
+    modo: e.modo,
+    esito: e.esito,
+    regolaId: e.regolaId,
+    regolaNome: e.regolaNome,
+    regolaVersioneId: opzioni.regolaVersioneId ?? null,
+    operatoreId: opzioni.operatoreId ?? 1,
+    recensioneChiave: e.recensione.chiave,
+    recensioneNome: e.recensione.nome ?? "",
+    recensioneStelle: e.recensione.stelle ?? null,
+    recensioneSede: e.recensione.sede ?? "",
+    recensioneTesto: e.recensione.testo ?? "",
+    testoModificato: Boolean(e.testoModificato),
+    durataMs: nodi.reduce((s, n) => s + (n.durataMs || 0), 0),
+    nodi,
+    scostamenti: opzioni.scostamenti ?? [],
+    annullata: false,
+    annullataIl: null,
+    archiviata: false,
+    archiviataIl: null,
+  };
+
+  await (await coll("esecuzioni")).insertOne(doc);
 }
 
-/** Toglie l'esecuzione dal registro senza cancellarla: la recensione torna in coda. */
-export function annullaEsecuzione(id: string): void {
-  esegui("UPDATE esecuzioni SET annullata_il = ? WHERE id = ? AND annullata_il IS NULL", adesso(), id);
-}
-
-/** Svuota il registro visibile. Le righe restano, marcate. */
-export function archiviaTutte(): void {
-  esegui(
-    "UPDATE esecuzioni SET archiviata_il = ? WHERE archiviata_il IS NULL AND annullata_il IS NULL",
-    adesso(),
+export async function annullaEsecuzione(id: string): Promise<void> {
+  await (await coll("esecuzioni")).updateOne(
+    { _id: id as unknown as Document["_id"], annullata: false },
+    { $set: { annullata: true, annullataIl: new Date() } },
   );
 }
 
-/** Aggancia le esecuzioni orfane alle recensioni comparse dopo. */
-export function agganciaRecensioni(): void {
-  esegui(
-    `UPDATE esecuzioni SET recensione_id = (
-       SELECT r.id FROM recensioni r WHERE r.chiave = esecuzioni.recensione_chiave)
-     WHERE recensione_id IS NULL
-       AND EXISTS (SELECT 1 FROM recensioni r WHERE r.chiave = esecuzioni.recensione_chiave)`,
+export async function archiviaTutte(): Promise<void> {
+  await (await coll("esecuzioni")).updateMany(
+    { annullata: false, archiviata: false },
+    { $set: { archiviata: true, archiviataIl: new Date() } },
   );
+}
+
+/**
+ * Prima agganciava le esecuzioni orfane a un id surrogato di recensione. Ora
+ * recensioneChiave È l'_id della recensione: non c'è più niente da agganciare.
+ * Resta esportata perché i chiamanti la invocano.
+ */
+export async function agganciaRecensioni(): Promise<void> {
+  /* no-op: la chiave di conversazione è già il collegamento */
 }

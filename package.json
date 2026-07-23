@@ -16,9 +16,11 @@
     "analisi": "tsx --tsconfig tsconfig.json scripts/analisi-recensioni.ts",
     "test:lingua": "tsx --tsconfig tsconfig.json scripts/test-lingua.ts",
     "analisi:trustpilot": "tsx --tsconfig tsconfig.json scripts/analisi-trustpilot.ts",
+    "travaso": "tsx --tsconfig tsconfig.json scripts/travaso-sqlite.ts",
     "verifica:db": "tsx --tsconfig tsconfig.json scripts/verifica-db.ts"
   },
   "dependencies": {
+    "mongodb": "^7.5.0",
     "next": "^15.1.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"

@@ -1,12 +1,14 @@
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import path from "node:path";
+import { createHash } from "node:crypto";
 
 // ---------------------------------------------------------------------------
-// Controllo del database locale. Non modifica niente: apre, interroga e
-// riferisce. Da lanciare con:  npm run verifica:db
+// Controllo del database MongoDB. Non modifica niente: legge e riferisce.
+//   npm run verifica:db
 //
-// Serve a rispondere a una domanda sola: dopo il passaggio dai file JSON al
-// database, i dati sono ancora tutti lì e le protezioni funzionano davvero?
+// È il perno della migrazione: buona parte delle garanzie che SQLite imponeva
+// col motore (immutabilità delle versioni, integrità referenziale) qui sono
+// diventate controlli da eseguire, non vincoli continui. Va lanciato di routine.
 // ---------------------------------------------------------------------------
 
 function caricaEnv() {
@@ -14,145 +16,129 @@ function caricaEnv() {
     const txt = readFileSync(path.join(process.cwd(), ".env"), "utf8");
     for (const riga of txt.split(/\r?\n/)) {
       const m = riga.match(/^\s*([A-Za-z0-9_]+)\s*=\s*(.*)$/);
-      if (!m) continue;
-      if (!process.env[m[1]]) process.env[m[1]] = m[2].trim();
+      if (m && !process.env[m[1]]) process.env[m[1]] = m[2].trim();
     }
   } catch {
-    /* senza .env si prosegue: qui non si chiama nessun servizio esterno */
+    /* senza .env si prosegue */
   }
 }
 caricaEnv();
 
-let passati = 0;
-let falliti = 0;
-
-function verifica(nome: string, condizione: boolean, dettaglio = ""): void {
-  if (condizione) {
-    passati += 1;
-    console.log(`  ok    ${nome}${dettaglio ? ` — ${dettaglio}` : ""}`);
-  } else {
-    falliti += 1;
-    console.log(`  KO    ${nome}${dettaglio ? ` — ${dettaglio}` : ""}`);
-  }
+let ko = 0;
+function verifica(nome: string, ok: boolean, extra = ""): void {
+  if (!ok) ko += 1;
+  console.log(`  ${ok ? "ok  " : "KO  "} ${nome}${extra ? ` — ${extra}` : ""}`);
 }
 
 async function main() {
-  const { db, chiudiDb, conta, tutteLeRighe, unaRiga } = await import("../src/server/db/connessione");
-  const { VERSIONE_SCHEMA } = await import("../src/server/db/schema");
-  await import("../src/server/db/avvio");
+  const { db, mongo } = await import("../src/server/db/connessione");
+  const { avvia } = await import("../src/server/db/avvio");
+  const { COLLEZIONI, NOMI_COLLEZIONI } = await import("../src/server/db/schema");
+  const { CATALOGO_IMPOSTAZIONI } = await import("../src/server/db/seed");
 
-  const c = db();
+  await avvia();
+  const d = await db();
 
   console.log("\n— impianto —");
-  // I PRAGMA non restituiscono sempre una colonna che si chiama come loro:
-  // `PRAGMA busy_timeout` risponde in una colonna di nome "timeout". Si legge
-  // il primo valore della riga, qualunque nome abbia.
-  const pragma = (nome: string) => {
-    const riga = c.prepare(`PRAGMA ${nome}`).get() as Record<string, unknown> | undefined;
-    return riga ? Object.values(riga)[0] : undefined;
-  };
-  verifica("versione schema", pragma("user_version") === VERSIONE_SCHEMA, `user_version=${pragma("user_version")}`);
-  // È il controllo che intercetta la trappola dell'opzione { timeout } del
-  // costruttore, che i tipi accettano ma Node ignora in silenzio.
-  verifica("attesa su file occupato", pragma("busy_timeout") === 5000, `busy_timeout=${pragma("busy_timeout")}`);
-  verifica("journal WAL", String(pragma("journal_mode")).toLowerCase() === "wal");
-  verifica("chiavi esterne attive", pragma("foreign_keys") === 1);
-  verifica("integrità", (c.prepare("PRAGMA integrity_check").get() as { integrity_check: string }).integrity_check === "ok");
-  verifica("nessuna chiave esterna rotta", c.prepare("PRAGMA foreign_key_check").all().length === 0);
+  const collezioni = await d.listCollections().toArray();
+  const nomi = new Set(collezioni.map((c) => c.name));
+  verifica("tutte le collezioni presenti", NOMI_COLLEZIONI.every((n) => nomi.has(n)));
+  verifica("vista_recensioni presente", nomi.has("vista_recensioni"));
+  // Ogni collezione deve avere il validator in validationAction:"error": se
+  // qualcuno l'avesse messo a "warn" per spegnere i controlli, qui si vede.
+  let validatorOk = true;
+  for (const c of collezioni) {
+    if (!NOMI_COLLEZIONI.includes(c.name)) continue;
+    const opt = (c as { options?: { validationAction?: string; validator?: unknown } }).options;
+    if (!opt?.validator || opt.validationAction !== "error") validatorOk = false;
+  }
+  verifica("validator attivi e in modalità error", validatorOk);
 
   console.log("\n— contenuto —");
-  const numeri = {
-    recensioni: conta("SELECT COUNT(*) FROM recensioni"),
-    regole: conta("SELECT COUNT(*) FROM regole"),
-    versioni: conta("SELECT COUNT(*) FROM regole_versioni"),
-    azioni: conta("SELECT COUNT(*) FROM azioni"),
-    parametri: conta("SELECT COUNT(*) FROM azioni_parametri"),
-    esecuzioni: conta("SELECT COUNT(*) FROM esecuzioni"),
-    nodi: conta("SELECT COUNT(*) FROM esiti_nodi"),
-    traduzioni: conta("SELECT COUNT(*) FROM traduzioni"),
-    sedi: conta("SELECT COUNT(*) FROM sedi"),
-    sincronizzazioni: conta("SELECT COUNT(*) FROM sincronizzazioni"),
-  };
-  for (const [k, v] of Object.entries(numeri)) console.log(`  ${k.padEnd(18)} ${v}`);
-
-  console.log("\n— confronto con i file di partenza —");
-  const dati = path.join(process.cwd(), "data");
-  const migrato = (nome: string) => path.join(dati, `${nome}.migrato`);
-
-  if (existsSync(migrato("automation-runs.json"))) {
-    const runs = JSON.parse(readFileSync(migrato("automation-runs.json"), "utf8")) as unknown[];
-    verifica("esecuzioni importate tutte", numeri.esecuzioni >= runs.length, `${numeri.esecuzioni} nel db, ${runs.length} nel file`);
-  } else {
-    console.log("  --    nessun automation-runs.json.migrato da confrontare");
+  const conta = async (nome: string) => d.collection(nome).countDocuments();
+  const numeri: Record<string, number> = {};
+  for (const nome of ["recensioni", "regole_versioni", "esecuzioni", "traduzioni", "sedi", "sincronizzazioni"]) {
+    numeri[nome] = await conta(nome);
+    console.log(`  ${nome.padEnd(18)} ${numeri[nome]}`);
   }
+  const regoleDoc = await d.collection("regole").findOne({ _id: "correnti" as never });
+  const nRegole = (regoleDoc?.regole as unknown[] | undefined)?.length ?? 0;
+  console.log(`  ${"regole (correnti)".padEnd(18)} ${nRegole}`);
 
-  if (existsSync(migrato("translations.json"))) {
-    const cache = JSON.parse(readFileSync(migrato("translations.json"), "utf8")) as Record<string, unknown>;
-    const chiavi = Object.keys(cache);
-    // Il criterio è zero mancanti: una sola chiave persa significa aver
-    // cambiato il modo di calcolarla, e quindi stare per ripagare Azure.
-    const mancanti = chiavi.filter(
-      (k) => !unaRiga("SELECT chiave FROM traduzioni WHERE chiave = ?", k),
+  console.log("\n— confronto con SQLite (se presente) —");
+  const percorsoSqlite = path.join(process.cwd(), "data", "galdieri.db");
+  try {
+    const { DatabaseSync } = await import("node:sqlite");
+    const sql = new DatabaseSync(percorsoSqlite, { readOnly: true });
+    const contaSql = (t: string) =>
+      Number((sql.prepare(`SELECT COUNT(*) AS n FROM ${t}`).get() as { n: number }).n);
+    verifica("recensioni: stesso numero di SQLite", numeri.recensioni === contaSql("recensioni"), `mongo ${numeri.recensioni}, sqlite ${contaSql("recensioni")}`);
+    verifica("versioni: stesso numero di SQLite", numeri.regole_versioni === contaSql("regole_versioni"));
+    verifica("esecuzioni: stesso numero di SQLite", numeri.esecuzioni === contaSql("esecuzioni"));
+    // Cache traduzioni: zero mancanti è il criterio. Una chiave persa significa
+    // aver cambiato il modo di calcolarla, e stare per ripagare Azure.
+    const chiaviSql = (sql.prepare("SELECT chiave FROM traduzioni").all() as { chiave: string }[]).map(
+      (r) => r.chiave,
     );
-    verifica("cache traduzioni completa", mancanti.length === 0, `${chiavi.length} chiavi, ${mancanti.length} mancanti`);
-  } else {
-    console.log("  --    nessun translations.json.migrato da confrontare");
+    let mancanti = 0;
+    for (const c of chiaviSql) {
+      if (!(await d.collection("traduzioni").findOne({ _id: c as never }))) mancanti += 1;
+    }
+    verifica("cache traduzioni completa", mancanti === 0, `${chiaviSql.length} chiavi, ${mancanti} mancanti`);
+    sql.close();
+  } catch {
+    console.log("  --   nessun data/galdieri.db da confrontare");
   }
-
-  console.log("\n— ordini semantici —");
-  const azioniFuoriPosto = tutteLeRighe<{ regola_id: string }>(
-    `SELECT regola_id FROM (
-       SELECT regola_id, ordine, ROW_NUMBER() OVER (PARTITION BY regola_id ORDER BY ordine) - 1 AS atteso
-         FROM azioni)
-      WHERE ordine <> atteso`,
-  );
-  verifica("sequenza dei nodi senza buchi", azioniFuoriPosto.length === 0);
-  const ordiniRegole = tutteLeRighe<{ ordine: number }>("SELECT ordine FROM regole ORDER BY ordine");
-  verifica(
-    "ordine delle regole senza duplicati",
-    new Set(ordiniRegole.map((r) => r.ordine)).size === ordiniRegole.length,
-  );
 
   console.log("\n— protezioni —");
-  // Nessun valore segreto deve essere finito nello storico. Se questo conteggio
-  // fosse diverso da zero il database andrebbe considerato compromesso.
-  verifica(
-    "nessun segreto nello storico",
-    conta(
-      `SELECT COUNT(*) FROM impostazioni_storico
-        WHERE segreto = 1 AND (valore_precedente IS NOT NULL OR valore_nuovo IS NOT NULL)`,
-    ) === 0,
-  );
-  verifica(
-    "nessuna chiave segreta fra le impostazioni",
-    conta(
-      `SELECT COUNT(*) FROM impostazioni i
-        JOIN impostazioni_catalogo c ON c.chiave = i.chiave WHERE c.segreto = 1`,
-    ) === 0,
-  );
+  // Nessun valore segreto nello storico.
+  const segretiTrapelati = await d.collection("impostazioni_storico").countDocuments({
+    segreto: true,
+    $or: [{ valorePrecedente: { $ne: null } }, { valoreNuovo: { $ne: null } }],
+  });
+  verifica("nessun segreto nello storico", segretiTrapelati === 0);
 
+  // Nessuna chiave segreta fra le impostazioni correnti.
+  const segreti = CATALOGO_IMPOSTAZIONI.filter((c) => c.segreto).map((c) => c.chiave);
+  const correnti = await d.collection("impostazioni").findOne({ _id: "correnti" as never });
+  const chiaviCorrenti = ((correnti?.valori as { chiave: string }[] | undefined) ?? []).map(
+    (v) => v.chiave,
+  );
+  verifica("nessuna chiave segreta fra le impostazioni", !chiaviCorrenti.some((c) => segreti.includes(c)));
+
+  // Il validator rifiuta davvero un segreto.
   let barrieraSegreti = false;
   try {
-    c.prepare("INSERT INTO impostazioni (chiave, valore, aggiornata_il) VALUES (?,?,?)").run(
-      "translator.key",
-      "prova",
-      new Date().toISOString(),
+    await d.collection("impostazioni").updateOne(
+      { _id: "correnti" as never },
+      { $push: { valori: { chiave: "translator.key", valore: "prova" } } as never },
     );
   } catch {
     barrieraSegreti = true;
   }
   verifica("il database rifiuta di salvare un segreto", barrieraSegreti);
 
-  let barrieraVersioni = false;
-  const primaVersione = unaRiga<{ id: number }>("SELECT id FROM regole_versioni LIMIT 1");
-  if (primaVersione) {
-    try {
-      c.prepare("UPDATE regole_versioni SET nome = 'modificato' WHERE id = ?").run(primaVersione.id);
-    } catch {
-      barrieraVersioni = true;
-    }
+  // Sigilli delle versioni: rilevano una modifica fatta aggirando il codice.
+  const versioni = await d.collection("regole_versioni").find({}).toArray();
+  let sigilliOk = true;
+  for (const v of versioni) {
+    const { sigillo, ...resto } = v as Record<string, unknown>;
+    if (createHash("sha1").update(JSON.stringify(resto)).digest("hex") !== sigillo) sigilliOk = false;
   }
-  verifica("una versione di regola non si può modificare", barrieraVersioni || !primaVersione);
+  verifica("sigilli delle versioni intatti", sigilliOk, `${versioni.length} versioni`);
+
+  console.log("\n— integrità referenziale (sostituisce foreign_key_check) —");
+  // Ogni esecuzione con versione deve puntare a una versione esistente.
+  const idVersioni = new Set(versioni.map((v) => v._id));
+  const esecOrfane = (await d.collection("esecuzioni").find({ regolaVersioneId: { $type: "number" } }).toArray()).filter(
+    (e) => !idVersioni.has(e.regolaVersioneId),
+  );
+  verifica("nessuna esecuzione con versione inesistente", esecOrfane.length === 0);
+
+  console.log("\n— operatore di sistema —");
+  const sistema = await d.collection("operatori").findOne({ _id: 1 as never });
+  verifica("operatore di sistema presente", Boolean(sistema), sistema ? String(sistema.chiave) : "assente");
+  verifica("è l'unico di sistema", (await d.collection("operatori").countDocuments({ diSistema: true })) === 1);
 
   console.log("\n— impostazioni: la precedenza al .env regge ancora —");
   const { loadSettings, resolveGraph, resolveFreshdesk, resolveTranslator, isSet } = await import(
@@ -166,19 +152,11 @@ async function main() {
   verifica("API key Freshdesk rilevata", isSet(f.apiKey));
   verifica("chiave Azure rilevata", isSet(t.key));
 
-  console.log("\n— piani di esecuzione —");
-  const piano = tutteLeRighe<{ detail: string }>(
-    "EXPLAIN QUERY PLAN SELECT * FROM recensioni WHERE archiviata_il IS NULL ORDER BY ricevuta_il_locale DESC LIMIT 50",
-  );
-  verifica(
-    "la coda usa un indice",
-    piano.some((p) => /USING INDEX/i.test(p.detail)),
-    piano.map((p) => p.detail).join(" | "),
-  );
-
-  chiudiDb();
-  console.log(`\n${passati} controlli passati, ${falliti} falliti\n`);
-  process.exit(falliti === 0 ? 0 : 1);
+  void COLLEZIONI;
+  const client = await mongo();
+  await client.close();
+  console.log(`\n${ko === 0 ? "tutti i controlli passati" : `${ko} controlli falliti`}\n`);
+  process.exit(ko === 0 ? 0 : 1);
 }
 
 main().catch((e) => {

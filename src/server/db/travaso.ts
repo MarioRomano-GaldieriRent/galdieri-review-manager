@@ -1,371 +1,458 @@
-import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
 import path from "node:path";
-import { conta, esegui, transazione, unaRiga } from "./connessione";
+import { DatabaseSync } from "node:sqlite";
+import type { AnyBulkWriteOperation, Db, Document } from "mongodb";
+import type { DocGen } from "./connessione";
 import { scriviRegole } from "./regole";
 import { regoleDiDefault } from "@/server/automation/rules";
-import type { Esecuzione, Regola } from "@/server/automation/types";
-import { adesso, aOraItaliana, giornoSettimana, settimanaIso } from "@/server/tempo";
 
-// Travaso una tantum dai file JSON al database.
+// Travaso una tantum dei dati reali da SQLite (data/galdieri.db) a MongoDB.
 //
-// Gira una volta sola per file: a travaso riuscito si scrive una riga in
-// `travasi` e il file viene RINOMINATO in *.json.migrato, mai cancellato. Se
-// qualcuno rimettesse a mano il file originale, la riga in `travasi` impedisce
-// comunque di reimportarlo sopra a quello che nel frattempo è cambiato nel
-// database.
+// Gira all'avvio, dentro il lucchetto, una volta sola: la riga
+// travasi/_id="sqlite:galdieri.db" la rende idempotente. Il file SQLite NON
+// viene toccato: resta come rete di sicurezza finché non si è verificato che
+// MongoDB gira. Per tornare indietro basta rimettere il codice SQLite.
 //
-// Per tornare indietro: fermare il server, cancellare data/galdieri.db* e
-// togliere i suffissi .migrato. Si torna esattamente a com'era.
+// Neutralizza anche la trappola delle regole: la vecchia logica JSON, se
+// trovasse `travasi` vuota, riscriverebbe le cinque regole con quelle di
+// default. Qui si scrivono subito i marcatori dei tre file JSON, così quella
+// logica non parte, e le regole vere non vengono sovrascritte.
 
-const DATA = path.join(process.cwd(), "data");
+const PERCORSO_SQLITE = path.join(process.cwd(), "data", "galdieri.db");
+const MARCATORI_JSON = ["settings.json", "automation-rules.json", "translations.json"];
 
-function giaFatto(file: string): boolean {
-  return Boolean(unaRiga("SELECT file FROM travasi WHERE file = ?", file));
-}
+const bool = (v: unknown): boolean => v === 1 || v === 1n || v === true;
+const dataO = (v: unknown): Date | null =>
+  typeof v === "string" && v ? new Date(v) : v instanceof Date ? v : null;
+const num = (v: unknown): number => (typeof v === "number" ? v : Number(v ?? 0));
+const str = (v: unknown): string => (typeof v === "string" ? v : v == null ? "" : String(v));
 
-function segnaFatto(file: string, righe: number, nota = ""): void {
-  esegui(
-    "INSERT INTO travasi (file, eseguito_il, righe, nota) VALUES (?,?,?,?) ON CONFLICT(file) DO NOTHING",
-    file,
-    adesso(),
-    righe,
-    nota,
-  );
-}
+export async function travasaTutto(d: Db): Promise<void> {
+  const travasi = d.collection("travasi");
+  const gia = await travasi.findOne({ _id: "sqlite:galdieri.db" as unknown as Document["_id"] });
+  if (gia) return;
 
-function leggiJson<T>(nome: string): T | null {
-  const percorso = path.join(DATA, nome);
-  if (!existsSync(percorso)) return null;
-  try {
-    return JSON.parse(readFileSync(percorso, "utf8")) as T;
-  } catch (e) {
-    console.error(`[travaso] ${nome} illeggibile:`, e);
-    return null;
-  }
-}
-
-function archiviaFile(nome: string): void {
-  const percorso = path.join(DATA, nome);
-  if (!existsSync(percorso)) return;
-  try {
-    renameSync(percorso, `${percorso}.migrato`);
-  } catch (e) {
-    console.error(`[travaso] ${nome} non rinominato:`, e);
-  }
-}
-
-// --------------------------------------------------------------- impostazioni
-
-type SettingsJson = {
-  mailbox?: string;
-  modo?: string;
-  labels?: { id: string; name: string; subjectContains: string; fromContains: string }[];
-  [sezione: string]: unknown;
-};
-
-/**
- * Impostazioni: si importa SOLO se il file esiste.
- *
- * È la regola più importante di tutta la migrazione. Se settings.json non c'è,
- * l'applicazione sta girando sui valori di default e legge le credenziali dal
- * .env. Scrivere righe vuote nel database spegnerebbe quel ripiego e l'app si
- * ritroverebbe senza credenziali per Graph, Freshdesk, Azure e Google — in
- * silenzio, perché una stringa vuota non somiglia a un errore.
- */
-function travasaImpostazioni(): void {
-  const nome = "settings.json";
-  if (giaFatto(nome)) return;
-  const s = leggiJson<SettingsJson>(nome);
-  if (!s) return;
-
-  const ora = adesso();
-  let righe = 0;
-  // Segreti trovati nel vecchio settings.json: vanno messi al sicuro nel file
-  // dedicato prima di archiviare l'originale.
-  const segretiRecuperati: Record<string, string> = {};
-
-  transazione(() => {
-    const piatte: Record<string, string> = {};
-    if (typeof s.mailbox === "string") piatte.mailbox = s.mailbox;
-    if (typeof s.modo === "string") piatte.modo = s.modo === "reale" ? "reale" : "simulazione";
-
-    for (const sezione of ["graph", "translator", "freshdesk", "googleReviews", "automation"]) {
-      const v = s[sezione];
-      if (!v || typeof v !== "object") continue;
-      for (const [k, valore] of Object.entries(v as Record<string, unknown>)) {
-        if (typeof valore === "string") piatte[`${sezione}.${k}`] = valore;
-      }
-    }
-
-    for (const [chiave, valore] of Object.entries(piatte)) {
-      // I segreti non entrano nel database: il trigger li rifiuterebbe
-      // comunque, ma è meglio non provarci nemmeno. Vanno però SALVATI
-      // altrove prima di archiviare il file, altrimenti una chiave inserita
-      // dal pannello e non presente nel .env sparirebbe con la migrazione e
-      // l'integrazione smetterebbe di funzionare senza spiegazione.
-      const segreta = unaRiga<{ segreto: number }>(
-        "SELECT segreto FROM impostazioni_catalogo WHERE chiave = ?",
-        chiave,
-      );
-      if (segreta?.segreto === 1) {
-        if (valore.trim()) segretiRecuperati[chiave] = valore;
-        continue;
-      }
-      if (!segreta) continue;
-      esegui(
-        `INSERT INTO impostazioni (chiave, valore, aggiornata_il) VALUES (?,?,?)
-         ON CONFLICT(chiave) DO NOTHING`,
-        chiave,
-        valore,
-        ora,
-      );
-      righe += 1;
-    }
-
-    (s.labels ?? []).forEach((l, i) => {
-      esegui(
-        `INSERT INTO etichette (id, nome, oggetto_contiene, mittente_contiene, ordine)
-         VALUES (?,?,?,?,?) ON CONFLICT(id) DO NOTHING`,
-        l.id,
-        l.name,
-        l.subjectContains ?? "",
-        l.fromContains ?? "",
-        i,
-      );
-      righe += 1;
-    });
-
-    segnaFatto(nome, righe);
-  });
-
-  // Solo DOPO che i segreti sono stati messi al sicuro si archivia il file
-  // originale: se la scrittura fallisce, settings.json resta dov'è ed è
-  // ancora possibile recuperarli a mano.
-  if (Object.keys(segretiRecuperati).length > 0) {
-    if (!salvaSegretiRecuperati(segretiRecuperati)) {
-      console.error(
-        `[travaso] ${nome} NON archiviato: i segreti che conteneva non sono stati messi al sicuro.`,
-      );
-      return;
-    }
-  }
-
-  archiviaFile(nome);
-}
-
-/**
- * Salva in data/segreti.json i segreti recuperati dal vecchio settings.json,
- * senza sovrascrivere quelli eventualmente già presenti.
- */
-function salvaSegretiRecuperati(segreti: Record<string, string>): boolean {
-  const percorso = path.join(DATA, "segreti.json");
-  try {
-    let esistenti: Record<string, string> = {};
-    if (existsSync(percorso)) {
-      esistenti = JSON.parse(readFileSync(percorso, "utf8")) as Record<string, string>;
-    }
-    writeFileSync(percorso, JSON.stringify({ ...segreti, ...esistenti }, null, 2), "utf8");
-    return true;
-  } catch (e) {
-    console.error("[travaso] segreti non messi al sicuro:", e);
-    return false;
-  }
-}
-
-// ---------------------------------------------------------------- le regole
-
-function travasaRegole(): void {
-  const nome = "automation-rules.json";
-  if (giaFatto(nome)) return;
-
-  const salvate = leggiJson<Regola[]>(nome);
-  const regole = Array.isArray(salvate) && salvate.length > 0 ? salvate : regoleDiDefault();
-  const daFile = Boolean(salvate && salvate.length > 0);
-
-  // Le regole di default sono comunque una scelta esplicita, non un vuoto:
-  // seminarle dà una versione 1 da cui partire, e da lì lo storico ha senso.
-  scriviRegole(regole, daFile ? "importazione" : "iniziale");
-  transazione(() => segnaFatto(nome, regole.length, daFile ? "dal file" : "regole di default"));
-  if (daFile) archiviaFile(nome);
-}
-
-// ----------------------------------------------------------- le esecuzioni
-
-function travasaEsecuzioni(): void {
-  const nome = "automation-runs.json";
-  if (giaFatto(nome)) return;
-  const runs = leggiJson<Esecuzione[]>(nome);
-  if (!Array.isArray(runs) || runs.length === 0) {
-    transazione(() => segnaFatto(nome, 0, "niente da importare"));
+  if (!existsSync(PERCORSO_SQLITE)) {
+    // Installazione nuova, senza SQLite da cui migrare: si semina il minimo che
+    // serve, cioè le regole di default, se non ci sono già.
+    const correnti = await d.collection<DocGen>("regole").findOne({ _id: "correnti" });
+    if (!correnti) await scriviRegole(regoleDiDefault(), "iniziale");
     return;
   }
 
-  transazione(() => {
-    for (const e of runs) {
-      // Un tipo di nodo tolto nel frattempo dal catalogo farebbe fallire tutta
-      // la migrazione per via della chiave esterna: lo si aggiunge muto.
-      for (const n of e.nodi ?? []) {
-        esegui(
-          `INSERT INTO tipi_azione (tipo, servizio, titolo, scrittura) VALUES (?,?,?,0)
-           ON CONFLICT(tipo) DO NOTHING`,
-          n.tipo,
-          n.servizio ?? "sistema",
-          n.titolo ?? n.tipo,
-        );
-      }
+  const sql = new DatabaseSync(PERCORSO_SQLITE, { readOnly: true });
+  try {
+    let righe = 0;
+    righe += await travasaDimensioni(d, sql);
+    righe += await travasaRecensioni(d, sql);
+    righe += await travasaRegole(d, sql);
+    righe += await travasaEsecuzioni(d, sql);
+    righe += await travasaTraduzioni(d, sql);
+    righe += await travasaImpostazioni(d, sql);
+    righe += await travasaStorici(d, sql);
 
-      esegui(
-        `INSERT INTO esecuzioni
-           (id, quando, modo, esito, regola_id, regola_nome, recensione_chiave,
-            recensione_nome, recensione_stelle, recensione_sede, recensione_testo,
-            testo_modificato, durata_ms)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
-         ON CONFLICT(id) DO NOTHING`,
-        e.id,
-        e.quando,
-        e.modo === "reale" ? "reale" : "simulazione",
-        e.esito === "errore" ? "errore" : "ok",
-        e.regolaId,
-        e.regolaNome,
-        e.recensione.chiave,
-        e.recensione.nome ?? "",
-        e.recensione.stelle ?? null,
-        e.recensione.sede ?? "",
-        e.recensione.testo ?? "",
-        e.testoModificato ? 1 : 0,
-        (e.nodi ?? []).reduce((s, n) => s + (n.durataMs || 0), 0),
-      );
-
-      (e.nodi ?? []).forEach((n, i) => {
-        esegui(
-          `INSERT INTO esiti_nodi
-             (esecuzione_id, ordine, azione_codice, tipo, stato, messaggio,
-              chiamata_metodo, chiamata_url, chiamata_corpo, durata_ms)
-           VALUES (?,?,?,?,?,?,?,?,?,?)
-           ON CONFLICT(esecuzione_id, ordine) DO NOTHING`,
-          e.id,
-          i,
-          n.azioneId,
-          n.tipo,
-          n.stato,
-          n.messaggio ?? "",
-          n.chiamata?.metodo ?? null,
-          n.chiamata?.url ?? null,
-          n.chiamata?.corpo ?? null,
-          n.durataMs ?? 0,
-        );
-      });
-    }
-
-    // Le recensioni citate dal registro: sono l'unico modo di sapere che sono
-    // esistite. Il testo lì è tagliato a 400 caratteri, e va detto: senza il
-    // flag, fra un anno sembrerebbero recensioni scritte così.
-    const viste = new Map<string, Esecuzione>();
-    for (const e of runs) {
-      const prima = viste.get(e.recensione.chiave);
-      if (!prima || e.quando < prima.quando) viste.set(e.recensione.chiave, e);
-    }
-    const ora = adesso();
-    for (const [chiave, e] of viste) {
-      esegui(
-        `INSERT INTO recensioni
-           (chiave, messaggio_id, oggetto, nome_cliente, stelle, testo_originale,
-            ricevuta_il, ricevuta_il_locale, giorno_settimana, settimana_iso,
-            prima_vista_il, ultima_vista_il, archiviata_il, motivo_archiviazione, testo_troncato)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,1)
-         ON CONFLICT(chiave) DO NOTHING`,
-        chiave,
-        "",
-        "",
-        e.recensione.nome ?? "(senza nome)",
-        e.recensione.stelle ?? null,
-        e.recensione.testo ?? "",
-        e.quando,
-        aOraItaliana(e.quando),
-        giornoSettimana(e.quando),
-        settimanaIso(e.quando),
-        ora,
-        ora,
-        ora,
-        "ricostruita-dal-registro",
+    // Marcatori dei vecchi file JSON: bloccano la logica di default, che
+    // altrimenti sovrascriverebbe le regole vere all'avvio.
+    const ora = new Date();
+    for (const f of MARCATORI_JSON) {
+      await travasi.updateOne(
+        { _id: f as unknown as Document["_id"] },
+        { $setOnInsert: { eseguitoIl: ora, righe: 0, nota: "neutralizzato dal travaso SQLite" } },
+        { upsert: true },
       );
     }
-
-    segnaFatto(nome, runs.length, `${viste.size} recensioni ricostruite`);
-  });
-
-  archiviaFile(nome);
-}
-
-// ---------------------------------------------------------- le traduzioni
-
-function travasaTraduzioni(): void {
-  const nome = "translations.json";
-  if (giaFatto(nome)) return;
-  const cache = leggiJson<Record<string, { italian: string; detected: string }>>(nome);
-  if (!cache) return;
-
-  const voci = Object.entries(cache);
-  const ora = adesso();
-
-  transazione(() => {
-    for (const [chiave, v] of voci) {
-      if (!v || typeof v.italian !== "string") continue;
-      const lingua = typeof v.detected === "string" ? v.detected : "";
-      if (lingua) {
-        esegui(
-          "INSERT INTO lingue (codice, nome, italiana) VALUES (?,?,?) ON CONFLICT(codice) DO NOTHING",
-          lingua,
-          lingua,
-          lingua === "it" ? 1 : 0,
-        );
-      }
-      esegui(
-        `INSERT INTO traduzioni (chiave, testo_originale, italiano, lingua_rilevata, creata_il, usata_il, usi)
-         VALUES (?,?,?,?,?,?,0) ON CONFLICT(chiave) DO NOTHING`,
-        // La chiave si COPIA, non si ricalcola: è sha1 del testo tagliato a 20
-        // caratteri, e ricalcolarla con un'altra regola significherebbe
-        // ripagare Azure per tradurre di nuovo tutto lo storico.
-        chiave,
-        "",
-        v.italian,
-        lingua || null,
-        ora,
-        ora,
-      );
-    }
-    segnaFatto(nome, voci.length);
-  });
-
-  archiviaFile(nome);
-}
-
-/** Esegue tutti i travasi mancanti. Non solleva: al peggio non importa nulla. */
-export function travasaTutto(): void {
-  const passi: [string, () => void][] = [
-    ["impostazioni", travasaImpostazioni],
-    ["regole", travasaRegole],
-    ["esecuzioni", travasaEsecuzioni],
-    ["traduzioni", travasaTraduzioni],
-  ];
-  for (const [nome, passo] of passi) {
-    try {
-      passo();
-    } catch (e) {
-      console.error(`[travaso] ${nome} non riuscito:`, e);
-    }
+    await travasi.insertOne({
+      _id: "sqlite:galdieri.db" as unknown as Document["_id"],
+      eseguitoIl: ora,
+      righe,
+      nota: "travaso da data/galdieri.db",
+    } as Document);
+  } finally {
+    sql.close();
   }
 }
 
-/** Quante righe sono state importate, per il controllo di verifica. */
-export function riepilogoTravasi() {
+function tutte(sql: DatabaseSync, q: string): Record<string, unknown>[] {
+  try {
+    return sql.prepare(q).all() as Record<string, unknown>[];
+  } catch {
+    return [];
+  }
+}
+
+async function scrivi(d: Db, nome: string, docs: Document[]): Promise<number> {
+  if (docs.length === 0) return 0;
+  const ops: AnyBulkWriteOperation<DocGen>[] = docs.map((doc) => {
+    // L'_id sta nel filtro, non nel documento di sostituzione (il driver lo vieta).
+    const { _id, ...resto } = doc;
+    return { replaceOne: { filter: { _id }, replacement: resto, upsert: true } };
+  });
+  await d.collection<DocGen>(nome).bulkWrite(ops, { ordered: false });
+  return docs.length;
+}
+
+async function travasaDimensioni(d: Db, sql: DatabaseSync): Promise<number> {
+  let n = 0;
+
+  n += await scrivi(
+    d,
+    "sedi",
+    tutte(sql, "SELECT nome_normalizzato, nome, tag_freshdesk, creata_il FROM sedi").map((r) => ({
+      _id: str(r.nome_normalizzato),
+      nome: str(r.nome),
+      tagFreshdesk: str(r.tag_freshdesk),
+      creataIl: dataO(r.creata_il) ?? new Date("1970-01-01T00:00:00.000Z"),
+    })),
+  );
+
+  n += await scrivi(
+    d,
+    "lingue",
+    tutte(sql, "SELECT codice, nome, italiana FROM lingue").map((r) => ({
+      _id: str(r.codice),
+      nome: str(r.nome),
+      italiana: bool(r.italiana),
+    })),
+  );
+
+  n += await scrivi(
+    d,
+    "tipi_azione",
+    tutte(sql, "SELECT tipo, servizio, titolo, scrittura FROM tipi_azione").map((r) => ({
+      _id: str(r.tipo),
+      servizio: str(r.servizio),
+      titolo: str(r.titolo),
+      scrittura: bool(r.scrittura),
+    })),
+  );
+
+  n += await scrivi(
+    d,
+    "operatori",
+    tutte(sql, "SELECT * FROM operatori").map((r) => ({
+      _id: num(r.id),
+      chiave: str(r.chiave),
+      nome: str(r.nome),
+      email: r.email ? str(r.email) : null,
+      tipo: str(r.tipo),
+      ruolo: str(r.ruolo),
+      attivo: bool(r.attivo),
+      diSistema: bool(r.di_sistema),
+      creatoIl: dataO(r.creato_il) ?? new Date("1970-01-01T00:00:00.000Z"),
+      disattivatoIl: dataO(r.disattivato_il),
+    })),
+  );
+
+  n += await scrivi(
+    d,
+    "agenti_freshdesk",
+    tutte(sql, "SELECT * FROM agenti_freshdesk").map((r) => ({
+      _id: str(r.id_freshdesk),
+      nome: str(r.nome),
+      email: r.email ? str(r.email) : null,
+      gruppo: str(r.gruppo),
+      attivo: bool(r.attivo),
+      operatoreId: r.operatore_id == null ? null : num(r.operatore_id),
+      aggiornatoIl: dataO(r.aggiornato_il) ?? new Date(),
+    })),
+  );
+
+  return n;
+}
+
+async function travasaRecensioni(d: Db, sql: DatabaseSync): Promise<number> {
+  const righe = tutte(
+    sql,
+    `SELECT r.*, s.nome AS sede_nome, s.nome_normalizzato AS sede_chiave, s.tag_freshdesk AS sede_tag
+       FROM recensioni r LEFT JOIN sedi s ON s.id = r.sede_id`,
+  );
+  return scrivi(
+    d,
+    "recensioni",
+    righe.map((r) => ({
+      _id: str(r.chiave),
+      origine: str(r.origine) || "google",
+      messaggioId: str(r.messaggio_id),
+      oggetto: str(r.oggetto),
+      etichettaId: r.etichetta_id ? str(r.etichetta_id) : null,
+      nomeCliente: str(r.nome_cliente) || "(senza nome)",
+      stelle: r.stelle == null ? null : num(r.stelle),
+      punteggioTesto: str(r.punteggio_testo),
+      testoOriginale: str(r.testo_originale),
+      testoItaliano: r.testo_italiano == null ? null : str(r.testo_italiano),
+      ingleseDiGoogle: str(r.inglese_di_google),
+      giaItaliano: bool(r.gia_italiano),
+      lingua: r.lingua_codice ? str(r.lingua_codice) : null,
+      sede: {
+        chiave: str(r.sede_chiave),
+        nome: str(r.sede_nome) || "(sede non riconosciuta)",
+        tagFreshdesk: str(r.sede_tag),
+      },
+      numeroMessaggi: num(r.numero_messaggi) || 1,
+      haRisposta: bool(r.ha_risposta),
+      risolto: bool(r.risolto),
+      ricevutaIl: dataO(r.ricevuta_il) ?? new Date(),
+      primaVistaIl: dataO(r.prima_vista_il) ?? new Date(),
+      ultimaVistaIl: dataO(r.ultima_vista_il) ?? new Date(),
+      rispostaRilevataIl: dataO(r.risposta_rilevata_il),
+      risoltoRilevatoIl: dataO(r.risolto_rilevato_il),
+      archiviataIl: dataO(r.archiviata_il),
+      // Le colonne derivate erano GENERATED in SQLite: si copiano così com'erano,
+      // niente ricalcolo che potrebbe divergere.
+      ricevutaIlLocale: str(r.ricevuta_il_locale),
+      annoMese: str(r.ricevuta_il_locale).slice(0, 7),
+      dataLocale: str(r.ricevuta_il_locale).slice(0, 10),
+      oraLocale: Number(str(r.ricevuta_il_locale).slice(11, 13)) || 0,
+      settimanaIso: str(r.settimana_iso),
+      giornoSettimana: num(r.giorno_settimana),
+      haTesto: bool(r.ha_testo),
+      archiviata: dataO(r.archiviata_il) != null,
+      motivoArchiviazione: str(r.motivo_archiviazione),
+      testoTroncato: bool(r.testo_troncato),
+      impronta: r.impronta ? str(r.impronta) : null,
+    })),
+  );
+}
+
+async function travasaRegole(d: Db, sql: DatabaseSync): Promise<number> {
+  // Stato corrente: ricostruito da regole + regole_stelle + azioni + parametri.
+  const regole = tutte(sql, "SELECT * FROM regole ORDER BY ordine, id");
+  const stelle = tutte(sql, "SELECT regola_id, stelle FROM regole_stelle ORDER BY regola_id, stelle");
+  const azioni = tutte(sql, "SELECT * FROM azioni ORDER BY regola_id, ordine");
+  const parametri = tutte(sql, "SELECT azione_id, nome, valore FROM azioni_parametri");
+
+  const perAzione = new Map<number, Record<string, string>>();
+  for (const p of parametri) {
+    const m = perAzione.get(num(p.azione_id)) ?? {};
+    m[str(p.nome)] = str(p.valore);
+    perAzione.set(num(p.azione_id), m);
+  }
+  const stellePer = new Map<string, number[]>();
+  for (const s of stelle) {
+    const arr = stellePer.get(str(s.regola_id)) ?? [];
+    arr.push(num(s.stelle));
+    stellePer.set(str(s.regola_id), arr);
+  }
+  const azioniPer = new Map<string, Document[]>();
+  for (const a of azioni) {
+    const arr = azioniPer.get(str(a.regola_id)) ?? [];
+    arr.push({ id: str(a.codice), tipo: str(a.tipo), parametri: perAzione.get(num(a.id)) ?? {} });
+    azioniPer.set(str(a.regola_id), arr);
+  }
+
+  const correnti = regole.map((r) => ({
+    id: str(r.id),
+    nome: str(r.nome),
+    attiva: bool(r.attiva),
+    condizione: {
+      stelle: stellePer.get(str(r.id)) ?? [],
+      testo: str(r.condizione_testo) || "qualsiasi",
+    },
+    azioni: azioniPer.get(str(r.id)) ?? [],
+  }));
+
+  if (correnti.length > 0) {
+    await d.collection<DocGen>("regole").replaceOne(
+      { _id: "correnti" },
+      { regole: correnti, aggiornateIl: new Date(), aggiornateDa: 1 },
+      { upsert: true },
+    );
+  }
+
+  // Storico delle versioni: copiato con impronta e sigillo.
+  const versioni = tutte(sql, "SELECT * FROM regole_versioni ORDER BY id").map((v) => {
+    const doc: Document = {
+      _id: num(v.id),
+      regolaId: str(v.regola_id),
+      numero: num(v.numero),
+      nome: str(v.nome),
+      attiva: bool(v.attiva),
+      condizione: JSON.parse(str(v.condizione) || "{}"),
+      azioni: JSON.parse(str(v.azioni) || "[]"),
+      impronta: str(v.impronta),
+      tipoModifica: str(v.tipo_modifica) || "contenuto",
+      origine: str(v.origine) || "interfaccia",
+      nota: str(v.nota),
+      creataIl: dataO(v.creata_il) ?? new Date(),
+      creataDa: num(v.creata_da) || 1,
+    };
+    doc.sigillo = createHash("sha1").update(JSON.stringify(doc)).digest("hex");
+    return doc;
+  });
+  const n = (await scrivi(d, "regole_versioni", versioni)) + (correnti.length > 0 ? 1 : 0);
+
+  // Contatore, allineato al massimo id di versione già usato.
+  const max = versioni.reduce((m, v) => Math.max(m, num(v._id)), 0);
+  await d.collection<DocGen>("contatori").updateOne(
+    { _id: "regole_versioni" },
+    { $set: { valore: max } },
+    { upsert: true },
+  );
+
+  return n;
+}
+
+async function travasaEsecuzioni(d: Db, sql: DatabaseSync): Promise<number> {
+  const righe = tutte(sql, "SELECT * FROM esecuzioni");
+  if (righe.length === 0) return 0;
+  const nodi = tutte(sql, "SELECT * FROM esiti_nodi ORDER BY esecuzione_id, ordine");
+  const scost = tutte(sql, "SELECT * FROM esecuzioni_scostamenti");
+
+  const nodiPer = new Map<string, Document[]>();
+  for (const n of nodi) {
+    const arr = nodiPer.get(str(n.esecuzione_id)) ?? [];
+    arr.push({
+      azioneCodice: str(n.azione_codice),
+      tipo: str(n.tipo),
+      stato: str(n.stato),
+      messaggio: str(n.messaggio),
+      scrittura: false, // riempito sotto dal catalogo tipi_azione
+      chiamata: n.chiamata_url
+        ? { metodo: str(n.chiamata_metodo), url: str(n.chiamata_url), corpo: n.chiamata_corpo == null ? null : str(n.chiamata_corpo) }
+        : null,
+      durataMs: num(n.durata_ms),
+    });
+    nodiPer.set(str(n.esecuzione_id), arr);
+  }
+  const scostPer = new Map<string, Document[]>();
+  for (const s of scost) {
+    const arr = scostPer.get(str(s.esecuzione_id)) ?? [];
+    arr.push({
+      azioneCodice: str(s.azione_codice),
+      parametro: str(s.parametro),
+      valoreVersione: str(s.valore_versione),
+      valoreUsato: str(s.valore_usato),
+    });
+    scostPer.set(str(s.esecuzione_id), arr);
+  }
+
+  // scrittura dei nodi dal catalogo
+  const tipi = new Map<string, boolean>(
+    tutte(sql, "SELECT tipo, scrittura FROM tipi_azione").map((t) => [str(t.tipo), bool(t.scrittura)]),
+  );
+
+  return scrivi(
+    d,
+    "esecuzioni",
+    righe.map((r) => {
+      const suoiNodi = (nodiPer.get(str(r.id)) ?? []).map((n) => ({
+        ...n,
+        scrittura: tipi.get(str(n.tipo)) ?? false,
+      }));
+      return {
+        _id: str(r.id),
+        quando: dataO(r.quando) ?? new Date(),
+        modo: str(r.modo) === "reale" ? "reale" : "simulazione",
+        esito: str(r.esito) === "errore" ? "errore" : "ok",
+        regolaId: str(r.regola_id),
+        regolaNome: str(r.regola_nome),
+        regolaVersioneId: r.regola_versione_id == null ? null : num(r.regola_versione_id),
+        operatoreId: num(r.operatore_id) || 1,
+        recensioneChiave: str(r.recensione_chiave),
+        recensioneNome: str(r.recensione_nome),
+        recensioneStelle: r.recensione_stelle == null ? null : num(r.recensione_stelle),
+        recensioneSede: str(r.recensione_sede),
+        recensioneTesto: str(r.recensione_testo),
+        testoModificato: bool(r.testo_modificato),
+        durataMs: suoiNodi.reduce((s, n) => s + num((n as { durataMs?: unknown }).durataMs), 0),
+        nodi: suoiNodi,
+        scostamenti: scostPer.get(str(r.id)) ?? [],
+        annullata: dataO(r.annullata_il) != null,
+        annullataIl: dataO(r.annullata_il),
+        archiviata: dataO(r.archiviata_il) != null,
+        archiviataIl: dataO(r.archiviata_il),
+      };
+    }),
+  );
+}
+
+async function travasaTraduzioni(d: Db, sql: DatabaseSync): Promise<number> {
+  return scrivi(
+    d,
+    "traduzioni",
+    tutte(sql, "SELECT * FROM traduzioni").map((r) => ({
+      _id: str(r.chiave), // la chiave si COPIA, mai ricalcolata
+      testoOriginale: str(r.testo_originale),
+      italiano: str(r.italiano),
+      linguaRilevata: r.lingua_rilevata ? str(r.lingua_rilevata) : null,
+      creataIl: dataO(r.creata_il) ?? new Date(),
+      usataIl: dataO(r.usata_il) ?? new Date(),
+      usi: num(r.usi),
+    })),
+  );
+}
+
+async function travasaImpostazioni(d: Db, sql: DatabaseSync): Promise<number> {
+  const valori = tutte(sql, "SELECT chiave, valore FROM impostazioni");
+  const etichette = tutte(sql, "SELECT * FROM etichette ORDER BY ordine, id");
+  await d.collection<DocGen>("impostazioni").replaceOne(
+    { _id: "correnti" },
+    {
+      valori: valori.map((v) => ({
+        chiave: str(v.chiave),
+        valore: str(v.valore),
+        aggiornataIl: new Date(),
+        aggiornataDa: 1,
+      })),
+      etichette: etichette.map((e) => ({
+        id: str(e.id),
+        nome: str(e.nome),
+        oggettoContiene: str(e.oggetto_contiene),
+        mittenteContiene: str(e.mittente_contiene),
+      })),
+      aggiornateIl: new Date(),
+    },
+    { upsert: true },
+  );
+  return 1;
+}
+
+async function travasaStorici(d: Db, sql: DatabaseSync): Promise<number> {
+  let n = 0;
+
+  const storico = tutte(sql, "SELECT * FROM impostazioni_storico ORDER BY id").map((r) => {
+    const doc: Document = {
+      chiave: str(r.chiave),
+      segreto: bool(r.segreto),
+      quando: dataO(r.quando) ?? new Date(),
+      operatoreId: num(r.operatore_id) || 1,
+      azione: str(r.azione),
+      valorePrecedente: r.valore_precedente == null ? null : str(r.valore_precedente),
+      valoreNuovo: r.valore_nuovo == null ? null : str(r.valore_nuovo),
+      presentePrima: bool(r.presente_prima),
+      presenteDopo: bool(r.presente_dopo),
+    };
+    doc.sigillo = createHash("sha1").update(JSON.stringify(doc)).digest("hex");
+    return doc;
+  });
+  if (storico.length > 0) {
+    await d.collection("impostazioni_storico").insertMany(storico, { ordered: false });
+    n += storico.length;
+  }
+
+  const attivita = tutte(sql, "SELECT * FROM registro_attivita ORDER BY id").map((r) => ({
+    quando: dataO(r.quando) ?? new Date(),
+    operatoreId: num(r.operatore_id) || 1,
+    azione: str(r.azione),
+    oggettoTipo: r.oggetto_tipo ? str(r.oggetto_tipo) : null,
+    oggettoId: r.oggetto_id ? str(r.oggetto_id) : null,
+    dettaglio: str(r.dettaglio),
+  }));
+  if (attivita.length > 0) {
+    await d.collection("registro_attivita").insertMany(attivita as Document[], { ordered: false });
+    n += attivita.length;
+  }
+
+  return n;
+}
+
+export async function riepilogoTravasi(d: Db) {
+  const conta = (nome: string, filtro: Document = {}) => d.collection(nome).countDocuments(filtro);
   return {
-    regole: conta("SELECT COUNT(*) FROM regole"),
-    versioni: conta("SELECT COUNT(*) FROM regole_versioni"),
-    esecuzioni: conta("SELECT COUNT(*) FROM esecuzioni"),
-    nodi: conta("SELECT COUNT(*) FROM esiti_nodi"),
-    traduzioni: conta("SELECT COUNT(*) FROM traduzioni"),
-    recensioni: conta("SELECT COUNT(*) FROM recensioni"),
-    impostazioni: conta("SELECT COUNT(*) FROM impostazioni"),
+    recensioni: await conta("recensioni"),
+    versioni: await conta("regole_versioni"),
+    esecuzioni: await conta("esecuzioni"),
+    traduzioni: await conta("traduzioni"),
   };
 }

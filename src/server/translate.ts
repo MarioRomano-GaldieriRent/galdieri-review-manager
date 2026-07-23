@@ -1,5 +1,4 @@
 import { createHash } from "crypto";
-import "@/server/db/avvio";
 import { cercaTraduzioni, salvaTraduzioni, segnaUso } from "@/server/db/traduzioni";
 import { resolveTranslator } from "@/server/settings";
 
@@ -43,7 +42,7 @@ export async function translateToItalian(texts: string[]): Promise<(Translated |
 
   // Una sola interrogazione per tutto il lotto, invece di una per testo.
   const chiavi = texts.map((t) => (t.trim() ? hash(t.trim()) : ""));
-  const store = cercaTraduzioni(chiavi.filter(Boolean));
+  const store = await cercaTraduzioni(chiavi.filter(Boolean));
   const daTradurre: { index: number; text: string; key: string }[] = [];
   const usate: string[] = [];
 
@@ -64,7 +63,7 @@ export async function translateToItalian(texts: string[]): Promise<(Translated |
     }
   });
 
-  segnaUso(usate);
+  await segnaUso(usate);
 
   if (daTradurre.length === 0) return result;
 
@@ -112,7 +111,7 @@ export async function translateToItalian(texts: string[]): Promise<(Translated |
         ];
       });
 
-      salvaTraduzioni(nuove);
+      await salvaTraduzioni(nuove);
     }
   } catch (e) {
     console.error("[translate] errore:", e instanceof Error ? e.message : e);

@@ -51,14 +51,17 @@ export default async function StatistichePage() {
   const simulazione = settings.modo !== "reale";
   const traduzioneAttiva = await isTranslationConfigured();
 
-  const cop = copertura();
-  const settimane = perSettimana();
-  const p = punteggi();
-  const sedi = perSede();
-  const lin = lingue();
-  const lav = lavorazione();
-  const regole = coperturaRegole();
-  const modoDa = modoInVigoreDa();
+  // Sette letture indipendenti: in parallelo, così la pagina non le aspetta in fila.
+  const [cop, settimane, p, sedi, lin, lav, regole, modoDa] = await Promise.all([
+    copertura(),
+    perSettimana(),
+    punteggi(),
+    perSede(),
+    lingue(),
+    lavorazione(),
+    coperturaRegole(),
+    modoInVigoreDa(),
+  ]);
 
   const settimanaCorrente = settimanaIso(new Date().toISOString());
   const complete = settimane.filter((s) => s.settimana !== settimanaCorrente);

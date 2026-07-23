@@ -172,7 +172,7 @@ export async function caricaRecensioni(
   // CONVERSAZIONI: sottrarre le conversazioni dalle email darebbe come
   // "non interpretabile" ogni risposta dentro un flusso già riconosciuto.
   const conversazioni = new Set(messaggi.map((m) => m.conversationId || m.id)).size;
-  salvaRecensioni(recensioni, label.id, {
+  await salvaRecensioni(recensioni, label.id, {
     letti: messaggi.length,
     interpretati,
     scartati: Math.max(0, conversazioni - interpretati),

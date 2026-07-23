@@ -1,15 +1,29 @@
-import "@/server/db/avvio";
-import { conta, tutteLeRighe, unaRiga } from "@/server/db/connessione";
+import type { Document } from "mongodb";
+import { coll } from "@/server/db/connessione";
 
-// Le interrogazioni della pagina Statistiche.
+// Le statistiche, in aggregation pipeline. Le regole di forma non cambiano dal
+// tempo di SQLite: si legge SOLO dall'archivio (mai la finestra live), e ogni
+// funzione porta la sua BASE. Cambiano solo le trappole, che qui sono altre:
 //
-// Regola di forma, non negoziabile: si legge SOLO dall'archivio, mai dalla
-// finestra live delle ultime 50 email. Mescolare le due basi darebbe numeri
-// che cambiano a ogni ricaricamento senza che nessuno sappia spiegare perché.
-//
-// Seconda regola: ogni funzione restituisce anche la propria BASE, cioè su
-// quante righe è calcolata e quante ne ha escluse. Una percentuale senza base
-// non è un'informazione, è un'impressione.
+//  - {stelle: {$lte: 2}} nel query language conta SOLO stelle:2 (type
+//    bracketing, come SQL). {$expr:{$lte:["$stelle",2]}} conterebbe anche null
+//    e assenti: si usa $isNumber dentro gli $expr.
+//  - "pubblicate" vuole $elemMatch (un nodo che sia ok E google.rispondi
+//    insieme), non due condizioni separate sull'array.
+//  - $divide per zero è errore duro, non null: sempre dentro un $cond su base>0.
+//  - $facet al livello alto restituisce sempre un documento, anche su
+//    collezione vuota: da lì il $ifNull ovunque, per non mostrare NaN.
+
+const NEG = { $and: [{ $isNumber: "$stelle" }, { $lte: ["$stelle", 2] }] };
+
+async function aggr<T extends Document = Document>(nome: string, pipeline: Document[]): Promise<T[]> {
+  return (await coll(nome)).aggregate<T>(pipeline).toArray();
+}
+async function conta(nome: string, filtro: Document = {}): Promise<number> {
+  return (await coll(nome)).countDocuments(filtro);
+}
+
+// ------------------------------------------------------------------ copertura
 
 export type Copertura = {
   primaRaccolta: string | null;
@@ -27,50 +41,59 @@ export type Copertura = {
   giorniSenzaRaccolta: number;
 };
 
-export function copertura(): Copertura {
-  const estremi = unaRiga<{ prima: string | null; ultima: string | null }>(
-    "SELECT MIN(prima_vista_il) AS prima, MAX(ultima_vista_il) AS ultima FROM recensioni",
-  );
-  const sync = unaRiga<{ n: number; giorni: number }>(
-    `SELECT COUNT(*) AS n, COUNT(DISTINCT substr(iniziata_il,1,10)) AS giorni
-       FROM sincronizzazioni`,
-  );
-  // Le email lette NON si sommano fra le passate: ogni caricamento di pagina
-  // rilegge le stesse 50 email, e sommarle direbbe "2000 email lette" dopo
-  // quaranta aperture della dashboard. Vale l'ultima passata, che è una
-  // fotografia della finestra corrente.
-  const ultimaPassata = unaRiga<{ letti: number; scartati: number }>(
-    `SELECT messaggi_letti AS letti, messaggi_scartati AS scartati
-       FROM sincronizzazioni ORDER BY id DESC LIMIT 1`,
-  );
-
-  const prima = estremi?.prima ?? null;
-  const ultima = estremi?.ultima ?? null;
+export async function copertura(): Promise<Copertura> {
+  const estremiRec = await aggr<{ prima: Date | null; ultima: Date | null }>("recensioni", [
+    { $group: { _id: null, prima: { $min: "$primaVistaIl" }, ultima: { $max: "$ultimaVistaIl" } } },
+  ]);
+  const prima = estremiRec[0]?.prima ?? null;
+  const ultima = estremiRec[0]?.ultima ?? null;
   const giorni =
     prima && ultima
-      ? Math.max(
-          1,
-          Math.round((new Date(ultima).getTime() - new Date(prima).getTime()) / 86400000) + 1,
-        )
+      ? Math.max(1, Math.round((ultima.getTime() - prima.getTime()) / 86400000) + 1)
       : 0;
 
+  const sinc = await aggr<{ giorni: string[] }>("sincronizzazioni", [
+    {
+      $group: {
+        _id: null,
+        giorni: {
+          $addToSet: { $dateToString: { date: "$iniziataIl", format: "%Y-%m-%d", timezone: "UTC" } },
+        },
+      },
+    },
+  ]);
+  const giorniConRaccolta = sinc[0]?.giorni.length ?? 0;
+
+  // L'ultima passata, non la somma. Ordine su iniziataIl (l'_id ObjectId ordina
+  // solo al secondo, e dopo un riavvio due sync nello stesso secondo si
+  // invertirebbero); _id solo come spareggio.
+  const ultimaPassata = await aggr<{ letti: number; scartati: number }>("sincronizzazioni", [
+    { $sort: { iniziataIl: -1, _id: -1 } },
+    { $limit: 1 },
+    { $project: { _id: 0, letti: "$messaggiLetti", scartati: "$messaggiScartati" } },
+  ]);
+
+  const doppioni = await aggr<{ n: number }>("recensioni", [
+    { $match: { impronta: { $type: "string" } } },
+    { $group: { _id: "$impronta", c: { $sum: 1 } } },
+    { $match: { c: { $gt: 1 } } },
+    { $count: "n" },
+  ]);
+
   return {
-    primaRaccolta: prima,
-    ultimaRaccolta: ultima,
+    primaRaccolta: prima ? prima.toISOString() : null,
+    ultimaRaccolta: ultima ? ultima.toISOString() : null,
     giorniCoperti: giorni,
-    recensioni: conta("SELECT COUNT(*) FROM recensioni"),
-    archiviate: conta("SELECT COUNT(*) FROM recensioni WHERE archiviata_il IS NOT NULL"),
-    ricostruite: conta("SELECT COUNT(*) FROM recensioni WHERE testo_troncato = 1"),
-    sincronizzazioni: sync?.n ?? 0,
-    messaggiLetti: ultimaPassata?.letti ?? 0,
-    messaggiScartati: ultimaPassata?.scartati ?? 0,
-    senzaPunteggio: conta("SELECT COUNT(*) FROM recensioni WHERE stelle IS NULL"),
-    senzaSede: conta("SELECT COUNT(*) FROM recensioni WHERE sede_id = 0"),
-    possibiliDoppioni: conta(
-      `SELECT COUNT(*) FROM (SELECT impronta FROM recensioni
-         WHERE impronta IS NOT NULL GROUP BY impronta HAVING COUNT(*) > 1)`,
-    ),
-    giorniSenzaRaccolta: Math.max(0, giorni - (sync?.giorni ?? 0)),
+    recensioni: await conta("recensioni"),
+    archiviate: await conta("recensioni", { archiviata: true }),
+    ricostruite: await conta("recensioni", { testoTroncato: true }),
+    sincronizzazioni: await conta("sincronizzazioni"),
+    messaggiLetti: ultimaPassata[0]?.letti ?? 0,
+    messaggiScartati: ultimaPassata[0]?.scartati ?? 0,
+    senzaPunteggio: await conta("recensioni", { stelle: null }),
+    senzaSede: await conta("recensioni", { "sede.chiave": "" }),
+    possibiliDoppioni: doppioni[0]?.n ?? 0,
+    giorniSenzaRaccolta: Math.max(0, giorni - giorniConRaccolta),
   };
 }
 
@@ -78,21 +101,21 @@ export function copertura(): Copertura {
 
 export type Settimana = { settimana: string; recensioni: number; negative: number };
 
-/**
- * Volume per settimana ISO.
- *
- * La settimana in corso viene marcata a parte dalla pagina e tenuta fuori
- * dalle medie: è sempre parziale, e messa accanto alle altre si legge come un
- * crollo che non è mai avvenuto.
- */
-export function perSettimana(limite = 26): Settimana[] {
-  return tutteLeRighe<Settimana>(
-    `SELECT settimana_iso AS settimana, COUNT(*) AS recensioni,
-            SUM(CASE WHEN stelle <= 2 THEN 1 ELSE 0 END) AS negative
-       FROM recensioni WHERE settimana_iso <> ''
-      GROUP BY settimana_iso ORDER BY settimana_iso DESC LIMIT ?`,
-    limite,
-  ).reverse();
+export async function perSettimana(limite = 26): Promise<Settimana[]> {
+  const righe = await aggr<Settimana>("recensioni", [
+    { $match: { settimanaIso: { $gt: "" } } },
+    {
+      $group: {
+        _id: "$settimanaIso",
+        recensioni: { $sum: 1 },
+        negative: { $sum: { $cond: [NEG, 1, 0] } },
+      },
+    },
+    { $sort: { _id: -1 } },
+    { $limit: limite },
+    { $project: { _id: 0, settimana: "$_id", recensioni: 1, negative: 1 } },
+  ]);
+  return righe.reverse();
 }
 
 // --------------------------------------------------------------- punteggio
@@ -107,25 +130,25 @@ export type Punteggi = {
   negative: number;
 };
 
-export function punteggi(): Punteggi {
-  const distribuzione = tutteLeRighe<{ stelle: number; quante: number }>(
-    `SELECT stelle, COUNT(*) AS quante FROM recensioni
-      WHERE stelle IS NOT NULL GROUP BY stelle ORDER BY stelle DESC`,
-  );
+export async function punteggi(): Promise<Punteggi> {
+  const distribuzione = await aggr<{ stelle: number; quante: number }>("recensioni", [
+    { $match: { stelle: { $ne: null } } },
+    { $group: { _id: "$stelle", quante: { $sum: 1 } } },
+    { $sort: { _id: -1 } },
+    { $project: { _id: 0, stelle: "$_id", quante: 1 } },
+  ]);
   const base = distribuzione.reduce((s, d) => s + d.quante, 0);
   const somma = distribuzione.reduce((s, d) => s + d.stelle * d.quante, 0);
 
   return {
     distribuzione,
-    senzaPunteggio: conta("SELECT COUNT(*) FROM recensioni WHERE stelle IS NULL"),
+    senzaPunteggio: await conta("recensioni", { stelle: null }),
     base,
-    // La media si mostra solo con la sua base accanto, e non è il punteggio
-    // pubblico del profilo Google: è la media delle recensioni arrivate via
-    // email, che è un insieme diverso.
     media: base > 0 ? somma / base : null,
-    cinqueSenzaCommento: conta("SELECT COUNT(*) FROM recensioni WHERE stelle = 5 AND ha_testo = 0"),
-    cinqueConCommento: conta("SELECT COUNT(*) FROM recensioni WHERE stelle = 5 AND ha_testo = 1"),
-    negative: conta("SELECT COUNT(*) FROM recensioni WHERE stelle <= 2"),
+    cinqueSenzaCommento: await conta("recensioni", { stelle: 5, haTesto: false }),
+    cinqueConCommento: await conta("recensioni", { stelle: 5, haTesto: true }),
+    // query language: type bracketing, conta solo stelle:2 e stelle:1
+    negative: await conta("recensioni", { stelle: { $lte: 2 } }),
   };
 }
 
@@ -136,31 +159,51 @@ export type RigaSede = {
   recensioni: number;
   negative: number;
   media: number | null;
-  /** Sotto le 20 recensioni non si mostra nessuna percentuale. */
   baseSufficiente: boolean;
 };
 
 export const SOGLIA_SEDE = 20;
 
-export function perSede(): RigaSede[] {
-  return tutteLeRighe<{
-    sede: string;
+export async function perSede(): Promise<RigaSede[]> {
+  const righe = await aggr<{
+    chiave: string;
+    nomeDenorm: string;
     recensioni: number;
     negative: number;
-    media: number | null;
-    con_punteggio: number;
-  }>(
-    `SELECT s.nome AS sede, COUNT(*) AS recensioni,
-            SUM(CASE WHEN r.stelle <= 2 THEN 1 ELSE 0 END) AS negative,
-            AVG(r.stelle) AS media,
-            SUM(CASE WHEN r.stelle IS NOT NULL THEN 1 ELSE 0 END) AS con_punteggio
-       FROM recensioni r JOIN sedi s ON s.id = r.sede_id
-      GROUP BY s.id ORDER BY recensioni DESC, s.nome`,
-  ).map((r) => ({
-    sede: r.sede,
+    somma: number;
+    conPunteggio: number;
+  }>("recensioni", [
+    {
+      $group: {
+        _id: "$sede.chiave",
+        nomeDenorm: { $first: "$sede.nome" },
+        recensioni: { $sum: 1 },
+        negative: { $sum: { $cond: [NEG, 1, 0] } },
+        somma: { $sum: { $cond: [{ $isNumber: "$stelle" }, "$stelle", 0] } },
+        conPunteggio: { $sum: { $cond: [{ $isNumber: "$stelle" }, 1, 0] } },
+      },
+    },
+    { $lookup: { from: "sedi", localField: "_id", foreignField: "_id", as: "_s" } },
+    {
+      $project: {
+        _id: 0,
+        chiave: "$_id",
+        // il nome corrente della sede vince sul denormalizzato
+        nomeDenorm: { $ifNull: [{ $first: "$_s.nome" }, "$nomeDenorm"] },
+        recensioni: 1,
+        negative: 1,
+        somma: 1,
+        conPunteggio: 1,
+      },
+    },
+    { $sort: { recensioni: -1, nomeDenorm: 1 } },
+  ]);
+
+  return righe.map((r) => ({
+    sede: r.nomeDenorm,
     recensioni: r.recensioni,
     negative: r.negative,
-    media: r.con_punteggio > 0 ? r.media : null,
+    media: r.conPunteggio > 0 ? r.somma / r.conPunteggio : null,
     baseSufficiente: r.recensioni >= SOGLIA_SEDE,
   }));
 }
@@ -174,26 +217,53 @@ export type Lingue = {
   lunghezzaMediana: number | null;
 };
 
-export function lingue(): Lingue {
-  const righe = tutteLeRighe<{ lingua: string; quante: number }>(
-    `SELECT coalesce(l.nome, 'non rilevata') AS lingua, COUNT(*) AS quante
-       FROM recensioni r LEFT JOIN lingue l ON l.codice = r.lingua_codice
-      WHERE r.ha_testo = 1
-      GROUP BY r.lingua_codice ORDER BY quante DESC`,
-  );
+export async function lingue(): Promise<Lingue> {
+  // $group prima del $lookup: la join serve solo alla decorazione, e costa una
+  // ricerca per lingua distinta invece che per documento.
+  const righe = await aggr<{ lingua: string; quante: number }>("recensioni", [
+    { $match: { haTesto: true } },
+    { $group: { _id: "$lingua", quante: { $sum: 1 } } },
+    { $lookup: { from: "lingue", localField: "_id", foreignField: "_id", as: "_l" } },
+    { $project: { _id: 0, lingua: { $ifNull: [{ $first: "$_l.nome" }, "non rilevata"] }, quante: 1 } },
+    { $sort: { quante: -1, lingua: 1 } },
+  ]);
 
-  // Mediana e non media: un solo commento lunghissimo sposta la media e non
-  // dice niente su come scrivono i clienti.
-  const lunghezze = tutteLeRighe<{ n: number }>(
-    `SELECT length(trim(coalesce(nullif(testo_italiano,''), testo_originale))) AS n
-       FROM recensioni WHERE ha_testo = 1 ORDER BY n`,
-  ).map((r) => r.n);
+  // Mediana della lunghezza. coalesce(nullif(italiano,''), originale): con
+  // $ifNull nudo la traduzione fallita ("") entrerebbe con lunghezza 0.
+  const mediana = await aggr<{ v: number | null }>("recensioni", [
+    { $match: { haTesto: true } },
+    {
+      $set: {
+        _t: {
+          $let: {
+            vars: { it: { $ifNull: ["$testoItaliano", ""] } },
+            in: { $cond: [{ $eq: ["$$it", ""] }, { $ifNull: ["$testoOriginale", ""] }, "$$it"] },
+          },
+        },
+      },
+    },
+    { $set: { _len: { $strLenCP: { $trim: { input: "$_t" } } } } },
+    { $group: { _id: null, lunghezze: { $push: "$_len" } } },
+    { $set: { ordinate: { $sortArray: { input: "$lunghezze", sortBy: 1 } } } },
+    {
+      $project: {
+        _id: 0,
+        v: {
+          $cond: [
+            { $gt: [{ $size: "$ordinate" }, 0] },
+            { $arrayElemAt: ["$ordinate", { $floor: { $divide: [{ $size: "$ordinate" }, 2] } }] },
+            null,
+          ],
+        },
+      },
+    },
+  ]);
 
   return {
     righe,
-    conCommento: conta("SELECT COUNT(*) FROM recensioni WHERE ha_testo = 1"),
-    soloPunteggio: conta("SELECT COUNT(*) FROM recensioni WHERE ha_testo = 0"),
-    lunghezzaMediana: lunghezze.length > 0 ? lunghezze[Math.floor(lunghezze.length / 2)] : null,
+    conCommento: await conta("recensioni", { haTesto: true }),
+    soloPunteggio: await conta("recensioni", { haTesto: false }),
+    lunghezzaMediana: mediana[0]?.v ?? null,
   };
 }
 
@@ -212,77 +282,150 @@ export type Lavorazione = {
   erroriPerNodo: { titolo: string; quanti: number }[];
 };
 
-export function lavorazione(): Lavorazione {
+export async function lavorazione(): Promise<Lavorazione> {
+  // Un solo $match sulle non annullate, poi $facet: il filtro "annullata:false"
+  // sta una volta sola, l'omissione è strutturalmente impossibile.
+  const f = await aggr<Document>("esecuzioni", [
+    { $match: { annullata: false } },
+    {
+      $facet: {
+        simulati: [{ $match: { modo: "simulazione" } }, { $count: "n" }],
+        reali: [{ $match: { modo: "reale" } }, { $count: "n" }],
+        errore: [{ $match: { esito: "errore" } }, { $count: "n" }],
+        riscritture: [{ $match: { testoModificato: true } }, { $count: "n" }],
+        // $elemMatch: un nodo che sia ok E google.rispondi insieme, non due
+        // condizioni separate che si accontenterebbero di nodi diversi.
+        pubblicate: [
+          { $match: { modo: "reale", nodi: { $elemMatch: { stato: "ok", tipo: "google.rispondi" } } } },
+          { $count: "n" },
+        ],
+        scritture: [
+          { $match: { modo: "reale", nodi: { $elemMatch: { stato: "ok", scrittura: true } } } },
+          { $count: "n" },
+        ],
+        perRegola: [
+          { $group: { _id: "$regolaNome", n: { $sum: 1 } } },
+          { $sort: { n: -1, _id: 1 } },
+        ],
+        ticketTrovati: [
+          {
+            $set: {
+              _t: {
+                $size: {
+                  $filter: {
+                    input: "$nodi",
+                    as: "n",
+                    cond: {
+                      $and: [
+                        { $eq: ["$$n.tipo", "freshdesk.trovaTicket"] },
+                        { $regexMatch: { input: "$$n.messaggio", regex: "^Ticket #" } },
+                      ],
+                    },
+                  },
+                },
+              },
+            },
+          },
+          { $group: { _id: null, n: { $sum: "$_t" } } },
+        ],
+        ticketNonTrovati: [
+          {
+            $set: {
+              _t: {
+                $size: {
+                  $filter: {
+                    input: "$nodi",
+                    as: "n",
+                    cond: {
+                      $and: [
+                        { $eq: ["$$n.tipo", "freshdesk.trovaTicket"] },
+                        { $regexMatch: { input: "$$n.messaggio", regex: "^Nessun ticket" } },
+                      ],
+                    },
+                  },
+                },
+              },
+            },
+          },
+          { $group: { _id: null, n: { $sum: "$_t" } } },
+        ],
+        // errori per nodo: si conta il nodo, non l'esecuzione
+        erroriNodi: [
+          { $unwind: "$nodi" },
+          { $match: { "nodi.stato": "errore" } },
+          { $group: { _id: "$nodi.tipo", n: { $sum: 1 } } },
+          { $sort: { n: -1, _id: 1 } },
+        ],
+      },
+    },
+  ]);
+
+  const d = f[0] ?? {};
+  const primo = (arr: Document[] | undefined): number => (arr && arr[0] ? (arr[0].n as number) : 0);
+
+  // titoli dei nodi in errore, dal catalogo
+  const tipi = new Map<string, string>(
+    (await (await coll("tipi_azione")).find({}).toArray()).map((t) => [
+      t._id as string,
+      t.titolo as string,
+    ]),
+  );
+
   return {
-    flussiSimulati: conta(
-      "SELECT COUNT(*) FROM esecuzioni WHERE modo = 'simulazione' AND annullata_il IS NULL",
-    ),
-    flussiReali: conta(
-      "SELECT COUNT(*) FROM esecuzioni WHERE modo = 'reale' AND annullata_il IS NULL",
-    ),
-    // Pubblicata davvero = la RISPOSTA PUBBLICA al cliente è andata a buon
-    // fine. Solo google.rispondi: un inoltro a Cherubina o una PUT su
-    // Freshdesk sono scritture riuscite, ma il cliente non vede niente.
-    // Contarle qui trasformerebbe ogni escalation in una "risposta
-    // pubblicata", che è esattamente la confusione che questo numero deve
-    // impedire.
-    pubblicateDavvero: conta(
-      `SELECT COUNT(DISTINCT n.esecuzione_id) FROM esiti_nodi n
-         JOIN esecuzioni e ON e.id = n.esecuzione_id
-        WHERE n.stato = 'ok' AND n.tipo = 'google.rispondi'
-          AND e.modo = 'reale' AND e.annullata_il IS NULL`,
-    ),
-    // Scritture riuscite di qualunque tipo: utile, ma è un'altra domanda e
-    // porta un'altra etichetta.
-    scrittureRiuscite: conta(
-      `SELECT COUNT(DISTINCT n.esecuzione_id) FROM esiti_nodi n
-         JOIN esecuzioni e ON e.id = n.esecuzione_id
-         JOIN tipi_azione t ON t.tipo = n.tipo AND t.scrittura = 1
-        WHERE n.stato = 'ok' AND e.modo = 'reale' AND e.annullata_il IS NULL`,
-    ),
-    conErrore: conta("SELECT COUNT(*) FROM esecuzioni WHERE esito = 'errore' AND annullata_il IS NULL"),
-    riscritture: conta(
-      "SELECT COUNT(*) FROM esecuzioni WHERE testo_modificato = 1 AND annullata_il IS NULL",
-    ),
-    copertePerRegola: tutteLeRighe<{ regola: string; quante: number }>(
-      `SELECT regola_nome AS regola, COUNT(*) AS quante FROM esecuzioni
-        WHERE annullata_il IS NULL GROUP BY regola_nome ORDER BY quante DESC`,
-    ),
-    // freshdesk.trovaTicket è una GET: gira davvero anche in simulazione,
-    // quindi questi due numeri sono affidabili da subito. Le esecuzioni
-    // annullate restano fuori, come in tutti gli altri numeri della sezione:
-    // altrimenti una prova rimessa in coda e rifatta conterebbe due volte.
-    ticketTrovati: conta(
-      `SELECT COUNT(*) FROM esiti_nodi n JOIN esecuzioni e ON e.id = n.esecuzione_id
-        WHERE n.tipo = 'freshdesk.trovaTicket' AND n.messaggio LIKE 'Ticket #%'
-          AND e.annullata_il IS NULL`,
-    ),
-    ticketNonTrovati: conta(
-      `SELECT COUNT(*) FROM esiti_nodi n JOIN esecuzioni e ON e.id = n.esecuzione_id
-        WHERE n.tipo = 'freshdesk.trovaTicket' AND n.messaggio LIKE 'Nessun ticket%'
-          AND e.annullata_il IS NULL`,
-    ),
-    erroriPerNodo: tutteLeRighe<{ titolo: string; quanti: number }>(
-      `SELECT t.titolo, COUNT(*) AS quanti FROM esiti_nodi n
-         JOIN tipi_azione t ON t.tipo = n.tipo
-         JOIN esecuzioni e ON e.id = n.esecuzione_id
-        WHERE n.stato = 'errore' AND e.annullata_il IS NULL
-        GROUP BY n.tipo ORDER BY quanti DESC`,
-    ),
+    flussiSimulati: primo(d.simulati as Document[]),
+    flussiReali: primo(d.reali as Document[]),
+    pubblicateDavvero: primo(d.pubblicate as Document[]),
+    scrittureRiuscite: primo(d.scritture as Document[]),
+    conErrore: primo(d.errore as Document[]),
+    riscritture: primo(d.riscritture as Document[]),
+    copertePerRegola: ((d.perRegola as Document[]) ?? []).map((x) => ({
+      regola: x._id as string,
+      quante: x.n as number,
+    })),
+    ticketTrovati: primo(d.ticketTrovati as Document[]),
+    ticketNonTrovati: primo(d.ticketNonTrovati as Document[]),
+    erroriPerNodo: ((d.erroriNodi as Document[]) ?? []).map((x) => ({
+      titolo: tipi.get(x._id as string) ?? (x._id as string),
+      quanti: x.n as number,
+    })),
   };
 }
 
-/** Quante recensioni sono coperte da una regola attiva: non dipende dalla modalità. */
-export function coperturaRegole(): { coperte: number; scoperte: number } {
-  const coperte = conta(
-    `SELECT COUNT(*) FROM recensioni r
-      WHERE r.archiviata_il IS NULL AND EXISTS (
-        SELECT 1 FROM regole g JOIN regole_stelle s ON s.regola_id = g.id
-         WHERE g.attiva = 1 AND s.stelle = r.stelle
-           AND (g.condizione_testo = 'qualsiasi'
-             OR (g.condizione_testo = 'con'   AND r.ha_testo = 1)
-             OR (g.condizione_testo = 'senza' AND r.ha_testo = 0)))`,
-  );
-  const totale = conta("SELECT COUNT(*) FROM recensioni WHERE archiviata_il IS NULL");
+/**
+ * Recensioni in coda coperte da una regola attiva. Le combinazioni possibili
+ * sono al massimo 5 stelle × 2 valori di haTesto = 10: si materializzano in
+ * TypeScript e si fanno due conteggi, invece di un $lookup che su standalone
+ * leggerebbe le regole senza uno snapshot condiviso con le recensioni.
+ */
+export async function coperturaRegole(): Promise<{ coperte: number; scoperte: number }> {
+  const doc = await (await coll("regole")).findOne({ _id: "correnti" as unknown as Document["_id"] });
+  const regole = (doc?.regole ?? []) as {
+    attiva: boolean;
+    condizione: { stelle: number[]; testo: "con" | "senza" | "qualsiasi" };
+  }[];
+
+  // combinazioni (stelle, haTesto) coperte da almeno una regola attiva
+  const conTesto = new Set<number>();
+  const senzaTesto = new Set<number>();
+  for (const r of regole) {
+    if (!r.attiva) continue;
+    for (const s of r.condizione.stelle) {
+      if (r.condizione.testo !== "senza") conTesto.add(s);
+      if (r.condizione.testo !== "con") senzaTesto.add(s);
+    }
+  }
+
+  const clausole: Document[] = [];
+  for (const s of conTesto) clausole.push({ stelle: s, haTesto: true });
+  for (const s of senzaTesto) clausole.push({ stelle: s, haTesto: false });
+
+  const totale = await conta("recensioni", { archiviata: false });
+  // Le recensioni con stelle null restano scoperte, come in SQL: nessuna regola
+  // può decidere cosa farne.
+  const coperte =
+    clausole.length === 0
+      ? 0
+      : await conta("recensioni", { archiviata: false, $or: clausole });
+
   return { coperte, scoperte: totale - coperte };
 }

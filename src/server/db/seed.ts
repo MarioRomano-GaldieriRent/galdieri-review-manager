@@ -1,4 +1,5 @@
-import type { DatabaseSync } from "node:sqlite";
+import type { AnyBulkWriteOperation, Db } from "mongodb";
+import type { DocGen } from "./connessione";
 import {
   AGENTE_ESCALATION,
   AGENTE_MARKETING,
@@ -7,33 +8,27 @@ import {
 } from "@/server/automation/rules";
 import { sediConosciute } from "@/server/automation/sedi";
 import { CATALOGO } from "@/server/automation/types";
-import { adesso } from "@/server/tempo";
 
-// Semina delle tabelle di riferimento, rieseguita a ogni apertura.
+// Semina delle collezioni di riferimento, rieseguita a ogni avvio.
 //
 // La fonte di verità resta il TypeScript: il catalogo dei nodi vive in
 // automation/types.ts, le sedi in automation/sedi.ts (ricavate dai ticket
-// reali). Il database le insegue, non le sostituisce — così aggiungere una
-// sede resta una riga di codice, e non un intervento sul database.
-//
-// Tutto è idempotente: ON CONFLICT DO UPDATE dove il valore può cambiare,
-// DO NOTHING dove la riga è di sola presenza.
+// reali). Il database le insegue. Tutto è idempotente (upsert): rigirarla a
+// ogni avvio è ciò che tiene il database allineato al codice quando si aggiunge
+// una sede o un tipo di nodo, e ricrea l'operatore di sistema se sparisce.
 
-/** Chiave normalizzata di una sede: minuscolo, spazi compressi. */
+/** Chiave normalizzata di una sede: minuscolo, spazi compressi. RESTA SINCRONA. */
 export function normalizzaSede(sede: string): string {
   return sede.trim().toLowerCase().replace(/\s+/g, " ");
 }
 
 /**
- * Elenco chiuso delle impostazioni note.
+ * Elenco chiuso delle impostazioni note. RESTA SINCRONO: è pura logica, e da qui
+ * lo importa anche schema.ts per generare i validator sui segreti.
  *
- * `segreto: true` significa che il valore NON viene mai scritto nel database:
- * lo impedisce un trigger, non la buona volontà di chi scrive il codice. Il
- * valore vero si legge dal .env (o da data/segreti.json se digitato dal
- * pannello), esattamente come già fa pick() in settings.ts.
- *
- * Non si deduce mai da una regex sul nome del campo: il giorno che nasce
- * "apiKeyPubblica" la regex sbaglia, e sbaglia in silenzio.
+ * `segreto: true` significa che il valore non viene mai scritto nel database —
+ * lo impedisce un validator, non la buona volontà del codice. Non si deduce mai
+ * da una regex sul nome: il giorno che nasce "apiKeyPubblica" sbaglierebbe.
  */
 export const CATALOGO_IMPOSTAZIONI: {
   chiave: string;
@@ -63,13 +58,11 @@ export const CATALOGO_IMPOSTAZIONI: {
   { chiave: "automation.tipoTicketGoogle", etichetta: "Tipo ticket recensioni", segreto: false },
 ];
 
-/** Vero se la chiave è un segreto e quindi non va mai scritta nel database. */
+/** Vero se la chiave è un segreto e quindi non va mai scritta nel database. RESTA SINCRONA. */
 export function eSegreta(chiave: string): boolean {
   return CATALOGO_IMPOSTAZIONI.some((c) => c.chiave === chiave && c.segreto);
 }
 
-// Lingue che compaiono davvero nelle recensioni ricevute, più le principali
-// europee. L'elenco non è chiuso: salvaRecensioni aggiunge quelle nuove.
 const LINGUE: [string, string, boolean][] = [
   ["it", "italiano", true],
   ["en", "inglese", false],
@@ -94,53 +87,124 @@ const LINGUE: [string, string, boolean][] = [
   ["ja", "giapponese", false],
 ];
 
-export function semina(c: DatabaseSync): void {
-  const ora = adesso();
+/** upsert di un lotto, ignorando quel che c'è già di uguale. */
+async function upsert(d: Db, nome: string, ops: AnyBulkWriteOperation<DocGen>[]): Promise<void> {
+  if (ops.length > 0) await d.collection<DocGen>(nome).bulkWrite(ops, { ordered: false });
+}
 
-  // ---- tipi di nodo: il catalogo del codice è la verità -------------------
-  const insTipo = c.prepare(
-    `INSERT INTO tipi_azione (tipo, servizio, titolo, scrittura) VALUES (?,?,?,?)
-     ON CONFLICT(tipo) DO UPDATE SET
-       servizio = excluded.servizio, titolo = excluded.titolo, scrittura = excluded.scrittura`,
-  );
-  for (const [tipo, meta] of Object.entries(CATALOGO)) {
-    insTipo.run(tipo, meta.servizio, meta.titolo, meta.scrittura ? 1 : 0);
-  }
+export async function semina(d: Db): Promise<void> {
+  const ora = new Date();
 
-  // ---- lingue -------------------------------------------------------------
-  const insLingua = c.prepare(
-    `INSERT INTO lingue (codice, nome, italiana) VALUES (?,?,?) ON CONFLICT(codice) DO NOTHING`,
+  await upsert(
+    d,
+    "tipi_azione",
+    Object.entries(CATALOGO).map(([tipo, meta]) => ({
+      updateOne: {
+        filter: { _id: tipo },
+        update: {
+          $set: { servizio: meta.servizio, titolo: meta.titolo, scrittura: Boolean(meta.scrittura) },
+        },
+        upsert: true,
+      },
+    })) as AnyBulkWriteOperation<DocGen>[],
   );
-  for (const [codice, nome, italiana] of LINGUE) insLingua.run(codice, nome, italiana ? 1 : 0);
 
-  // ---- sedi ---------------------------------------------------------------
-  const insSede = c.prepare(
-    `INSERT INTO sedi (nome, nome_normalizzato, tag_freshdesk, creata_il) VALUES (?,?,?,?)
-     ON CONFLICT(nome_normalizzato) DO UPDATE SET tag_freshdesk = excluded.tag_freshdesk`,
+  await upsert(
+    d,
+    "lingue",
+    LINGUE.map(([codice, nome, italiana]) => ({
+      updateOne: {
+        filter: { _id: codice },
+        update: { $set: { nome }, $setOnInsert: { italiana } },
+        upsert: true,
+      },
+    })) as AnyBulkWriteOperation<DocGen>[],
   );
-  for (const { sede, tag } of sediConosciute()) {
-    insSede.run(sede, normalizzaSede(sede), tag, ora);
-  }
 
-  // ---- catalogo impostazioni ---------------------------------------------
-  const insCat = c.prepare(
-    `INSERT INTO impostazioni_catalogo (chiave, etichetta, segreto, variabile_env) VALUES (?,?,?,?)
-     ON CONFLICT(chiave) DO UPDATE SET
-       etichetta = excluded.etichetta, segreto = excluded.segreto,
-       variabile_env = excluded.variabile_env`,
-  );
-  for (const v of CATALOGO_IMPOSTAZIONI) {
-    insCat.run(v.chiave, v.etichetta, v.segreto ? 1 : 0, v.env ?? "");
-  }
+  // La sentinella "" e le sedi note. tagFreshdesk può cambiare: si aggiorna.
+  const sedi: AnyBulkWriteOperation<DocGen>[] = [
+    {
+      updateOne: {
+        filter: { _id: "" },
+        update: {
+          $set: { nome: "(sede non riconosciuta)", tagFreshdesk: "" },
+          $setOnInsert: { creataIl: new Date("1970-01-01T00:00:00.000Z") },
+        },
+        upsert: true,
+      },
+    },
+    ...sediConosciute().map(({ sede, tag }) => ({
+      updateOne: {
+        filter: { _id: normalizzaSede(sede) },
+        update: { $set: { nome: sede, tagFreshdesk: tag }, $setOnInsert: { creataIl: ora } },
+        upsert: true,
+      },
+    })),
+  ] as AnyBulkWriteOperation<DocGen>[];
+  await upsert(d, "sedi", sedi);
 
-  // ---- agenti Freshdesk ---------------------------------------------------
-  // Identità di un altro sistema, non persone di questa applicazione: il
-  // collegamento a un operatore resta vuoto finché non serve.
-  const insAgente = c.prepare(
-    `INSERT INTO agenti_freshdesk (id_freshdesk, nome, email, gruppo, aggiornato_il) VALUES (?,?,?,?,?)
-     ON CONFLICT(id_freshdesk) DO UPDATE SET nome = excluded.nome, gruppo = excluded.gruppo`,
+  await upsert(
+    d,
+    "impostazioni_catalogo",
+    CATALOGO_IMPOSTAZIONI.map((v) => ({
+      updateOne: {
+        filter: { _id: v.chiave },
+        update: { $set: { etichetta: v.etichetta, segreto: v.segreto, variabileEnv: v.env ?? "" } },
+        upsert: true,
+      },
+    })) as AnyBulkWriteOperation<DocGen>[],
   );
-  insAgente.run(AGENTE_MARKETING, "Ufficio Marketing", null, "Customer Care", ora);
-  insAgente.run(AGENTE_ESCALATION, "Cherubina Panico", EMAIL_ESCALATION, "Customer Care", ora);
-  insAgente.run("80000162477", "Customer Care", EMAIL_TICKETING, "Customer Care", ora);
+
+  // Operatore di sistema, id 1, default di ogni attribuzione. $setOnInsert: se
+  // qualcuno lo cancella, il prossimo avvio lo ricrea (§ garanzie perse).
+  await d.collection<DocGen>("operatori").updateOne(
+    { _id: 1 },
+    {
+      $setOnInsert: {
+        chiave: "sistema",
+        nome: "Sistema",
+        email: null,
+        tipo: "sistema",
+        ruolo: "operatore implicito",
+        attivo: true,
+        diSistema: true,
+        creatoIl: new Date("1970-01-01T00:00:00.000Z"),
+        disattivatoIl: null,
+      },
+    },
+    { upsert: true },
+  );
+
+  await upsert(d, "agenti_freshdesk", [
+    {
+      updateOne: {
+        filter: { _id: AGENTE_MARKETING },
+        update: {
+          $set: { nome: "Ufficio Marketing", gruppo: "Customer Care", aggiornatoIl: ora },
+          $setOnInsert: { email: null, attivo: true, operatoreId: null },
+        },
+        upsert: true,
+      },
+    },
+    {
+      updateOne: {
+        filter: { _id: AGENTE_ESCALATION },
+        update: {
+          $set: { nome: "Cherubina Panico", email: EMAIL_ESCALATION, gruppo: "Customer Care", aggiornatoIl: ora },
+          $setOnInsert: { attivo: true, operatoreId: null },
+        },
+        upsert: true,
+      },
+    },
+    {
+      updateOne: {
+        filter: { _id: "80000162477" },
+        update: {
+          $set: { nome: "Customer Care", email: EMAIL_TICKETING, gruppo: "Customer Care", aggiornatoIl: ora },
+          $setOnInsert: { attivo: true, operatoreId: null },
+        },
+        upsert: true,
+      },
+    },
+  ] as AnyBulkWriteOperation<DocGen>[]);
 }

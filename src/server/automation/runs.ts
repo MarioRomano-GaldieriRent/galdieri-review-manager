@@ -1,4 +1,3 @@
-import "@/server/db/avvio";
 import {
   annullaEsecuzione,
   archiviaTutte,
@@ -26,7 +25,7 @@ import type { Esecuzione } from "./types";
 
 export async function caricaEsecuzioni(limite = 200): Promise<Esecuzione[]> {
   try {
-    return leggiEsecuzioni(limite);
+    return await leggiEsecuzioni(limite);
   } catch (e) {
     console.error("[esecuzioni] lettura non riuscita:", e);
     return [];
@@ -41,8 +40,8 @@ export async function registraEsecuzione(
     // Aggancio alla versione di regola in vigore adesso: è ciò che permette di
     // rileggere fra sei mesi con quale testo esatto è partito questo flusso.
     // L'inoltro manuale non è una regola persistita e resta senza versione.
-    const versione = versioneCorrente(e.regolaId);
-    inserisciEsecuzione(e, { regolaVersioneId: versione, scostamenti });
+    const versione = await versioneCorrente(e.regolaId);
+    await inserisciEsecuzione(e, { regolaVersioneId: versione, scostamenti });
   } catch (errore) {
     // Il flusso è già stato eseguito: se la registrazione fallisce si perde la
     // traccia, non il lavoro. Sollevare qui mostrerebbe un errore all'utente
@@ -52,18 +51,18 @@ export async function registraEsecuzione(
 }
 
 export async function svuotaEsecuzioni(): Promise<void> {
-  archiviaTutte();
+  await archiviaTutte();
 }
 
 /** Toglie una singola prova dal registro: la recensione torna in coda. */
 export async function eliminaEsecuzione(id: string): Promise<void> {
-  annullaEsecuzione(id);
+  await annullaEsecuzione(id);
 }
 
 /** Ultima esecuzione per ciascuna recensione. */
 export async function ultimePerRecensione(): Promise<Map<string, Esecuzione>> {
   try {
-    return ultimePerChiave();
+    return await ultimePerChiave();
   } catch (e) {
     console.error("[esecuzioni] lettura non riuscita:", e);
     return new Map();

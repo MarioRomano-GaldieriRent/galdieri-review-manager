@@ -1,26 +1,20 @@
 import { createHash } from "node:crypto";
-import { esegui, tutteLeRighe, transazione, unaRiga } from "./connessione";
-import type { Azione, Regola, TipoAzione } from "@/server/automation/types";
-import { adesso } from "@/server/tempo";
+import type { Document } from "mongodb";
+import { SCRITTURA_CRITICA, coll } from "./connessione";
+import type { Azione, Regola } from "@/server/automation/types";
 
-// Le regole: stato corrente in `regole`/`azioni`/`azioni_parametri`, storico
-// immutabile in `regole_versioni`.
+// Le regole: stato corrente nel documento unico regole/_id="correnti", storico
+// immutabile nella collezione regole_versioni.
 //
-// Prima le regole vivevano in un JSON sovrascritto a ogni salvataggio: cambiare
-// il testo di una risposta cancellava per sempre quello vecchio, e le
-// esecuzioni passate non sapevano più con quale testo erano girate. Adesso ogni
-// salvataggio lascia una fotografia, e ogni esecuzione punta alla sua.
+// L'immutabilità delle versioni non è più imposta dal motore (MongoDB non ha
+// trigger): la difesa è che questo modulo NON contiene alcun updateOne /
+// deleteOne / replaceOne su regole_versioni — solo insertOne — più un sigillo
+// (sha1 del documento) che verifica-db.ts ricalcola. È un passaggio da
+// prevenzione a rilevamento, ed è messo per iscritto.
 
 export type Origine = "iniziale" | "interfaccia" | "ripristino" | "importazione";
 
-/**
- * Impronta del contenuto di una regola.
- *
- * Serve a NON creare una versione quando non è cambiato niente: il pannello
- * rimanda tutti i parametri a ogni salvataggio, anche solo aprendo e chiudendo
- * un riquadro. Senza deduplica la cronologia diventa illeggibile in una
- * settimana di uso normale.
- */
+/** Impronta del contenuto: serve a NON creare una versione se non è cambiato niente. RESTA SINCRONA. */
 export function improntaRegola(r: Regola): string {
   const canonico = JSON.stringify({
     nome: r.nome,
@@ -30,8 +24,6 @@ export function improntaRegola(r: Regola): string {
     azioni: r.azioni.map((a) => ({
       id: a.id,
       tipo: a.tipo,
-      // Parametri ordinati per nome: due oggetti uguali scritti in ordine
-      // diverso non devono sembrare due versioni diverse.
       parametri: Object.keys(a.parametri)
         .sort()
         .map((k) => [k, a.parametri[k]]),
@@ -40,173 +32,141 @@ export function improntaRegola(r: Regola): string {
   return createHash("sha1").update(canonico).digest("hex");
 }
 
+/** Sigillo del documento di versione: rileva una modifica fatta aggirando il codice. */
+function sigilla(doc: Document): string {
+  const { sigillo, ...resto } = doc;
+  void sigillo;
+  return createHash("sha1").update(JSON.stringify(resto)).digest("hex");
+}
+
+type DocRegole = {
+  _id: "correnti";
+  regole: Regola[];
+  aggiornateIl: Date;
+  aggiornateDa: number;
+};
+
 // ------------------------------------------------------------------ lettura
 
-export function leggiRegole(): Regola[] {
-  const regole = tutteLeRighe<{
-    id: string;
-    nome: string;
-    attiva: number;
-    condizione_testo: string;
-  }>("SELECT id, nome, attiva, condizione_testo FROM regole ORDER BY ordine, id");
-
-  if (regole.length === 0) return [];
-
-  const stelle = tutteLeRighe<{ regola_id: string; stelle: number }>(
-    "SELECT regola_id, stelle FROM regole_stelle ORDER BY regola_id, stelle",
-  );
-  const azioni = tutteLeRighe<{ id: number; regola_id: string; codice: string; tipo: string }>(
-    "SELECT id, regola_id, codice, tipo FROM azioni ORDER BY regola_id, ordine",
-  );
-  const parametri = tutteLeRighe<{ azione_id: number; nome: string; valore: string }>(
-    "SELECT azione_id, nome, valore FROM azioni_parametri",
-  );
-
-  const perAzione = new Map<number, Record<string, string>>();
-  for (const p of parametri) {
-    const m = perAzione.get(p.azione_id) ?? {};
-    m[p.nome] = p.valore;
-    perAzione.set(p.azione_id, m);
-  }
-
-  const azioniPerRegola = new Map<string, Azione[]>();
-  for (const a of azioni) {
-    const arr = azioniPerRegola.get(a.regola_id) ?? [];
-    arr.push({
-      id: a.codice,
-      tipo: a.tipo as TipoAzione,
-      parametri: perAzione.get(a.id) ?? {},
-    });
-    azioniPerRegola.set(a.regola_id, arr);
-  }
-
-  const stellePerRegola = new Map<string, number[]>();
-  for (const s of stelle) {
-    const arr = stellePerRegola.get(s.regola_id) ?? [];
-    arr.push(s.stelle);
-    stellePerRegola.set(s.regola_id, arr);
-  }
-
-  return regole.map((r) => ({
-    id: r.id,
-    nome: r.nome,
-    attiva: r.attiva === 1,
-    condizione: {
-      stelle: stellePerRegola.get(r.id) ?? [],
-      testo: r.condizione_testo as Regola["condizione"]["testo"],
-    },
-    azioni: azioniPerRegola.get(r.id) ?? [],
-  }));
+export async function leggiRegole(): Promise<Regola[]> {
+  const doc = await (await coll<DocRegole>("regole")).findOne({ _id: "correnti" });
+  return doc?.regole ?? [];
 }
 
 // ---------------------------------------------------------------- scrittura
 
 /**
- * Riscrive tutte le regole e registra una versione per ognuna che è cambiata.
+ * Riscrive lo stato corrente e registra una versione per ogni regola cambiata.
  *
- * Cancella e reinserisce invece di riconciliare le differenze: sono cinque
- * regole, e la riconciliazione costerebbe molto più codice di quanto valga.
- * Tutto in una transazione, quindi o passa tutto o non passa niente.
+ * Ordine obbligatorio: PRIMA le versioni, POI il documento corrente. Se il
+ * secondo passo fallisce la storia è salva e il salvataggio successivo si
+ * autoripara per deduplica di impronta. Nell'ordine opposto un salvataggio
+ * interrotto cancellerebbe per sempre un pezzo di storia.
  */
-export function scriviRegole(regole: Regola[], origine: Origine = "interfaccia", nota = ""): void {
-  const ora = adesso();
-  const improntePrecedenti = new Map<string, string>();
-  const attivaPrecedente = new Map<string, number>();
+export async function scriviRegole(
+  regole: Regola[],
+  origine: Origine = "interfaccia",
+  nota = "",
+): Promise<void> {
+  const versioni = await coll("regole_versioni");
+  const ora = new Date();
 
-  for (const v of tutteLeRighe<{ regola_id: string; impronta: string; attiva: number }>(
-    `SELECT v.regola_id, v.impronta, v.attiva FROM regole_versioni v
-      JOIN (SELECT regola_id, MAX(numero) AS ultimo FROM regole_versioni GROUP BY regola_id) u
-        ON u.regola_id = v.regola_id AND u.ultimo = v.numero`,
-  )) {
-    improntePrecedenti.set(v.regola_id, v.impronta);
-    attivaPrecedente.set(v.regola_id, v.attiva);
+  // Stato precedente, per decidere cosa è cambiato e che tipo di modifica è.
+  const ultime = new Map<string, { impronta: string; attiva: boolean }>();
+  for (const v of await versioni
+    .aggregate([
+      { $sort: { regolaId: 1, numero: -1 } },
+      { $group: { _id: "$regolaId", impronta: { $first: "$impronta" }, attiva: { $first: "$attiva" } } },
+    ])
+    .toArray()) {
+    ultime.set(v._id as string, { impronta: v.impronta as string, attiva: v.attiva as boolean });
   }
 
-  transazione(() => {
-    esegui("DELETE FROM regole");
+  for (const r of regole) {
+    const impronta = improntaRegola(r);
+    const prima = ultime.get(r.id);
+    if (prima?.impronta === impronta) continue; // niente di cambiato: nessuna versione
 
-    regole.forEach((r, i) => {
-      esegui(
-        `INSERT INTO regole (id, nome, attiva, condizione_testo, ordine, creata_il, aggiornata_il)
-         VALUES (?,?,?,?,?,?,?)`,
-        r.id,
-        r.nome,
-        r.attiva ? 1 : 0,
-        r.condizione.testo,
-        i,
-        ora,
-        ora,
-      );
+    const soloStato = prima !== undefined && prima.attiva !== r.attiva;
+    const tipoModifica =
+      origine === "ripristino"
+        ? "ripristino"
+        : prima === undefined
+          ? "creazione"
+          : soloStato
+            ? "stato"
+            : "contenuto";
 
-      for (const s of [...new Set(r.condizione.stelle)].sort((a, b) => a - b)) {
-        esegui("INSERT INTO regole_stelle (regola_id, stelle) VALUES (?,?)", r.id, s);
-      }
+    await inserisciVersione(r, impronta, tipoModifica, origine, nota, ora);
+  }
 
-      r.azioni.forEach((a, j) => {
-        const res = esegui(
-          "INSERT INTO azioni (regola_id, codice, tipo, ordine) VALUES (?,?,?,?)",
-          r.id,
-          a.id,
-          a.tipo,
-          j,
-        );
-        const azioneId = Number(res.lastInsertRowid);
-        for (const [nome, valore] of Object.entries(a.parametri ?? {})) {
-          esegui(
-            "INSERT INTO azioni_parametri (azione_id, nome, valore) VALUES (?,?,?)",
-            azioneId,
-            nome,
-            // La stringa vuota è un valore, non un dato mancante.
-            valore ?? "",
-          );
-        }
-      });
+  // Solo dopo che le versioni sono al sicuro si aggiorna lo stato corrente.
+  // L'_id non va nel documento di sostituzione: su upsert lo prende dal filtro.
+  await (await coll<DocRegole>("regole")).replaceOne(
+    { _id: "correnti" },
+    { regole, aggiornateIl: ora, aggiornateDa: 1 },
+    { upsert: true },
+  );
+}
 
-      // ---- versione, solo se qualcosa è cambiato davvero -------------------
-      const impronta = improntaRegola(r);
-      const precedente = improntePrecedenti.get(r.id);
-      if (precedente === impronta) return;
+/** Inserisce una versione con numero progressivo; su collisione riprova col massimo. */
+async function inserisciVersione(
+  r: Regola,
+  impronta: string,
+  tipoModifica: string,
+  origine: Origine,
+  nota: string,
+  ora: Date,
+): Promise<void> {
+  const contatori = await coll<{ _id: string; valore: number }>("contatori");
+  const versioni = await coll("regole_versioni");
 
-      const numero =
-        (unaRiga<{ n: number }>(
-          "SELECT coalesce(MAX(numero), 0) AS n FROM regole_versioni WHERE regola_id = ?",
-          r.id,
-        )?.n ?? 0) + 1;
+  for (let tentativo = 0; tentativo < 3; tentativo++) {
+    const numero =
+      ((
+        await versioni
+          .aggregate([
+            { $match: { regolaId: r.id } },
+            { $group: { _id: null, n: { $max: "$numero" } } },
+          ])
+          .next()
+      )?.n ?? 0) + 1;
 
-      // Accendere o spegnere una regola crea comunque una versione: è la
-      // domanda che ci si pone più spesso ("da quando è attiva?"). Marcarla
-      // come 'stato' permette di nasconderla quando si guardano i cambi di
-      // testo.
-      const soloStato =
-        precedente !== undefined && attivaPrecedente.get(r.id) !== (r.attiva ? 1 : 0);
-      const tipoModifica =
-        origine === "ripristino"
-          ? "ripristino"
-          : precedente === undefined
-            ? "creazione"
-            : soloStato
-              ? "stato"
-              : "contenuto";
+    const id = (
+      await contatori.findOneAndUpdate(
+        { _id: "regole_versioni" },
+        { $inc: { valore: 1 } },
+        { upsert: true, returnDocument: "after" },
+      )
+    )?.valore as number;
 
-      esegui(
-        `INSERT INTO regole_versioni
-           (regola_id, numero, nome, attiva, condizione, azioni, impronta,
-            tipo_modifica, origine, nota, creata_il, creata_da)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,1)`,
-        r.id,
-        numero,
-        r.nome,
-        r.attiva ? 1 : 0,
-        JSON.stringify(r.condizione),
-        JSON.stringify(r.azioni),
-        impronta,
-        tipoModifica,
-        origine,
-        nota,
-        ora,
-      );
-    });
-  });
+    const doc: Document = {
+      _id: id,
+      regolaId: r.id,
+      numero,
+      nome: r.nome,
+      attiva: r.attiva,
+      condizione: r.condizione,
+      azioni: r.azioni,
+      impronta,
+      tipoModifica,
+      origine,
+      nota,
+      creataIl: ora,
+      creataDa: 1,
+    };
+    doc.sigillo = sigilla(doc);
+
+    try {
+      await versioni.insertOne(doc, { writeConcern: SCRITTURA_CRITICA });
+      return;
+    } catch (e) {
+      // 11000 sull'indice {regolaId, numero}: un'altra scrittura ha preso lo
+      // stesso numero. Si rilegge il massimo e si riprova.
+      if ((e as { code?: number }).code === 11000 && tentativo < 2) continue;
+      throw e;
+    }
+  }
 }
 
 // ------------------------------------------------------------------ storico
@@ -226,76 +186,81 @@ export type VersioneRegola = {
   regola: Regola;
 };
 
-function componiVersione(r: {
-  id: number;
-  regola_id: string;
+type DocVersione = {
+  _id: number;
+  regolaId: string;
   numero: number;
   nome: string;
-  attiva: number;
-  condizione: string;
-  azioni: string;
-  tipo_modifica: string;
+  attiva: boolean;
+  condizione: Regola["condizione"];
+  azioni: Azione[];
+  tipoModifica: string;
   origine: string;
   nota: string;
-  creata_il: string;
-  chi: string;
-  esecuzioni: number;
-}): VersioneRegola {
+  creataIl: Date;
+  creataDa: number;
+};
+
+async function componi(d: DocVersione): Promise<VersioneRegola> {
+  const [chi, esecuzioni] = await Promise.all([nomeOperatore(d.creataDa), contaEsecuzioni(d._id)]);
   return {
-    id: r.id,
-    regolaId: r.regola_id,
-    numero: r.numero,
-    nome: r.nome,
-    attiva: r.attiva === 1,
-    tipoModifica: r.tipo_modifica,
-    origine: r.origine,
-    nota: r.nota,
-    creataIl: r.creata_il,
-    chi: r.chi,
-    esecuzioni: r.esecuzioni,
-    regola: {
-      id: r.regola_id,
-      nome: r.nome,
-      attiva: r.attiva === 1,
-      condizione: JSON.parse(r.condizione) as Regola["condizione"],
-      azioni: JSON.parse(r.azioni) as Azione[],
-    },
+    id: d._id,
+    regolaId: d.regolaId,
+    numero: d.numero,
+    nome: d.nome,
+    attiva: d.attiva,
+    tipoModifica: d.tipoModifica,
+    origine: d.origine,
+    nota: d.nota,
+    creataIl: d.creataIl.toISOString(),
+    chi,
+    esecuzioni,
+    regola: { id: d.regolaId, nome: d.nome, attiva: d.attiva, condizione: d.condizione, azioni: d.azioni },
   };
 }
 
-const SELECT_VERSIONI = `
-  SELECT v.id, v.regola_id, v.numero, v.nome, v.attiva, v.condizione, v.azioni,
-         v.tipo_modifica, v.origine, v.nota, v.creata_il, o.nome AS chi,
-         (SELECT COUNT(*) FROM esecuzioni e WHERE e.regola_versione_id = v.id) AS esecuzioni
-    FROM regole_versioni v
-    JOIN operatori o ON o.id = v.creata_da`;
-
-export function storicoRegola(regolaId: string): VersioneRegola[] {
-  return tutteLeRighe<Parameters<typeof componiVersione>[0]>(
-    `${SELECT_VERSIONI} WHERE v.regola_id = ? ORDER BY v.numero DESC`,
-    regolaId,
-  ).map(componiVersione);
+async function nomeOperatore(id: number): Promise<string> {
+  const o = await (await coll<{ _id: number; nome: string }>("operatori")).findOne({
+    _id: id as unknown as Document["_id"],
+  });
+  return o?.nome ?? "Sistema";
 }
 
-export function ultimeVersioni(limite = 40): VersioneRegola[] {
-  return tutteLeRighe<Parameters<typeof componiVersione>[0]>(
-    `${SELECT_VERSIONI} ORDER BY v.creata_il DESC, v.id DESC LIMIT ?`,
-    limite,
-  ).map(componiVersione);
+async function contaEsecuzioni(versioneId: number): Promise<number> {
+  return (await coll("esecuzioni")).countDocuments({ regolaVersioneId: versioneId });
 }
 
-export function versione(id: number): VersioneRegola | null {
-  const r = unaRiga<Parameters<typeof componiVersione>[0]>(`${SELECT_VERSIONI} WHERE v.id = ?`, id);
-  return r ? componiVersione(r) : null;
+export async function storicoRegola(regolaId: string): Promise<VersioneRegola[]> {
+  const righe = await (await coll<DocVersione>("regole_versioni"))
+    .find({ regolaId })
+    .sort({ numero: -1 })
+    .toArray();
+  return Promise.all(righe.map(componi));
 }
 
-/** Versione in vigore adesso per una regola, per agganciarci un'esecuzione. */
-export function versioneCorrente(regolaId: string): number | null {
-  const r = unaRiga<{ id: number }>(
-    "SELECT id FROM regole_versioni WHERE regola_id = ? ORDER BY numero DESC LIMIT 1",
-    regolaId,
-  );
-  return r?.id ?? null;
+export async function ultimeVersioni(limite = 40): Promise<VersioneRegola[]> {
+  const righe = await (await coll<DocVersione>("regole_versioni"))
+    .find({})
+    .sort({ creataIl: -1, _id: -1 })
+    .limit(limite)
+    .toArray();
+  return Promise.all(righe.map(componi));
+}
+
+export async function versione(id: number): Promise<VersioneRegola | null> {
+  const d = await (await coll<DocVersione>("regole_versioni")).findOne({
+    _id: id as unknown as Document["_id"],
+  });
+  return d ? componi(d) : null;
+}
+
+export async function versioneCorrente(regolaId: string): Promise<number | null> {
+  const d = await (await coll<DocVersione>("regole_versioni"))
+    .find({ regolaId })
+    .sort({ numero: -1 })
+    .limit(1)
+    .next();
+  return d?._id ?? null;
 }
 
 // -------------------------------------------------------------------- diff
@@ -309,13 +274,7 @@ export type DifferenzaNodo = {
   dopo: string;
 };
 
-/**
- * Confronto leggibile fra due versioni, appaiando i nodi per codice azione.
- *
- * Si fa qui e non in SQL perché entrambi i lati sono nostri e le regole sono
- * cinque: una FULL OUTER JOIN con i NULL da gestire renderebbe il confronto
- * più difficile da leggere di quanto lo renda comodo da interrogare.
- */
+/** Confronto leggibile fra due versioni, appaiando i nodi per codice azione. RESTA SINCRONA. */
 export function confronta(da: Regola, a: Regola): DifferenzaNodo[] {
   const out: DifferenzaNodo[] = [];
   const indiceDa = new Map(da.azioni.map((x, i) => [x.id, { azione: x, posizione: i }]));
@@ -324,14 +283,7 @@ export function confronta(da: Regola, a: Regola): DifferenzaNodo[] {
   for (const [id, { azione, posizione }] of indiceA) {
     const vecchio = indiceDa.get(id);
     if (!vecchio) {
-      out.push({
-        azioneId: id,
-        tipo: azione.tipo,
-        parametro: "",
-        cambiamento: "aggiunto",
-        prima: "",
-        dopo: azione.tipo,
-      });
+      out.push({ azioneId: id, tipo: azione.tipo, parametro: "", cambiamento: "aggiunto", prima: "", dopo: azione.tipo });
       continue;
     }
     const nomi = new Set([
@@ -342,14 +294,7 @@ export function confronta(da: Regola, a: Regola): DifferenzaNodo[] {
       const prima = vecchio.azione.parametri?.[nome] ?? "";
       const dopo = azione.parametri?.[nome] ?? "";
       if (prima !== dopo) {
-        out.push({
-          azioneId: id,
-          tipo: azione.tipo,
-          parametro: nome,
-          cambiamento: "modificato",
-          prima,
-          dopo,
-        });
+        out.push({ azioneId: id, tipo: azione.tipo, parametro: nome, cambiamento: "modificato", prima, dopo });
       }
     }
     if (vecchio.posizione !== posizione) {
@@ -366,14 +311,7 @@ export function confronta(da: Regola, a: Regola): DifferenzaNodo[] {
 
   for (const [id, { azione }] of indiceDa) {
     if (!indiceA.has(id)) {
-      out.push({
-        azioneId: id,
-        tipo: azione.tipo,
-        parametro: "",
-        cambiamento: "rimosso",
-        prima: azione.tipo,
-        dopo: "",
-      });
+      out.push({ azioneId: id, tipo: azione.tipo, parametro: "", cambiamento: "rimosso", prima: azione.tipo, dopo: "" });
     }
   }
 

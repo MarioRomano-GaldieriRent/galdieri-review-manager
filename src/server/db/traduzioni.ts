@@ -1,15 +1,13 @@
-import { esegui, tutteLeRighe, transazione } from "./connessione";
-import { adesso } from "@/server/tempo";
+import type { AnyBulkWriteOperation } from "mongodb";
+import { coll, type DocGen } from "./connessione";
 
-// Cache delle traduzioni Azure.
+// Cache delle traduzioni Azure. La chiave (_id) è sha1(testo.trim()) tagliato a
+// 20 caratteri, IDENTICA a quella del vecchio archivio: cambiarla vorrebbe dire
+// ripagare Azure per tradurre di nuovo tutto lo storico. Il validator sulla
+// forma dell'_id è la protezione più concreta di tutte.
 //
-// La chiave resta identica a quella del vecchio file: sha1(testo.trim()) tagliato
-// a 20 caratteri. Cambiarla vorrebbe dire buttare via tutta la cache accumulata
-// e ripagare Azure per tradurre di nuovo lo stesso storico.
-//
-// NESSUNA funzione di questo modulo solleva: la traduzione è un'ottimizzazione,
-// e un database occupato non deve poter svuotare la dashboard, le recensioni e
-// le automazioni tutte insieme.
+// Nessuna funzione qui solleva: la traduzione è un'ottimizzazione, un database
+// occupato non deve svuotare dashboard, recensioni e automazioni insieme.
 
 export type VoceTradotta = {
   chiave: string;
@@ -18,30 +16,26 @@ export type VoceTradotta = {
   linguaRilevata: string;
 };
 
-export function cercaTraduzioni(chiavi: string[]): Map<string, VoceTradotta> {
+type DocTrad = {
+  _id: string;
+  testoOriginale: string;
+  italiano: string;
+  linguaRilevata: string | null;
+};
+
+export async function cercaTraduzioni(chiavi: string[]): Promise<Map<string, VoceTradotta>> {
   const out = new Map<string, VoceTradotta>();
   if (chiavi.length === 0) return out;
-
   try {
-    // Una query sola con IN: fare N SELECT sarebbe comunque veloce, ma questa
-    // funzione gira su ogni caricamento di tre pagine.
-    const segnaposto = chiavi.map(() => "?").join(",");
-    const righe = tutteLeRighe<{
-      chiave: string;
-      testo_originale: string;
-      italiano: string;
-      lingua_rilevata: string | null;
-    }>(
-      `SELECT chiave, testo_originale, italiano, lingua_rilevata
-         FROM traduzioni WHERE chiave IN (${segnaposto})`,
-      ...chiavi,
-    );
+    const righe = await (await coll<DocTrad>("traduzioni"))
+      .find({ _id: { $in: chiavi } })
+      .toArray();
     for (const r of righe) {
-      out.set(r.chiave, {
-        chiave: r.chiave,
-        testoOriginale: r.testo_originale,
+      out.set(r._id, {
+        chiave: r._id,
+        testoOriginale: r.testoOriginale,
         italiano: r.italiano,
-        linguaRilevata: r.lingua_rilevata ?? "",
+        linguaRilevata: r.linguaRilevata ?? "",
       });
     }
   } catch (e) {
@@ -50,54 +44,59 @@ export function cercaTraduzioni(chiavi: string[]): Map<string, VoceTradotta> {
   return out;
 }
 
-export function salvaTraduzioni(voci: VoceTradotta[]): void {
+export async function salvaTraduzioni(voci: VoceTradotta[]): Promise<void> {
   if (voci.length === 0) return;
-  const ora = adesso();
+  const ora = new Date();
   try {
-    transazione(() => {
-      for (const v of voci) {
-        // La lingua rilevata deve esistere in `lingue` per via della FK sulle
-        // recensioni: la si aggiunge qui, con il codice come nome finché
-        // qualcuno non lo traduce.
-        if (v.linguaRilevata) {
-          esegui(
-            "INSERT INTO lingue (codice, nome, italiana) VALUES (?,?,?) ON CONFLICT(codice) DO NOTHING",
-            v.linguaRilevata,
-            v.linguaRilevata,
-            v.linguaRilevata === "it" ? 1 : 0,
-          );
-        }
-        esegui(
-          `INSERT INTO traduzioni (chiave, testo_originale, italiano, lingua_rilevata, creata_il, usata_il, usi)
-           VALUES (?,?,?,?,?,?,1)
-           ON CONFLICT(chiave) DO UPDATE SET
-             italiano = excluded.italiano,
-             lingua_rilevata = excluded.lingua_rilevata,
-             usata_il = excluded.usata_il,
-             usi = usi + 1`,
-          v.chiave,
-          v.testoOriginale,
-          v.italiano,
-          v.linguaRilevata || null,
-          ora,
-          ora,
-        );
-      }
-    });
+    // Le lingue rilevate devono esistere nella collezione lingue (il $lookup
+    // della vista), con il codice come nome finché qualcuno non lo traduce.
+    const codici = new Set(voci.map((v) => v.linguaRilevata).filter(Boolean));
+    if (codici.size > 0) {
+      await (await coll("lingue")).bulkWrite(
+        [...codici].map((c) => ({
+          updateOne: {
+            filter: { _id: c },
+            update: { $setOnInsert: { nome: c, italiana: c === "it" } },
+            upsert: true,
+          },
+        })) as AnyBulkWriteOperation<DocGen>[],
+        { ordered: false },
+      );
+    }
+
+    await (await coll("traduzioni")).bulkWrite(
+      voci.map((v) => ({
+        updateOne: {
+          filter: { _id: v.chiave },
+          // pipeline: $inc e $setOnInsert non si combinano sullo stesso campo
+          update: [
+            {
+              $set: {
+                testoOriginale: v.testoOriginale,
+                italiano: v.italiano,
+                linguaRilevata: v.linguaRilevata || null,
+                usataIl: ora,
+                creataIl: { $ifNull: ["$creataIl", ora] },
+                usi: { $add: [{ $ifNull: ["$usi", 0] }, 1] },
+              },
+            },
+          ],
+          upsert: true,
+        },
+      })) as AnyBulkWriteOperation<DocGen>[],
+      { ordered: false },
+    );
   } catch (e) {
     console.error("[traduzioni] scrittura non riuscita:", e);
   }
 }
 
-/** Segna l'uso delle traduzioni pescate dalla cache, per sapere quali servono. */
-export function segnaUso(chiavi: string[]): void {
+export async function segnaUso(chiavi: string[]): Promise<void> {
   if (chiavi.length === 0) return;
   try {
-    const segnaposto = chiavi.map(() => "?").join(",");
-    esegui(
-      `UPDATE traduzioni SET usi = usi + 1, usata_il = ? WHERE chiave IN (${segnaposto})`,
-      adesso(),
-      ...chiavi,
+    await (await coll("traduzioni")).updateMany(
+      { _id: { $in: chiavi } },
+      [{ $set: { usi: { $add: [{ $ifNull: ["$usi", 0] }, 1] }, usataIl: new Date() } }],
     );
   } catch {
     // Statistica d'uso: se non si scrive, non è successo niente di grave.
