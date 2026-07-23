@@ -9,6 +9,7 @@ import { ritentaChiusureInSospeso } from "@/server/pubblicazione";
 import { isFreshdeskConfigured } from "@/server/integrations/freshdesk";
 import { loadSettings } from "@/server/settings";
 import { CopiaRisposta } from "./CopiaRisposta";
+import { TastieraCoda } from "./TastieraCoda";
 import { segnaPubblicataAction } from "./actions";
 
 // Coda "Da pubblicare": le risposte approvate, da incollare a mano su Google
@@ -160,11 +161,20 @@ export default async function DaPubblicarePage({
             : "Nessuna risposta con questi filtri."}
         </section>
       ) : (
-        <ol className="pub-lista">
-          {voci.map((v, i) => (
-            <VoceCoda key={v.chiave} v={v} numero={i + 1} sedeSel={sedeSel} stelleSel={stelleSel} />
-          ))}
-        </ol>
+        <>
+          <TastieraCoda />
+          <ol className="pub-lista">
+            {voci.map((v, i) => (
+              <VoceCoda
+                key={v.chiave}
+                v={v}
+                numero={i + 1}
+                sedeSel={sedeSel}
+                stelleSel={stelleSel}
+              />
+            ))}
+          </ol>
+        </>
       )}
     </main>
   );

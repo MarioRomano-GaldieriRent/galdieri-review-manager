@@ -2286,3 +2286,23 @@ main.dash {
     text-align: center;
   }
 }
+
+/* Riga scorciatoie della coda + tasti mostrati come tastini. */
+.pub-tastiera {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 14px;
+}
+
+.pub-tastiera kbd {
+  font-family: "Roboto Mono", ui-monospace, Consolas, monospace;
+  font-size: 0.78rem;
+  padding: 1px 7px;
+  border-radius: 6px;
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  color: var(--text);
+}
