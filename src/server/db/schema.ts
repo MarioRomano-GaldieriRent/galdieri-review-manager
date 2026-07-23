@@ -153,6 +153,12 @@ export const COLLEZIONI: DefColl[] = [
           _id: { bsonType: "string" }, // "" ammesso: è la sentinella
           nome: { bsonType: "string", minLength: 1 },
           tagFreshdesk: stringaOFalsa,
+          // Per la coda di pubblicazione manuale: l'URL di gestione recensioni
+          // della sede su Google (fallback affidabile) e il place_id, da cui
+          // costruire il link quando l'URL non c'è. Entrambi opzionali: le sedi
+          // esistenti non li hanno finché l'admin non li compila.
+          googleReviewsUrl: stringaOFalsa,
+          placeId: stringaOFalsa,
           creataIl: { bsonType: "date" },
         },
       },
@@ -431,6 +437,97 @@ export const COLLEZIONI: DefColl[] = [
       },
       { key: { "nodi.tipo": 1, "nodi.stato": 1 }, name: "i_esecuzioni_nodi_tipo_stato" },
       { key: { "nodi.tipo": 1, "nodi.messaggio": 1 }, name: "i_esecuzioni_nodi_tipo_msg" },
+    ],
+  },
+
+  {
+    // Coda di pubblicazione manuale delle risposte su Google.
+    //
+    // Finché l'API Google non è attiva, la risposta la pubblica una persona
+    // sull'interfaccia di Google. Un documento per recensione tiene lo stato di
+    // quel passaggio. Gli stati sono tre, più semplici dei cinque dello spec:
+    //   approvata  — risposta pronta, da incollare su Google (spec: "approvata")
+    //   pubblicata — segnata come pubblicata, in attesa del ricontrollo a +24h
+    //                (spec: "pubblicata" + "da_verificare", qui uniti)
+    //   verificata — confermata online e chiusa (spec: "chiusa")
+    // "in_pubblicazione" (presa in carico) non serve: un solo operatore, un
+    // clic, nessuna presa in carico concorrente da coordinare.
+    nome: "pubblicazioni",
+    validator: {
+      $jsonSchema: {
+        bsonType: "object",
+        additionalProperties: false,
+        required: [
+          "_id",
+          "origine",
+          "stato",
+          "testoRisposta",
+          "nomeCliente",
+          "photoChecked",
+          "ripubblicazioni",
+          "freshdeskEsito",
+          "freshdeskTentativi",
+          "approvataIl",
+          "approvataDa",
+          "creataIl",
+          "aggiornataIl",
+        ],
+        properties: {
+          _id: { bsonType: "string", minLength: 1 }, // = recensioneChiave
+          origine: { enum: ["google", "trustpilot"] },
+          stato: { enum: ["approvata", "pubblicata", "verificata"] },
+          testoRisposta: { bsonType: "string", minLength: 1 },
+          lingua: stringaO,
+          // Denormalizzati per mostrare la coda senza ricomporre la recensione.
+          nomeCliente: stringa,
+          stelle: { bsonType: ["int", "null"], minimum: 1, maximum: 5 },
+          sedeChiave: stringaOFalsa,
+          sedeNome: stringaOFalsa,
+          testoRecensione: stringaOFalsa,
+          messaggioId: stringaOFalsa,
+          // Il ticket collegato, da chiudere alla pubblicazione.
+          ticketId: { bsonType: ["int", "null"] },
+          // Esito della chiusura Freshdesk, con la sua coda di retry.
+          freshdeskEsito: { enum: ["noniniziato", "ok", "inattesa", "fallito"] },
+          freshdeskTentativi: { bsonType: "int", minimum: 0 },
+          freshdeskProssimoTentativoIl: dataO,
+          freshdeskErrore: stringaOFalsa,
+          // Verifica foto: per ora sempre false e mai richiesta (nessun
+          // rilevamento foto esiste), ma il campo c'è per quando arriverà.
+          photoChecked: boolo,
+          // Ciclo di pubblicazione/verifica.
+          approvataIl: { bsonType: "date" },
+          approvataDa: { bsonType: "int" },
+          pubblicataIl: dataO,
+          pubblicataDa: { bsonType: ["int", "null"] },
+          metodoPubblicazione: stringaOFalsa, // "" | "manuale" | "api"
+          promemoriaVerificaIl: dataO,
+          verificataIl: dataO,
+          verificataDa: { bsonType: ["int", "null"] },
+          esitoVerifica: stringaOFalsa, // "" | "confermata" | "sparita"
+          ripubblicazioni: { bsonType: "int", minimum: 0 },
+          creataIl: { bsonType: "date" },
+          aggiornataIl: { bsonType: "date" },
+        },
+      },
+    },
+    indici: [
+      // La coda "da pubblicare": stato approvata, dalla più vecchia.
+      { key: { stato: 1, approvataIl: 1 }, name: "i_pubblicazioni_coda" },
+      // La tab "da ricontrollare": pubblicate, ordinate per promemoria.
+      {
+        key: { promemoriaVerificaIl: 1 },
+        name: "i_pubblicazioni_promemoria",
+        partialFilterExpression: { stato: "pubblicata" },
+      },
+      // La coda di retry Freshdesk.
+      {
+        key: { freshdeskProssimoTentativoIl: 1 },
+        name: "i_pubblicazioni_retry",
+        partialFilterExpression: { freshdeskEsito: "inattesa" },
+      },
+      { key: { origine: 1, stato: 1 }, name: "i_pubblicazioni_origine" },
+      { key: { sedeChiave: 1, stato: 1 }, name: "i_pubblicazioni_sede" },
     ],
   },
 
