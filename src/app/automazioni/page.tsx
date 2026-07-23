@@ -4,7 +4,7 @@ import { isFreshdeskConfigured } from "@/server/integrations/freshdesk";
 import { caricaRegole, regolaPer } from "@/server/automation/rules";
 import { caricaEsecuzioni, ultimePerRecensione } from "@/server/automation/runs";
 import type { Esecuzione } from "@/server/automation/types";
-import { interpola } from "@/server/automation/connectors";
+import { testoPerRecensione } from "@/server/automation/connectors";
 import { tagSede } from "@/server/automation/sedi";
 import { caricaRecensioni, haTesto, testoRecensione, type Recensione } from "@/server/reviews/load";
 import { loadSettings } from "@/server/settings";
@@ -267,7 +267,11 @@ export default async function AutomazioniPage({
                 {anteprima && (
                   <details className="review-original">
                     <summary>Risposta che verrebbe pubblicata su Google</summary>
-                    <p>{interpola(anteprima.parametri.testo ?? "", r)}</p>
+                    {/* Deve mostrare la lingua che partirebbe davvero: italiano o
+                        inglese secondo la regola a due vie. Prendere il campo
+                        `testo` grezzo mostrerebbe sempre l'italiano, anche quando
+                        al cliente straniero verrebbe pubblicato l'inglese. */}
+                    <p>{testoPerRecensione(anteprima, r).testo}</p>
                   </details>
                 )}
 
