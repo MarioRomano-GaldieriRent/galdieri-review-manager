@@ -11,7 +11,7 @@ import type { Recensione } from "@/server/reviews/load";
 import { testoRecensione } from "@/server/reviews/load";
 import {
   etichettaLingua,
-  riconosciLingua,
+  linguaRisposta,
   testoNellaLingua,
   type Lingua,
 } from "@/server/reviews/lingua";
@@ -45,12 +45,13 @@ export type RisultatoNodo = {
  * Sceglie il testo nella lingua giusta e ci sostituisce i segnaposto.
  *
  * La regola non è "rispondi nella lingua della recensione" ma la più semplice
- * a due vie che si vede nei dati: italiano se la recensione è in italiano,
- * altrimenti inglese. Quando la lingua non è riconoscibile si resta
- * sull'italiano.
+ * a due vie: italiano se il cliente ha scritto in italiano, altrimenti inglese.
+ * La decisione parte dalla lingua rilevata da Azure e dal testo ORIGINALE, mai
+ * dalla traduzione italiana — che altrimenti farebbe rispondere in italiano a
+ * chiunque, appena la traduzione è accesa.
  */
 export function testoPerRecensione(a: Azione, r: Recensione): { testo: string; lingua: Lingua } {
-  const lingua = riconosciLingua(testoRecensione(r));
+  const lingua = linguaRisposta(r.lingua, r.originale);
   const scelto = testoNellaLingua(lingua, a.parametri.testo ?? "", a.parametri.testoInglese ?? "");
   return { testo: interpola(scelto, r), lingua };
 }

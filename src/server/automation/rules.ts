@@ -91,6 +91,9 @@ export function regoleDiDefault(): Regola[] {
         azione("b5", "google.rispondi", {
           testo:
             "Grazie {nome} per le sue parole! Siamo felici che il servizio della sede di {sede} sia stato all'altezza. A presto da Galdieri rent.",
+          // Sempre due lingue: chi non scrive in italiano riceve questa.
+          testoInglese:
+            "Thank you {nome} for your kind words! We're glad our service lived up to your expectations. We look forward to welcoming you again — Galdieri rent.",
         }),
         azione("b6", "freshdesk.stato", { stato: "4" }),
       ],
@@ -112,6 +115,9 @@ export function regoleDiDefault(): Regola[] {
         azione("c5", "google.rispondi", {
           testo:
             "Grazie {nome} per la recensione. Siamo a disposizione per rendere il prossimo noleggio ancora migliore. A presto da Galdieri rent.",
+          // Sempre due lingue: chi non scrive in italiano riceve questa.
+          testoInglese:
+            "Thank you {nome} for your review. We're here to make your next rental even better. See you soon — Galdieri rent.",
         }),
         azione("c6", "freshdesk.stato", { stato: "4" }),
       ],

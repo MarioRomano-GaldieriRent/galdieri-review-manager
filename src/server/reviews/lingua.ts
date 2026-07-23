@@ -71,9 +71,35 @@ export function riconosciLingua(testo: string): Lingua {
 }
 
 /**
+ * Lingua in cui rispondere, a due vie: italiano per gli italiani, inglese per
+ * tutti gli altri. Nessuna eccezione, qualunque sia la lingua del cliente.
+ *
+ * Usa la lingua RILEVATA da Azure quando c'è: è la fonte più affidabile, e in
+ * più risolve un tranello. Da quando le recensioni si traducono in italiano
+ * per leggerle, il testo "corrente" di una recensione tedesca è ormai in
+ * italiano: passarlo a riconosciLingua farebbe rispondere in italiano a tutti.
+ * Perciò l'euristica di ripiego (quando Azure è spento) gira sul testo
+ * ORIGINALE del cliente, mai sulla traduzione.
+ *
+ *   linguaRilevata = "it"           -> italiano
+ *   linguaRilevata = "de","fr",...  -> inglese
+ *   Azure spento -> euristica sull'originale: it/ignota -> italiano, altra -> inglese
+ */
+export function linguaRisposta(linguaRilevata: string, testoOriginale: string): Lingua {
+  const codice = (linguaRilevata ?? "").trim().toLowerCase();
+  if (codice) return codice === "it" ? "it" : "altra";
+  return riconosciLingua(testoOriginale);
+}
+
+/**
  * Sceglie il testo giusto fra la versione italiana e quella inglese.
  * Quando la lingua non è riconoscibile si usa l'italiano: è la lingua di casa
  * e la maggioranza delle recensioni.
+ *
+ * Il ripiego all'italiano per "altra" senza testo inglese è una rete di
+ * sicurezza che NON deve mai scattare: ogni regola di risposta porta entrambe
+ * le lingue (vedi rules.ts). Se scattasse, un cliente straniero riceverebbe
+ * italiano, contro la regola.
  */
 export function testoNellaLingua(lingua: Lingua, italiano: string, inglese: string): string {
   if (lingua === "altra" && inglese.trim()) return inglese;
