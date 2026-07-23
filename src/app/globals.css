@@ -2145,3 +2145,144 @@ main.dash {
 .stat-limiti strong {
   color: var(--text);
 }
+
+/* ===========================================================================
+   CODA "DA PUBBLICARE"
+   Le risposte approvate, da incollare a mano su Google. Righe numerate, tre
+   controlli per riga, filtri per stella e per sede.
+   =========================================================================== */
+
+.pub-filtri {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.pub-sedi {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.btn-mini.is-active {
+  background: var(--accent-soft);
+  border-color: var(--g-blue);
+  color: var(--g-blue-dark);
+  font-weight: 600;
+}
+
+.pub-lista {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.pub-card {
+  margin: 0;
+}
+
+.pub-card.is-active {
+  border-color: var(--g-blue);
+  box-shadow: var(--shadow-hover);
+}
+
+.pub-testa {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.pub-numero {
+  flex: 0 0 30px;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 0.9rem;
+  background: var(--surface-alt);
+  color: var(--text-soft);
+  border: 1px solid var(--border);
+}
+
+.pub-autore {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.pub-recensione {
+  margin: 12px 0 0;
+  color: var(--text-soft);
+  font-size: 0.94rem;
+  line-height: 1.55;
+}
+
+.pub-risposta {
+  margin-top: 12px;
+  padding: 12px 14px;
+  background: var(--accent-soft);
+  border: 1px solid color-mix(in srgb, var(--g-blue) 22%, var(--border));
+  border-radius: var(--radius-sm);
+}
+
+.pub-etichetta {
+  display: block;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--g-blue-dark);
+  margin-bottom: 4px;
+}
+
+.pub-risposta-testo {
+  margin: 0;
+  font-size: 1rem;
+  line-height: 1.55;
+  color: var(--text);
+  white-space: pre-wrap;
+}
+
+.pub-controlli {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+  margin-top: 14px;
+}
+
+.pub-controlli form {
+  margin: 0;
+}
+
+.pub-controlli [data-copia] {
+  min-width: 140px;
+}
+
+.pub-link-generico {
+  margin: 10px 0 0;
+}
+
+@media (max-width: 620px) {
+  .pub-controlli {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .pub-controlli a,
+  .pub-controlli [data-copia],
+  .pub-controlli button {
+    width: 100%;
+    text-align: center;
+  }
+}
