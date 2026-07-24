@@ -28,20 +28,17 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
       <body>
         <header className="app-header">
           <div className="app-header-inner">
-            <div className="brand">
+            <Link href="/" className="brand" aria-label="GaldieriReviews — vai alla home">
               <span className="logo">
                 <span className="logo-name">Galdieri</span>
-                <span className="logo-rent">rent</span>
+                <span className="logo-rent">Reviews</span>
               </span>
-            </div>
+            </Link>
             <nav className="app-nav">
               <Link href="/dashboard">Dashboard</Link>
               <Link href="/da-pubblicare">Da pubblicare</Link>
-              <Link href="/recensioni">Recensioni</Link>
               <Link href="/statistiche">Statistiche</Link>
               <Link href="/automazioni">Automazioni</Link>
-              <Link href="/">Posta</Link>
-              <Link href="/ticket">Ticket</Link>
               <Link href="/impostazioni">Impostazioni</Link>
             </nav>
             <ThemeToggle />

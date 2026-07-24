@@ -154,6 +154,20 @@ export default async function ImpostazioniPage({
               ))}
             </div>
           ))}
+
+          {/* Posta e Ticket non sono sezioni del pannello: sono pagine a sé,
+              raggiunte da qui. Ognuna la sua voce. */}
+          <div className="menu-gruppo">
+            <p className="menu-gruppo-titolo">Posta e ticket</p>
+            <Link href="/" className="menu-voce">
+              <span className="menu-voce-testo">Posta in arrivo</span>
+              <span className="menu-voce-stato">↗</span>
+            </Link>
+            <Link href="/ticket" className="menu-voce">
+              <span className="menu-voce-testo">Ticket Freshdesk</span>
+              <span className="menu-voce-stato">↗</span>
+            </Link>
+          </div>
         </nav>
 
         {/* --------------------------------------------------- contenuto */}

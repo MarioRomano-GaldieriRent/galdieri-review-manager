@@ -160,6 +160,12 @@ code {
   display: flex;
   align-items: center;
   font-size: 1.35rem;
+  text-decoration: none;
+  transition: opacity 0.15s ease;
+}
+
+.brand:hover {
+  opacity: 0.8;
 }
 
 .logo {

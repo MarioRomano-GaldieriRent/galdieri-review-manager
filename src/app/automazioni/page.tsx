@@ -131,8 +131,8 @@ export default async function AutomazioniPage({
           Nessuna regola attiva le copre. Attive adesso:{" "}
           {attive.map((r) => r.nome).join(", ") || "nessuna"}. Le altre sono già scritte ma spente e
           si accendono da <Link href="/impostazioni#automazioni">Impostazioni</Link> una alla volta.
-          Le recensioni escluse restano tutte visibili in <Link href="/recensioni">Recensioni</Link>
-          .
+          Le recensioni escluse restano tutte visibili nella{" "}
+          <Link href="/dashboard">Dashboard</Link>.
         </p>
       )}
 
