@@ -155,10 +155,14 @@ export default async function ImpostazioniPage({
             </div>
           ))}
 
-          {/* Posta e Ticket non sono sezioni del pannello: sono pagine a sé,
-              raggiunte da qui. Ognuna la sua voce. */}
+          {/* Statistiche, Posta e Ticket non sono sezioni del pannello: sono
+              pagine a sé, raggiunte da qui. Ognuna la sua voce. */}
           <div className="menu-gruppo">
-            <p className="menu-gruppo-titolo">Posta e ticket</p>
+            <p className="menu-gruppo-titolo">Altre pagine</p>
+            <Link href="/statistiche" className="menu-voce">
+              <span className="menu-voce-testo">Statistiche</span>
+              <span className="menu-voce-stato">↗</span>
+            </Link>
             <Link href="/" className="menu-voce">
               <span className="menu-voce-testo">Posta in arrivo</span>
               <span className="menu-voce-stato">↗</span>
