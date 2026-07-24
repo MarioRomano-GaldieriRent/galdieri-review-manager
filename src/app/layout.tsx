@@ -35,7 +35,6 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
               </span>
             </Link>
             <nav className="app-nav">
-              <Link href="/dashboard">Dashboard</Link>
               <Link href="/da-pubblicare">Da pubblicare</Link>
               <Link href="/automazioni">Automazioni</Link>
               <Link href="/impostazioni">Impostazioni</Link>

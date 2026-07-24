@@ -10,7 +10,6 @@ import { caricaRegole, regoleDiDefault, salvaRegole } from "@/server/automation/
 
 function refresh() {
   revalidatePath("/impostazioni");
-  revalidatePath("/dashboard");
   revalidatePath("/automazioni");
   revalidatePath("/");
 }

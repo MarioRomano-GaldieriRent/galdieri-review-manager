@@ -11,6 +11,6 @@ export async function setReadStateAction(formData: FormData): Promise<void> {
 
   await setReadState(id, isRead);
 
-  revalidatePath("/");
+  revalidatePath("/posta");
   revalidatePath("/email");
 }

@@ -76,8 +76,8 @@ export default async function StatistichePage() {
         <section className="card">
           <p className="hint">
             L&apos;archivio è ancora vuoto. Si riempie da solo aprendo la{" "}
-            <Link href="/dashboard">Dashboard</Link>: ogni lettura della posta archivia quello che
-            trova, e da lì in poi le recensioni restano anche quando escono dalle ultime 50 email.
+            <Link href="/">Dashboard</Link>: ogni lettura della posta archivia quello che trova, e
+            da lì in poi le recensioni restano anche quando escono dalle ultime 50 email.
           </p>
         </section>
       </main>

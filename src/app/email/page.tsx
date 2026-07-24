@@ -139,7 +139,7 @@ export default async function EmailPage({
     return (
       <main>
         <p>
-          <Link href="/" className="btn-secondary">
+          <Link href="/posta" className="btn-secondary">
             ← Torna alla posta
           </Link>
         </p>
@@ -167,7 +167,7 @@ export default async function EmailPage({
     return (
       <main>
         <div className="mail-toolbar">
-          <Link href="/" className="btn-secondary">
+          <Link href="/posta" className="btn-secondary">
             ← Torna alla posta
           </Link>
           <span className="page-info">
@@ -197,7 +197,7 @@ export default async function EmailPage({
     return (
       <main>
         <p>
-          <Link href="/" className="btn-secondary">
+          <Link href="/posta" className="btn-secondary">
             ← Torna alla posta
           </Link>
         </p>

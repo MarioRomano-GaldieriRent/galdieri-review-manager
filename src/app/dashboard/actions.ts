@@ -28,7 +28,7 @@ function indietro(fd: FormData, extra: Record<string, string> = {}): never {
   const stelle = str(fd, "stelle");
   if (stelle) p.set("stelle", stelle);
   const s = p.toString();
-  redirect(s ? `/dashboard?${s}` : "/dashboard");
+  redirect(s ? `/?${s}` : "/");
 }
 
 async function trovaRecensione(fd: FormData): Promise<Recensione> {
@@ -72,7 +72,7 @@ export async function approvaAction(formData: FormData): Promise<void> {
   // a Cherubina e restano nella colonna d'attesa, non in coda.
   await accodaSePubblicabile(regola, recensione, testo, esecuzione);
 
-  revalidatePath("/dashboard");
+  revalidatePath("/");
   revalidatePath("/da-pubblicare");
   indietro(formData, { run: esecuzione.id });
 }
@@ -140,7 +140,7 @@ export async function inoltraAction(formData: FormData): Promise<void> {
   const esecuzione = await eseguiRegola(inoltro, recensione);
   await registraEsecuzione(esecuzione);
 
-  revalidatePath("/dashboard");
+  revalidatePath("/");
   indietro(formData, { run: esecuzione.id });
 }
 
@@ -148,6 +148,6 @@ export async function inoltraAction(formData: FormData): Promise<void> {
 export async function rimettiInCodaAction(formData: FormData): Promise<void> {
   const id = str(formData, "id");
   if (id) await eliminaEsecuzione(id);
-  revalidatePath("/dashboard");
+  revalidatePath("/");
   indietro(formData);
 }

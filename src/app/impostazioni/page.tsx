@@ -163,7 +163,7 @@ export default async function ImpostazioniPage({
               <span className="menu-voce-testo">Statistiche</span>
               <span className="menu-voce-stato">↗</span>
             </Link>
-            <Link href="/" className="menu-voce">
+            <Link href="/posta" className="menu-voce">
               <span className="menu-voce-testo">Posta in arrivo</span>
               <span className="menu-voce-stato">↗</span>
             </Link>
