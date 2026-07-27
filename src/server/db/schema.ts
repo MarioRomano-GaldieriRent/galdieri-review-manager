@@ -23,6 +23,7 @@ const boolo = { bsonType: "bool" };
 const dataO = { bsonType: ["date", "null"] };
 const stringaO = { bsonType: ["string", "null"] };
 const sha1 = { bsonType: "string", pattern: "^[0-9a-f]{40}$" };
+const sha256 = { bsonType: "string", pattern: "^[0-9a-f]{64}$" };
 
 type DefColl = { nome: string; validator: Document; indici: IndexDescription[] };
 
@@ -739,6 +740,95 @@ export const COLLEZIONI: DefColl[] = [
       },
     },
     indici: [],
+  },
+
+  {
+    // Credenziali di accesso, una per operatore-persona. Tenute SEPARATE dal
+    // profilo (operatori): i segreti d'autenticazione non si mescolano con nome
+    // ed email, e questa collezione non entra in viste né lookup pubblici.
+    nome: "credenziali",
+    validator: {
+      $jsonSchema: {
+        bsonType: "object",
+        additionalProperties: false,
+        required: [
+          "_id",
+          "hashPassword",
+          "totpAttivo",
+          "tentativiFalliti",
+          "creataIl",
+          "aggiornataIl",
+        ],
+        properties: {
+          _id: { bsonType: "int" }, // = operatori._id
+          hashPassword: { bsonType: "string", minLength: 1 }, // scrypt$N$r$p$salt$hash
+          // Secret TOTP cifrato a riposo (AES-GCM). null finché non si attiva.
+          totpCifrato: stringaO,
+          totpAttivo: boolo,
+          // Codici di recupero: solo l'hash sha256, mai il codice in chiaro.
+          codiciRecupero: {
+            bsonType: "array",
+            items: {
+              bsonType: "object",
+              additionalProperties: false,
+              required: ["hash", "usato"],
+              properties: {
+                hash: sha256,
+                usato: boolo,
+                usatoIl: dataO,
+              },
+            },
+          },
+          // Difesa forza bruta: tentativi falliti consecutivi (password e TOTP,
+          // contati separatamente) e blocco a tempo condiviso.
+          tentativiFalliti: { bsonType: "int", minimum: 0 },
+          tentativiTotp: { bsonType: "int", minimum: 0 },
+          bloccatoFinoA: dataO,
+          // Anti-replay TOTP: ultimo passo (finestra da 30s) già consumato.
+          ultimoPassoTotp: { bsonType: "int", minimum: 0 },
+          creataIl: { bsonType: "date" },
+          aggiornataIl: { bsonType: "date" },
+        },
+      },
+    },
+    indici: [],
+  },
+
+  {
+    // Sessioni di login. _id = hash sha256 del token (il token in chiaro vive
+    // solo nel cookie): un backup del DB non contiene sessioni utilizzabili.
+    // Due fasi: "attesa_totp" dopo la sola password, "completa" dopo il secondo
+    // fattore. L'indice TTL su scadeIl le fa sparire da sole alla scadenza.
+    nome: "sessioni",
+    validator: {
+      $jsonSchema: {
+        bsonType: "object",
+        additionalProperties: false,
+        required: [
+          "_id",
+          "operatoreId",
+          "statoAutenticazione",
+          "creataIl",
+          "scadeIl",
+          "ultimoUsoIl",
+        ],
+        properties: {
+          _id: sha256, // sha256 hex del token di sessione
+          operatoreId: { bsonType: "int" },
+          statoAutenticazione: { enum: ["attesa_totp", "completa"] },
+          creataIl: { bsonType: "date" },
+          scadeIl: { bsonType: "date" },
+          ultimoUsoIl: { bsonType: "date" },
+          userAgent: stringaOFalsa,
+          ip: stringaOFalsa,
+        },
+      },
+    },
+    indici: [
+      // TTL: MongoDB cancella la sessione quando scadeIl è nel passato.
+      { key: { scadeIl: 1 }, name: "i_sessioni_ttl", expireAfterSeconds: 0 },
+      { key: { operatoreId: 1 }, name: "i_sessioni_operatore" },
+    ],
   },
 ];
 

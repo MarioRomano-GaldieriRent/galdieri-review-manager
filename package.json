@@ -17,16 +17,19 @@
     "test:lingua": "tsx --tsconfig tsconfig.json scripts/test-lingua.ts",
     "analisi:trustpilot": "tsx --tsconfig tsconfig.json scripts/analisi-trustpilot.ts",
     "travaso": "tsx --tsconfig tsconfig.json scripts/travaso-sqlite.ts",
-    "verifica:db": "tsx --tsconfig tsconfig.json scripts/verifica-db.ts"
+    "verifica:db": "tsx --tsconfig tsconfig.json scripts/verifica-db.ts",
+    "crea-utente": "tsx --tsconfig tsconfig.json scripts/crea-utente.ts"
   },
   "dependencies": {
     "mongodb": "^7.5.0",
     "next": "^15.1.0",
+    "qrcode": "^1.5.4",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.7",
+    "@types/qrcode": "^1.5.6",
     "@types/react": "^19.0.7",
     "@types/react-dom": "^19.0.3",
     "eslint": "^8.57.1",

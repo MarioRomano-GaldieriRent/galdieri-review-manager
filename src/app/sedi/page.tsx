@@ -149,7 +149,7 @@ export default async function SediPage({
       </section>
 
       <p className="hint">
-        <Link href="/da-pubblicare">← Torna alla coda</Link>
+        <Link href="/?step=pubblicare">← Torna alla coda</Link>
       </p>
     </main>
   );

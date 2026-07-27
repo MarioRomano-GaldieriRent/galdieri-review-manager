@@ -11,6 +11,7 @@ import { caricaRecensioni, haTesto, testoRecensione, type Recensione } from "@/s
 import { approvaPerPubblicazione } from "@/server/db/pubblicazioni";
 import { normalizzaSede } from "@/server/db/seed";
 import { loadSettings } from "@/server/settings";
+import { richiediOperatore } from "@/server/auth/sessione";
 
 // Le tre azioni della dashboard: approvare la risposta, inoltrare al customer
 // care, rimettere in coda una recensione già lavorata.
@@ -51,6 +52,7 @@ async function trovaRecensione(fd: FormData): Promise<Recensione> {
  * versione. In entrambi i casi parte solo da qui, mai da solo.
  */
 export async function approvaAction(formData: FormData): Promise<void> {
+  const op = await richiediOperatore();
   const recensione = await trovaRecensione(formData);
 
   const regole = await caricaRegole();
@@ -70,10 +72,9 @@ export async function approvaAction(formData: FormData): Promise<void> {
   // Aggancio alla coda di pubblicazione manuale: solo le recensioni con una
   // risposta pubblica su Google (le positive) ci finiscono. Le negative vanno
   // a Cherubina e restano nella colonna d'attesa, non in coda.
-  await accodaSePubblicabile(regola, recensione, testo, esecuzione);
+  await accodaSePubblicabile(regola, recensione, testo, esecuzione, op._id);
 
   revalidatePath("/");
-  revalidatePath("/da-pubblicare");
   indietro(formData, { run: esecuzione.id });
 }
 
@@ -87,6 +88,7 @@ async function accodaSePubblicabile(
   recensione: Recensione,
   testoForm: string,
   esecuzione: Esecuzione,
+  operatoreId: number,
 ): Promise<void> {
   const nodoGoogle = regola.azioni.find((a) => a.tipo === "google.rispondi");
   if (!nodoGoogle) return;
@@ -110,7 +112,7 @@ async function accodaSePubblicabile(
     testoRecensione: testoRecensione(recensione),
     messaggioId: recensione.messaggioId,
     ticketId,
-  });
+  }, operatoreId);
 }
 
 /**
@@ -122,6 +124,7 @@ async function accodaSePubblicabile(
  * Freshdesk — verificato su 40 inoltri reali su 41.
  */
 export async function inoltraAction(formData: FormData): Promise<void> {
+  await richiediOperatore();
   const recensione = await trovaRecensione(formData);
 
   const inoltro: Regola = {
@@ -146,6 +149,7 @@ export async function inoltraAction(formData: FormData): Promise<void> {
 
 /** Rimette una recensione fra quelle da gestire cancellando la prova. */
 export async function rimettiInCodaAction(formData: FormData): Promise<void> {
+  await richiediOperatore();
   const id = str(formData, "id");
   if (id) await eliminaEsecuzione(id);
   revalidatePath("/");

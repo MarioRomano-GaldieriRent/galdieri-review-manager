@@ -2,29 +2,47 @@ import Link from "next/link";
 import { testoPerRecensione } from "@/server/automation/connectors";
 import { caricaRegole, regolaPer } from "@/server/automation/rules";
 import { caricaEsecuzioni, ultimePerRecensione } from "@/server/automation/runs";
-import type { Azione, Esecuzione, Regola } from "@/server/automation/types";
+import type { Azione, Regola } from "@/server/automation/types";
 import { isGraphConfigured } from "@/server/graph/client";
-import { isFreshdeskConfigured } from "@/server/integrations/freshdesk";
 import { caricaRecensioni, haTesto, testoRecensione, type Recensione } from "@/server/reviews/load";
+import {
+  codaDaPubblicare,
+  codaDaRicontrollare,
+  ORE_RICONTROLLO,
+  type VocePubblicazione,
+} from "@/server/db/pubblicazioni";
+import { ritentaChiusureInSospeso } from "@/server/pubblicazione";
+import { isFreshdeskConfigured } from "@/server/integrations/freshdesk";
 import { loadSettings } from "@/server/settings";
-import { isTranslationConfigured } from "@/server/translate";
-import { approvaAction, inoltraAction, rimettiInCodaAction } from "./dashboard/actions";
+import { approvaAction, inoltraAction } from "./dashboard/actions";
+import { Stelle, VoceCoda, VoceRicontrollo } from "./da-pubblicare/Voci";
+import { TastieraCoda } from "./da-pubblicare/TastieraCoda";
 
-// Dashboard operativa: una sola schermata per lavorare le recensioni.
+// La home è la pipeline completa di una recensione, in un'unica pagina a tre
+// passi:
 //
-//   sinistra  — già lavorate: la risposta è partita (o sarebbe partita)
-//   centro    — da gestire: la coda vera, con la risposta proposta
-//   destra    — in attesa del customer care: inoltrate, palla al collega
+//   Da approvare    — la recensione arriva dalla posta, si approva il «Grazie.»
+//   Da pubblicare   — la risposta approvata si incolla a mano su Google
+//   Da ricontrollare — dopo 24h si verifica che sia rimasta online
 //
-// I dati sono sempre quelli veri letti dalla posta. A cambiare è solo cosa
-// succede quando si preme un pulsante, e lo decide la modalità operativa:
-// in simulazione il flusso gira per intero ma nessuna chiamata parte davvero.
+// I conteggi dei tab raccontano il flusso da sinistra a destra. Al momento si
+// lavorano solo le recensioni 5★ senza commento: tutto il resto è filtrato via.
+//
+// La lettura della posta (Microsoft Graph) è lenta e si fa solo sul tab «Da
+// approvare»: così pubblicare e ricontrollare — dove si lavora a raffica da
+// tastiera — restano immediati e non aspettano la posta a ogni Invio.
 
 export const dynamic = "force-dynamic";
-export const metadata = { title: "Dashboard — Galdieri rent" };
+export const metadata = { title: "GaldieriReviews" };
 
 const fmt = new Intl.DateTimeFormat("it-IT", { dateStyle: "medium", timeStyle: "short" });
-const fmtBreve = new Intl.DateTimeFormat("it-IT", { day: "2-digit", month: "short" });
+
+type Passo = "approvare" | "pubblicare" | "ricontrollo";
+
+/** Al momento si mostrano solo le recensioni a 5 stelle senza commento. */
+function soloCinqueSenzaCommento(v: VocePubblicazione): boolean {
+  return v.stelle === 5 && !v.testoRecensione;
+}
 
 /** Il nodo che scrive la risposta al cliente: è quello che si mostra e si può riscrivere. */
 function nodoRisposta(regola: Regola): Azione | null {
@@ -35,155 +53,76 @@ function nodoRisposta(regola: Regola): Azione | null {
   );
 }
 
-/** Un flusso fermo in attesa di una persona non è concluso: va nella colonna di destra. */
-function inAttesa(e: Esecuzione): boolean {
-  return e.nodi.some((n) => n.tipo === "sistema.attendiRisposta");
-}
-
-function Stelle({ n }: { n: number | null }) {
-  const v = n ?? 0;
-  return (
-    <span className={`stars-badge stars-${v}`} title={n ? `${n} su 5` : "senza punteggio"}>
-      {"★".repeat(v)}
-      <span className="stars-empty">{"★".repeat(5 - v)}</span>
-    </span>
-  );
-}
-
-/** Scheda compatta delle colonne laterali. */
-function SchedaLaterale({
-  e,
-  stelleSel,
-  tono,
-  stato,
-}: {
-  e: Esecuzione;
-  stelleSel: number | null;
-  tono: "fatta" | "attesa";
-  stato: string;
-}) {
-  return (
-    <article className="dash-mini">
-      <div className="dash-mini-head">
-        <span className="dash-mini-name">{e.recensione.nome}</span>
-        <span className="dash-mini-date">{fmtBreve.format(new Date(e.quando))}</span>
-      </div>
-      <p className="dash-mini-text">{e.recensione.testo || "— senza commento —"}</p>
-      <div className="dash-mini-foot">
-        <span className={`dash-dot dash-dot-${tono}`} aria-hidden="true" />
-        <span className={`dash-mini-stato dash-stato-${tono}`}>{stato}</span>
-        {e.testoModificato && <span className="flag flag-gray">testo riscritto</span>}
-      </div>
-      <div className="dash-mini-actions">
-        <Link className="btn-mini" href={`/automazioni?run=${e.id}`}>
-          Dettaglio →
-        </Link>
-        <form action={rimettiInCodaAction}>
-          <input type="hidden" name="id" value={e.id} />
-          <input type="hidden" name="stelle" value={stelleSel ?? ""} />
-          <button type="submit" className="btn-mini btn-danger">
-            Rimetti in coda
-          </button>
-        </form>
-      </div>
-    </article>
-  );
-}
-
-function href(stelle?: number | null): string {
-  return stelle ? `/?stelle=${stelle}` : "/";
-}
-
-export default async function DashboardPage({
+export default async function HomePage({
   searchParams,
 }: {
-  searchParams: Promise<{ stelle?: string; run?: string; errore?: string }>;
+  searchParams: Promise<{ step?: string; sede?: string; run?: string; errore?: string }>;
 }) {
   const sp = await searchParams;
+  const step: Passo =
+    sp.step === "pubblicare"
+      ? "pubblicare"
+      : sp.step === "ricontrollo"
+        ? "ricontrollo"
+        : "approvare";
+
   const settings = await loadSettings();
-  const label = settings.labels[0] ?? null;
   const simulazione = settings.modo !== "reale";
 
-  const [regole, esecuzioni, graphOk, fdOk, traduzioneOk] = await Promise.all([
-    caricaRegole(),
-    caricaEsecuzioni(),
-    isGraphConfigured(),
+  // Code di pubblicazione: letture Mongo veloci, si caricano sempre così i tab
+  // hanno i conteggi e la pubblicazione a raffica resta immediata. All'apertura
+  // si ritentano, best-effort, le chiusure Freshdesk rimaste in sospeso.
+  await ritentaChiusureInSospeso();
+  const [codaPubAll, codaRicAll, fdOk] = await Promise.all([
+    codaDaPubblicare(),
+    codaDaRicontrollare(),
     isFreshdeskConfigured(),
-    isTranslationConfigured(),
   ]);
+  const codaPub = codaPubAll.filter(soloCinqueSenzaCommento);
+  const codaRic = codaRicAll.filter(soloCinqueSenzaCommento);
 
-  let recensioni: Recensione[] = [];
-  let errore: string | null = null;
-  if (graphOk && label) {
-    try {
-      recensioni = (await caricaRecensioni(label)).recensioni;
-    } catch (e) {
-      errore = e instanceof Error ? e.message : "Errore sconosciuto";
+  // Filtro per sede sul tab «Da pubblicare» (le stelle non servono: sono tutte 5).
+  const sedi = [...new Set(codaPub.map((v) => v.sedeNome).filter(Boolean))].sort();
+  const sedeSel = sp.sede && sedi.includes(sp.sede) ? sp.sede : null;
+  const vociPub = sedeSel ? codaPub.filter((v) => v.sedeNome === sedeSel) : codaPub;
+
+  // --- Da approvare: solo qui si legge la posta (lenta). ---------------------
+  const label = settings.labels[0] ?? null;
+  let graphOk = true;
+  let erroreGraph: string | null = null;
+  let daApprovare: { r: Recensione; regola: Regola | null }[] = [];
+  let nApprovare: number | null = null;
+  let runAperta: ReturnType<typeof trovaRun> = undefined;
+
+  if (step === "approvare") {
+    const [regole, esecuzioni, graphConf] = await Promise.all([
+      caricaRegole(),
+      caricaEsecuzioni(),
+      isGraphConfigured(),
+    ]);
+    graphOk = graphConf;
+
+    let recensioni: Recensione[] = [];
+    if (graphOk && label) {
+      try {
+        recensioni = (await caricaRecensioni(label)).recensioni;
+      } catch (e) {
+        erroreGraph = e instanceof Error ? e.message : "Errore sconosciuto";
+      }
     }
+
+    const ultime = await ultimePerRecensione();
+    daApprovare = recensioni
+      .filter((r) => !ultime.has(r.chiave))
+      .filter((r) => r.stelle === 5 && !haTesto(r))
+      .map((r) => ({ r, regola: regolaPer(regole, r.stelle, haTesto(r)) }));
+    nApprovare = daApprovare.length;
+
+    runAperta = sp.run ? trovaRun(esecuzioni, sp.run) : undefined;
   }
-
-  const ultime = await ultimePerRecensione();
-  const lavorate = [...ultime.values()];
-  const fatte = lavorate.filter((e) => !inAttesa(e));
-  const attesa = lavorate.filter(inAttesa);
-
-  // Da gestire = tutto ciò che non è ancora stato toccato. Anche le recensioni
-  // che nessuna regola copre restano qui: non si possono approvare, ma si
-  // possono sempre inoltrare — sparire in silenzio sarebbe peggio.
-  const daGestire = recensioni
-    .filter((r) => !ultime.has(r.chiave))
-    .map((r) => ({ r, regola: regolaPer(regole, r.stelle, haTesto(r)) }));
-
-  const conteggi: Record<number, number> = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
-  for (const { r } of daGestire) {
-    if (r.stelle && conteggi[r.stelle] !== undefined) conteggi[r.stelle] += 1;
-  }
-
-  const stelleNum = Number(sp.stelle);
-  const stelleSel = stelleNum >= 1 && stelleNum <= 5 ? stelleNum : null;
-  const coda = stelleSel ? daGestire.filter((x) => x.r.stelle === stelleSel) : daGestire;
-
-  const runAperta = sp.run ? esecuzioni.find((e) => e.id === sp.run) : undefined;
 
   return (
-    <main className="dash">
-      <header className="dash-testa">
-        <div>
-          <h1>Dashboard</h1>
-          <p className="subtitle">
-            {label ? label.name : "nessuna etichetta"} — {daGestire.length} da gestire,{" "}
-            {fatte.length} lavorate, {attesa.length} in attesa del customer care
-            {stelleSel ? ` · filtro ${stelleSel}★` : ""}
-          </p>
-        </div>
-        <div className="dash-stato-servizi">
-          <span className={`conn-badge ${graphOk ? "conn-ok" : "conn-ko"}`}>
-            {graphOk ? "posta collegata" : "posta da configurare"}
-          </span>
-          <span className={`conn-badge ${fdOk ? "conn-ok" : "conn-ko"}`}>
-            {fdOk ? "Freshdesk collegato" : "Freshdesk da configurare"}
-          </span>
-          <span className={`conn-badge ${traduzioneOk ? "conn-ok" : "conn-ko"}`}>
-            {traduzioneOk ? "traduzione attiva" : "traduzione spenta"}
-          </span>
-        </div>
-      </header>
-
-      {/* Che cosa succede davvero premendo i pulsanti. Sempre in vista. */}
-      <section className={`card modo-riga ${simulazione ? "modo-sim" : "modo-reale"}`}>
-        <span className={`conn-badge ${simulazione ? "conn-ok" : "conn-ko"}`}>
-          {simulazione ? "simulazione" : "MODALITÀ REALE"}
-        </span>
-        <span className="modo-riga-testo">
-          {simulazione
-            ? "Recensioni vere, azioni finte: il flusso gira per intero ma niente viene scritto su Freshdesk, Google o nella posta."
-            : "Le azioni partono davvero: ticket modificati, risposte pubblicate ed email inviate."}
-        </span>
-        <Link href="/impostazioni#automazioni" className="btn-secondary">
-          Regole e modalità →
-        </Link>
-      </section>
-
+    <main className="pipeline">
       {sp.errore && (
         <section className="card">
           <p className="form-error">
@@ -219,104 +158,57 @@ export default async function DashboardPage({
         </section>
       )}
 
-      {!graphOk && (
-        <section className="card">
-          <p className="form-error">
-            Microsoft Graph non è configurato: senza posta non ci sono recensioni da mostrare.
-          </p>
-        </section>
-      )}
-      {errore && (
-        <section className="card">
-          <p className="form-error">Errore nella lettura della posta: {errore}</p>
-        </section>
-      )}
+      {/* -------------------------------------------------------------- tab */}
+      <nav className="pub-tabs" aria-label="Fasi della pubblicazione">
+        <Link href="/" className={`pub-tab${step === "approvare" ? " is-active" : ""}`}>
+          Da approvare
+          {nApprovare !== null && <span className="chip-count">{nApprovare}</span>}
+        </Link>
+        <Link
+          href="/?step=pubblicare"
+          className={`pub-tab${step === "pubblicare" ? " is-active" : ""}`}
+        >
+          Da pubblicare <span className="chip-count">{codaPub.length}</span>
+        </Link>
+        <Link
+          href="/?step=ricontrollo"
+          className={`pub-tab${step === "ricontrollo" ? " is-active" : ""}`}
+        >
+          Da ricontrollare <span className="chip-count">{codaRic.length}</span>
+        </Link>
+      </nav>
 
-      <div className="dash-colonne">
-        {/* ------------------------------------------------ colonna sinistra */}
-        <aside className="dash-col">
-          <div className="dash-col-testa">
-            <span className="dash-col-titolo">
-              {simulazione ? "Lavorate · simulate" : "Lavorate · inviate"}
-            </span>
-            <span className="dash-conteggio dash-conteggio-fatta">{fatte.length}</span>
-          </div>
-          <p className="dash-col-nota">
-            {simulazione
-              ? "Risposta pronta e flusso verificato, ma non pubblicata."
-              : "Risposta pubblicata e ticket lavorato."}
-          </p>
-          {fatte.length === 0 ? (
-            <p className="hint">Ancora nessuna.</p>
-          ) : (
-            fatte.map((e) => (
-              <SchedaLaterale
-                key={e.id}
-                e={e}
-                stelleSel={stelleSel}
-                tono="fatta"
-                stato={
-                  e.esito === "errore"
-                    ? "flusso interrotto da un errore"
-                    : e.modo === "reale"
-                      ? "risposta pubblicata"
-                      : "risposta simulata"
-                }
-              />
-            ))
-          )}
-        </aside>
-
-        {/* --------------------------------------------------------- centro */}
+      {/* =================================================== Da approvare === */}
+      {step === "approvare" && (
         <section className="dash-centro">
           <div className="dash-centro-testa">
             <div>
-              <h2>Da gestire</h2>
+              <h2>Da approvare</h2>
               <p className="hint">
-                {coda.length} recensioni in attesa di una tua decisione
-                {stelleSel ? ` fra quelle da ${stelleSel}★` : ""}
+                {daApprovare.length} recensioni 5★ senza commento in attesa di una tua decisione
               </p>
             </div>
           </div>
 
-          {daGestire.length > 0 && (
-            <div className="star-filter">
-              <Link
-                href={href(null)}
-                className={`star-chip chip-all${stelleSel ? "" : " is-active"}`}
-              >
-                Tutte <span className="chip-count">{daGestire.length}</span>
-              </Link>
-              {[1, 2, 3, 4, 5].map((n) => {
-                const attivo = stelleSel === n;
-                return (
-                  <Link
-                    key={n}
-                    href={attivo ? href(null) : href(n)}
-                    className={`star-chip s${n}${attivo ? " is-active" : ""}${
-                      conteggi[n] === 0 ? " is-empty" : ""
-                    }`}
-                    aria-label={`${conteggi[n]} recensioni da ${n} stelle da gestire`}
-                  >
-                    <span className="chip-stars">
-                      {"★".repeat(n)}
-                      <span className="stars-empty">{"★".repeat(5 - n)}</span>
-                    </span>
-                    <span className="chip-count">{conteggi[n]}</span>
-                  </Link>
-                );
-              })}
-            </div>
+          {!graphOk && (
+            <section className="card">
+              <p className="form-error">
+                Microsoft Graph non è configurato: senza posta non ci sono recensioni da mostrare.
+              </p>
+            </section>
+          )}
+          {erroreGraph && (
+            <section className="card">
+              <p className="form-error">Errore nella lettura della posta: {erroreGraph}</p>
+            </section>
           )}
 
-          {coda.length === 0 ? (
+          {daApprovare.length === 0 ? (
             <section className="card dash-vuoto">
-              {daGestire.length === 0
-                ? "Tutto gestito. Nessuna recensione in attesa."
-                : `Nessuna recensione da ${stelleSel}★ da gestire.`}
+              Nessuna recensione 5★ senza commento da approvare.
             </section>
           ) : (
-            coda.map(({ r, regola }) => {
+            daApprovare.map(({ r, regola }) => {
               const nodo = regola ? nodoRisposta(regola) : null;
               const suggerito = nodo ? testoPerRecensione(nodo, r) : null;
               const testo = testoRecensione(r);
@@ -370,7 +262,6 @@ export default async function DashboardPage({
                       </div>
                       <input type="hidden" name="chiave" value={r.chiave} />
                       <input type="hidden" name="label" value={label?.id ?? ""} />
-                      <input type="hidden" name="stelle" value={stelleSel ?? ""} />
                       <input type="hidden" name="azioneId" value={nodo!.id} />
                       <input type="hidden" name="testoOriginale" value={suggerito.testo} />
                       {/* Il testo è sempre modificabile: quello che si legge è
@@ -403,7 +294,6 @@ export default async function DashboardPage({
                     <form action={inoltraAction}>
                       <input type="hidden" name="chiave" value={r.chiave} />
                       <input type="hidden" name="label" value={label?.id ?? ""} />
-                      <input type="hidden" name="stelle" value={stelleSel ?? ""} />
                       <button type="submit" className="btn-secondary">
                         Inoltra al customer care →
                       </button>
@@ -422,31 +312,119 @@ export default async function DashboardPage({
             })
           )}
         </section>
+      )}
 
-        {/* -------------------------------------------------- colonna destra */}
-        <aside className="dash-col">
-          <div className="dash-col-testa">
-            <span className="dash-col-titolo">In attesa · customer care</span>
-            <span className="dash-conteggio dash-conteggio-attesa">{attesa.length}</span>
+      {/* ================================================== Da pubblicare === */}
+      {step === "pubblicare" && (
+        <section className="dash-centro">
+          <div className="dash-centro-testa">
+            <div>
+              <h2>Da pubblicare</h2>
+              <p className="hint">
+                {vociPub.length} risposte pronte da incollare su Google
+                {sedeSel ? ` · ${sedeSel}` : ""}
+              </p>
+            </div>
+            <Link href="/sedi" className="btn-secondary">
+              Link delle sedi →
+            </Link>
           </div>
-          <p className="dash-col-nota">Inoltrate: il flusso riparte quando risponde il collega.</p>
-          {attesa.length === 0 ? (
-            <p className="hint">Nessuna in attesa.</p>
-          ) : (
-            attesa.map((e) => (
-              <SchedaLaterale
-                key={e.id}
-                e={e}
-                stelleSel={stelleSel}
-                tono="attesa"
-                stato={
-                  e.esito === "errore" ? "flusso interrotto da un errore" : "attende una risposta"
-                }
-              />
-            ))
+
+          <section className={`card modo-riga ${simulazione ? "modo-sim" : "modo-reale"}`}>
+            <span className={`conn-badge ${simulazione ? "conn-ok" : "conn-ko"}`}>
+              {simulazione ? "simulazione" : "MODALITÀ REALE"}
+            </span>
+            <span className="modo-riga-testo">
+              {simulazione
+                ? "«Segna come pubblicata» sposta la risposta nel ricontrollo, ma il ticket NON viene chiuso su Freshdesk."
+                : "«Segna come pubblicata» chiude anche il ticket collegato su Freshdesk."}
+            </span>
+            {!fdOk && <span className="conn-badge conn-ko">Freshdesk da configurare</span>}
+            <Link href="/impostazioni#modo" className="btn-secondary">
+              Modalità →
+            </Link>
+          </section>
+
+          {sedi.length > 1 && (
+            <div className="pub-sedi">
+              <Link href="/?step=pubblicare" className={`btn-mini${sedeSel ? "" : " is-active"}`}>
+                Tutte le sedi
+              </Link>
+              {sedi.map((s) => (
+                <Link
+                  key={s}
+                  href={
+                    sedeSel === s
+                      ? "/?step=pubblicare"
+                      : `/?step=pubblicare&sede=${encodeURIComponent(s)}`
+                  }
+                  className={`btn-mini${sedeSel === s ? " is-active" : ""}`}
+                >
+                  {s}
+                </Link>
+              ))}
+            </div>
           )}
-        </aside>
-      </div>
+
+          {vociPub.length === 0 ? (
+            <section className="card dash-vuoto">
+              {codaPub.length === 0
+                ? "Nessuna risposta in attesa di pubblicazione. Le risposte approvate qui sopra compaiono in questo tab."
+                : "Nessuna risposta con questi filtri."}
+            </section>
+          ) : (
+            <>
+              <TastieraCoda />
+              <ol className="pub-lista">
+                {vociPub.map((v, i) => (
+                  <VoceCoda
+                    key={v.chiave}
+                    v={v}
+                    numero={i + 1}
+                    sedeSel={sedeSel}
+                    stelleSel={null}
+                  />
+                ))}
+              </ol>
+            </>
+          )}
+        </section>
+      )}
+
+      {/* ================================================ Da ricontrollare === */}
+      {step === "ricontrollo" && (
+        <section className="dash-centro">
+          <div className="dash-centro-testa">
+            <div>
+              <h2>Da ricontrollare</h2>
+              <p className="hint pub-ricontrollo-nota">
+                Le risposte pubblicate su Google a volte non risultano salvate. Dopo{" "}
+                {ORE_RICONTROLLO} ore si riaprono qui: controlla che la risposta ci sia e conferma,
+                oppure rimettila in coda se è sparita.
+              </p>
+            </div>
+          </div>
+
+          {codaRic.length === 0 ? (
+            <section className="card dash-vuoto">Niente da ricontrollare.</section>
+          ) : (
+            <ol className="pub-lista">
+              {codaRic.map((v, i) => (
+                <VoceRicontrollo key={v.chiave} v={v} numero={i + 1} />
+              ))}
+            </ol>
+          )}
+        </section>
+      )}
     </main>
   );
+}
+
+// --- helper ----------------------------------------------------------------
+
+type Esec = Awaited<ReturnType<typeof caricaEsecuzioni>>[number];
+
+/** L'esecuzione appena conclusa da mostrare in cima (feedback dopo l'approvazione). */
+function trovaRun(esecuzioni: Esec[], id: string): Esec | undefined {
+  return esecuzioni.find((e) => e.id === id);
 }

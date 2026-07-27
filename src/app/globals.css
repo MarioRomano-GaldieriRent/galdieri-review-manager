@@ -1644,6 +1644,279 @@ main.dash {
   max-width: 1560px;
 }
 
+/* La home-pipeline è a colonna singola: larghezza da lettura, non da griglia. */
+main.pipeline {
+  max-width: 980px;
+}
+
+/* I tab della pipeline hanno un po' d'aria sopra il primo contenuto. */
+main.pipeline .pub-tabs {
+  margin-bottom: 18px;
+}
+
+/* ============================================================ login / TOTP */
+
+.login-schermo {
+  min-height: 100dvh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px 18px;
+}
+
+.login-box {
+  width: 100%;
+  max-width: 380px;
+  padding: 30px 28px;
+}
+
+.login-box-larga {
+  max-width: 560px;
+}
+
+.login-logo {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 20px;
+}
+
+.login-titolo {
+  margin: 0 0 4px;
+  font-size: 1.3rem;
+}
+
+.login-sottotitolo {
+  margin: 0 0 16px;
+}
+
+.login-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.login-campo {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.login-campo span {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-soft);
+}
+
+.login-campo input {
+  width: 100%;
+  padding: 10px 12px;
+  font-size: 1rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: inherit;
+}
+
+.login-campo input:focus {
+  outline: 2px solid var(--g-blue);
+  outline-offset: 1px;
+  border-color: var(--g-blue);
+}
+
+.login-codice {
+  font-size: 1.4rem !important;
+  letter-spacing: 0.4em;
+  text-align: center;
+}
+
+.login-invia {
+  margin-top: 4px;
+  width: 100%;
+  padding: 11px;
+  font-size: 0.95rem;
+}
+
+.login-errore {
+  margin: 0 0 14px;
+}
+
+.login-annulla-form {
+  margin-top: 12px;
+  text-align: center;
+}
+
+.login-annulla {
+  color: var(--text-soft);
+}
+
+/* --- attivazione TOTP --- */
+
+.totp-passi {
+  margin: 8px 0 0;
+  padding-left: 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.totp-passi > li {
+  padding-left: 4px;
+  line-height: 1.5;
+}
+
+.totp-qr {
+  margin: 12px 0;
+  display: flex;
+  justify-content: center;
+}
+
+.totp-qr img {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: #fff; /* i lettori vogliono contrasto: sfondo bianco anche in dark */
+  padding: 8px;
+}
+
+.totp-chiave {
+  display: inline-block;
+  margin-top: 4px;
+  font-size: 0.95rem;
+  letter-spacing: 0.12em;
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 4px 8px;
+}
+
+.totp-fatto {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.totp-codici {
+  list-style: none;
+  margin: 0;
+  padding: 14px;
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px 16px;
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  font-size: 1rem;
+  letter-spacing: 0.06em;
+  text-align: center;
+}
+
+/* --- testata: utente + esci --- */
+
+.app-header-destra {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.utente-corrente {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-soft);
+  white-space: nowrap;
+}
+
+/* ================================================================= utenti */
+
+.utenti-sez {
+  margin: 0 0 14px;
+  font-size: 1.05rem;
+}
+
+.utenti-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 14px;
+  align-items: end;
+}
+
+.utenti-form .login-campo input,
+.utenti-form .login-campo select {
+  width: 100%;
+  padding: 9px 11px;
+  font-size: 0.95rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: inherit;
+}
+
+.utenti-form > button {
+  height: fit-content;
+}
+
+.utenti-tabella-wrap {
+  overflow-x: auto;
+}
+
+.utenti-tabella {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.utenti-tabella th,
+.utenti-tabella td {
+  text-align: left;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+
+.utenti-tabella th {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-soft);
+}
+
+.utenti-tabella .mono {
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+}
+
+.utenti-tabella tr.utente-off {
+  opacity: 0.55;
+}
+
+.utenti-azioni {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.utenti-pw {
+  display: flex;
+  gap: 4px;
+}
+
+.utenti-pw input {
+  width: 130px;
+  padding: 4px 8px;
+  font-size: 0.82rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: inherit;
+}
+
+.flag-green-box {
+  border-left: 3px solid var(--g-green);
+}
+
+.utenti-tabella td .flag {
+  margin-left: 6px;
+}
+
 .dash-testa {
   display: flex;
   align-items: flex-start;

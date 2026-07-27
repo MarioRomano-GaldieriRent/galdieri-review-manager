@@ -3,24 +3,27 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { impostaLinkSede, importaSediCsv } from "@/server/db/sedi";
+import { richiediOperatore } from "@/server/auth/sessione";
 
 const str = (fd: FormData, k: string) => String(fd.get(k) ?? "").trim();
 
 export async function salvaLinkSedeAction(formData: FormData): Promise<void> {
+  const op = await richiediOperatore();
   const chiave = str(formData, "chiave");
   if (chiave) {
-    await impostaLinkSede(chiave, str(formData, "googleReviewsUrl"), str(formData, "placeId"));
+    await impostaLinkSede(chiave, str(formData, "googleReviewsUrl"), str(formData, "placeId"), op._id);
   }
   revalidatePath("/sedi");
-  revalidatePath("/da-pubblicare");
+  revalidatePath("/");
   redirect("/sedi?salvata=" + encodeURIComponent(chiave));
 }
 
 export async function importaCsvAction(formData: FormData): Promise<void> {
+  const op = await richiediOperatore();
   const csv = String(formData.get("csv") ?? "");
-  const esito = await importaSediCsv(csv);
+  const esito = await importaSediCsv(csv, op._id);
   revalidatePath("/sedi");
-  revalidatePath("/da-pubblicare");
+  revalidatePath("/");
   const p = new URLSearchParams({
     imp: "1",
     agg: String(esito.aggiornate),

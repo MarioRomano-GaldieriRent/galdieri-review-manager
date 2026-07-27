@@ -171,6 +171,10 @@ export default async function ImpostazioniPage({
               <span className="menu-voce-testo">Ticket Freshdesk</span>
               <span className="menu-voce-stato">↗</span>
             </Link>
+            <Link href="/utenti" className="menu-voce">
+              <span className="menu-voce-testo">Utenti e accessi</span>
+              <span className="menu-voce-stato">↗</span>
+            </Link>
           </div>
         </nav>
 
