@@ -26,6 +26,8 @@ export type Recensione = {
   oggetto: string;
   ricevutaIl: string;
   messaggioId: string;
+  /** Id della recensione su Google (dall'email Zapier), se presente. */
+  idGoogle: string;
   numeroMessaggi: number;
   haRisposta: boolean;
   risolto: boolean;
@@ -58,6 +60,7 @@ function raggruppa(messaggi: MailDetail[], label: Label) {
     stelle: number | null;
     punteggioTesto: string;
     sede: string;
+    idGoogle: string;
     numeroMessaggi: number;
     haRisposta: boolean;
     risolto: boolean;
@@ -105,6 +108,7 @@ function raggruppa(messaggi: MailDetail[], label: Label) {
       stelle: best.parsed.score,
       punteggioTesto: best.parsed.scoreLabel,
       sede: locationFromSubject(best.msg.subject, label.subjectContains),
+      idGoogle: best.parsed.idGoogle,
       numeroMessaggi: gruppo.length,
       risolto: gruppo.some((m) => /ticket\s+risolto/i.test(m.subject)),
       haRisposta: gruppo.some((m) => {
@@ -160,6 +164,7 @@ export async function caricaRecensioni(
     oggetto: g.msg.subject,
     ricevutaIl: g.msg.receivedDateTime,
     messaggioId: g.msg.id,
+    idGoogle: g.idGoogle,
     numeroMessaggi: g.numeroMessaggi,
     haRisposta: g.haRisposta,
     risolto: g.risolto,

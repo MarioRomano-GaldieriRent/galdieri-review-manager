@@ -8,10 +8,17 @@ import { caricaRegole, regolaPer, EMAIL_TICKETING } from "@/server/automation/ru
 import { eliminaEsecuzione, registraEsecuzione } from "@/server/automation/runs";
 import type { Esecuzione, Regola } from "@/server/automation/types";
 import { caricaRecensioni, haTesto, testoRecensione, type Recensione } from "@/server/reviews/load";
-import { approvaPerPubblicazione } from "@/server/db/pubblicazioni";
+import {
+  approvaPerPubblicazione,
+  leggiPubblicazione,
+  segnaPubblicata,
+} from "@/server/db/pubblicazioni";
+import { chiudiFreshdeskPer } from "@/server/pubblicazione";
 import { normalizzaSede } from "@/server/db/seed";
-import { loadSettings } from "@/server/settings";
+import { loadSettings, modoOperativo } from "@/server/settings";
 import { richiediOperatore } from "@/server/auth/sessione";
+import { cercaTicketPerRecensione, STATO } from "@/server/integrations/freshdesk";
+import { lanciaRobot, type EsitoRobot } from "@/server/robot/lancia";
 
 // Le tre azioni della dashboard: approvare la risposta, inoltrare al customer
 // care, rimettere in coda una recensione già lavorata.
@@ -145,6 +152,119 @@ export async function inoltraAction(formData: FormData): Promise<void> {
 
   revalidatePath("/");
   indietro(formData, { run: esecuzione.id });
+}
+
+// --- Bottoni della card: Play, Test Google, Aggiorna ticket ----------------
+// Tutti MANUALI: partono solo al click. Il robot Google è "usa e getta" (apre
+// il browser, fa la cosa, si chiude) e serve Chrome chiuso in quel momento.
+
+/** Riporta l'esito di un'azione sulla card, come parametri d'indirizzo. */
+function esitoQuery(chiave: string, e: EsitoRobot): Record<string, string> {
+  return { esitoChiave: chiave, esitoOk: e.ok ? "1" : "0", esitoMsg: e.messaggio.slice(0, 240) };
+}
+
+/**
+ * 🔍 Test Google: apre il robot, trova la recensione su Google e scrive la
+ * risposta, SENZA pubblicare. Serve a verificare che il robot la agganci.
+ */
+export async function testGoogleAction(formData: FormData): Promise<void> {
+  await richiediOperatore();
+  const r = await trovaRecensione(formData);
+  const testo = String(formData.get("testo") ?? "").trim() || "Grazie.";
+  const e = await lanciaRobot({ azione: "test", nome: r.nome, testo });
+  indietro(formData, esitoQuery(r.chiave, e));
+}
+
+/**
+ * ▶ Play: esegue tutto il flusso della regola (email + Freshdesk, reali se sei
+ * in Modalità Reale) e poi apre il robot per Google. In Reale PUBBLICA davvero;
+ * in simulazione il robot fa solo il test (niente di reale), così resta coerente
+ * col principio "un solo punto decide se scrivere davvero".
+ */
+export async function playAction(formData: FormData): Promise<void> {
+  const op = await richiediOperatore();
+  const recensione = await trovaRecensione(formData);
+
+  const regole = await caricaRegole();
+  const regola = regolaPer(regole, recensione.stelle, haTesto(recensione));
+  if (!regola) indietro(formData, { errore: "nessuna-regola" });
+
+  const azioneId = str(formData, "azioneId");
+  const testo = String(formData.get("testo") ?? "").trim();
+  const originale = String(formData.get("testoOriginale") ?? "").trim();
+  const riscritto = azioneId && testo && testo !== originale ? { azioneId, testo } : null;
+
+  const modo = await modoOperativo();
+
+  // GOOGLE PER PRIMO (regola «5 stelle senza foto»): la pubblicazione su Google
+  // è il passo che conta ed è il più fragile. Se il robot NON pubblica, non ha
+  // senso fare il resto (email, ticket): il robot è il "cancello" iniziale.
+  const e = await lanciaRobot({
+    azione: modo === "reale" ? "pubblica" : "test",
+    nome: recensione.nome,
+    testo: testo || "Grazie.",
+  });
+
+  // Via libera: in Reale serve la pubblicazione vera; in simulazione basta che
+  // il robot abbia trovato e scritto (test), così si prova il flusso a vuoto.
+  const googleOk = modo === "reale" ? e.stato === "pubblicata" : e.ok && e.stato === "scritta";
+  if (!googleOk) {
+    // Google non fatto → NON tocchiamo email/Freshdesk. Resta in lista, si riprova.
+    indietro(formData, esitoQuery(recensione.chiave, e));
+  }
+
+  // Google fatto → ora il resto della regola, SENZA i due nodi Google/chiusura:
+  //   • google.rispondi (a6): già fatto dal robot (l'API è bloccata, quota 0);
+  //   • freshdesk.stato (a7): il ticket lo mette Risolto chiudiFreshdeskPer, che
+  //     aggiunge anche tag sede e nota con la risposta pubblicata.
+  const regolaDopoGoogle = {
+    ...regola,
+    azioni: regola.azioni.filter(
+      (a) => a.tipo !== "google.rispondi" && a.tipo !== "freshdesk.stato",
+    ),
+  };
+  const esecuzione = await eseguiRegola(regolaDopoGoogle, recensione, riscritto);
+  await registraEsecuzione(esecuzione);
+
+  // In Reale: registra la pubblicazione, portala in «da ricontrollare» (così
+  // sparisce dalla lista) e chiudi il ticket. In simulazione niente persiste:
+  // è una prova a vuoto e la recensione resta in lista.
+  if (modo === "reale") {
+    await accodaSePubblicabile(regola, recensione, testo, esecuzione, op._id);
+    const passata = await segnaPubblicata(recensione.chiave, op._id, false);
+    if (passata) {
+      const voce = await leggiPubblicazione(recensione.chiave);
+      if (voce) await chiudiFreshdeskPer(voce, op.nome);
+    }
+  }
+
+  revalidatePath("/");
+  indietro(formData, { run: esecuzione.id, ...esitoQuery(recensione.chiave, e) });
+}
+
+/**
+ * 🔄 Aggiorna: interroga Freshdesk (sola lettura) e dice a che punto è il ticket
+ * nato da questa recensione — aperto, in attesa, risolto o chiuso.
+ */
+export async function aggiornaTicketAction(formData: FormData): Promise<void> {
+  await richiediOperatore();
+  const r = await trovaRecensione(formData);
+  let ok = false;
+  let messaggio: string;
+  try {
+    const { ticket, motivo } = await cercaTicketPerRecensione(r.oggetto, r.ricevutaIl, r.nome);
+    if (!ticket) {
+      messaggio = `Nessun ticket agganciato: ${motivo}`;
+    } else {
+      ok = true;
+      const stato = STATO[ticket.status] ?? `stato ${ticket.status}`;
+      const assegnato = ticket.responderId ? "" : " · non ancora assegnato";
+      messaggio = `Ticket #${ticket.id}: ${stato}${assegnato}`;
+    }
+  } catch (e) {
+    messaggio = `Freshdesk: ${e instanceof Error ? e.message : "errore"}`;
+  }
+  indietro(formData, esitoQuery(r.chiave, { ok, stato: "freshdesk", messaggio }));
 }
 
 /** Rimette una recensione fra quelle da gestire cancellando la prova. */

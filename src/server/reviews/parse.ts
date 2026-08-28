@@ -34,6 +34,8 @@ export type ParsedReview = {
   /** Punteggio 1-5, null se non riconosciuto. */
   score: number | null;
   scoreLabel: string;
+  /** Id della recensione Google, se l'email lo riporta (Zapier lo aggiunge nel campo "ID:"). */
+  idGoogle: string;
 };
 
 /** Rimuove il piè di pagina di Zapier e le righe di separazione. */
@@ -64,11 +66,15 @@ export function parseReview(bodyText: string): ParsedReview | null {
   const scoreNum = scoreLabel.match(/(\d+([.,]\d+)?)/);
   const score = scoreNum ? Math.round(Number(scoreNum[1].replace(",", "."))) : null;
 
+  // Id della recensione Google: Zapier lo aggiunge in una riga "ID: <token>".
+  const idMatch = text.match(/^[ \t]*ID[ \t]*:[ \t]*([A-Za-z0-9_-]{10,})/im);
+
   return {
     name: nameMatch[1].trim() || "(senza nome)",
     comment: commentMatch ? stripFooter(commentMatch[1]).trim() : "",
     score: score !== null && score >= 1 && score <= 5 ? score : null,
     scoreLabel,
+    idGoogle: idMatch ? idMatch[1] : "",
   };
 }
 

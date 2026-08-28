@@ -1,11 +1,13 @@
 import Link from "next/link";
 import { testoPerRecensione } from "@/server/automation/connectors";
 import { caricaRegole, regolaPer } from "@/server/automation/rules";
-import { caricaEsecuzioni, ultimePerRecensione } from "@/server/automation/runs";
+import { caricaEsecuzioni } from "@/server/automation/runs";
 import type { Azione, Regola } from "@/server/automation/types";
 import { isGraphConfigured } from "@/server/graph/client";
+import { cercaTicketPerRecensione } from "@/server/integrations/freshdesk";
 import { caricaRecensioni, haTesto, testoRecensione, type Recensione } from "@/server/reviews/load";
 import {
+  chiaviPubblicate,
   codaDaPubblicare,
   codaDaRicontrollare,
   ORE_RICONTROLLO,
@@ -14,7 +16,7 @@ import {
 import { ritentaChiusureInSospeso } from "@/server/pubblicazione";
 import { isFreshdeskConfigured } from "@/server/integrations/freshdesk";
 import { loadSettings } from "@/server/settings";
-import { approvaAction, inoltraAction } from "./dashboard/actions";
+import { playAction, testGoogleAction } from "./dashboard/actions";
 import { Stelle, VoceCoda, VoceRicontrollo } from "./da-pubblicare/Voci";
 import { TastieraCoda } from "./da-pubblicare/TastieraCoda";
 
@@ -56,7 +58,16 @@ function nodoRisposta(regola: Regola): Azione | null {
 export default async function HomePage({
   searchParams,
 }: {
-  searchParams: Promise<{ step?: string; sede?: string; run?: string; errore?: string }>;
+  searchParams: Promise<{
+    step?: string;
+    sede?: string;
+    run?: string;
+    errore?: string;
+    esitoOk?: string;
+    esitoMsg?: string;
+    esitoChiave?: string;
+    fresh?: string;
+  }>;
 }) {
   const sp = await searchParams;
   const step: Passo =
@@ -111,11 +122,36 @@ export default async function HomePage({
       }
     }
 
-    const ultime = await ultimePerRecensione();
+    // Lista UNICA: le recensioni ancora da pubblicare su Google. Sparisce solo
+    // ciò che è già stato pubblicato (stato pubblicata/verificata); quelle
+    // "approvata" ma non ancora pubblicate (robot non riuscito) restano qui per
+    // riprovare col Play. Guidata dalle regole ATTIVE: oggi solo "5★ senza
+    // commento", accendendone altre in Impostazioni compaiono anche le loro.
+    const pubblicate = await chiaviPubblicate();
     daApprovare = recensioni
-      .filter((r) => !ultime.has(r.chiave))
-      .filter((r) => r.stelle === 5 && !haTesto(r))
-      .map((r) => ({ r, regola: regolaPer(regole, r.stelle, haTesto(r)) }));
+      .filter((r) => !pubblicate.has(r.chiave))
+      .map((r) => ({ r, regola: regolaPer(regole, r.stelle, haTesto(r)) }))
+      .filter((x) => x.regola !== null);
+
+    // «Aggiorna» (tasto di pagina): verifica LIVE su Freshdesk e toglie le
+    // recensioni il cui ticket è stato risolto/chiuso da qualcun altro — così
+    // se qualcuno fuori lavora un ticket, al click il conteggio scende (4→3).
+    if (sp.fresh === "1") {
+      const verificate = await Promise.all(
+        daApprovare.map(async (x) => {
+          try {
+            const { ticket } = await cercaTicketPerRecensione(x.r.oggetto, x.r.ricevutaIl, x.r.nome);
+            const gestito = ticket ? ticket.status === 4 || ticket.status === 5 : false;
+            return gestito ? null : x;
+          } catch {
+            return x; // errore Freshdesk: non nascondo nulla, resta in lista
+          }
+        }),
+      );
+      daApprovare = verificate.filter(
+        (x): x is { r: Recensione; regola: Regola } => x !== null,
+      );
+    }
     nApprovare = daApprovare.length;
 
     runAperta = sp.run ? trovaRun(esecuzioni, sp.run) : undefined;
@@ -129,6 +165,15 @@ export default async function HomePage({
             {sp.errore === "nessuna-regola"
               ? "Nessuna regola attiva copre questa recensione: puoi solo inoltrarla al customer care."
               : "Recensione non trovata: potrebbe essere uscita dalle ultime 50 email."}
+          </p>
+        </section>
+      )}
+
+      {sp.esitoMsg && (
+        <section className="card">
+          <p className={sp.esitoOk === "1" ? "" : "form-error"}>
+            {sp.esitoOk === "1" ? "✅ " : "⚠️ "}
+            {sp.esitoMsg}
           </p>
         </section>
       )}
@@ -165,12 +210,6 @@ export default async function HomePage({
           {nApprovare !== null && <span className="chip-count">{nApprovare}</span>}
         </Link>
         <Link
-          href="/?step=pubblicare"
-          className={`pub-tab${step === "pubblicare" ? " is-active" : ""}`}
-        >
-          Da pubblicare <span className="chip-count">{codaPub.length}</span>
-        </Link>
-        <Link
           href="/?step=ricontrollo"
           className={`pub-tab${step === "ricontrollo" ? " is-active" : ""}`}
         >
@@ -185,9 +224,19 @@ export default async function HomePage({
             <div>
               <h2>Da approvare</h2>
               <p className="hint">
-                {daApprovare.length} recensioni 5★ senza commento in attesa di una tua decisione
+                {daApprovare.length} recensioni coperte dalle regole attive
+                {sp.fresh === "1"
+                  ? " · verificate ora su Freshdesk"
+                  : ", in attesa di una tua decisione"}
               </p>
             </div>
+            <Link
+              href="/?fresh=1"
+              className="btn-secondary"
+              title="Ricontrolla su Freshdesk: se un ticket è stato risolto o chiuso da qualcun altro, la recensione sparisce dalla lista."
+            >
+              🔄 Aggiorna
+            </Link>
           </div>
 
           {!graphOk && (
@@ -205,7 +254,7 @@ export default async function HomePage({
 
           {daApprovare.length === 0 ? (
             <section className="card dash-vuoto">
-              Nessuna recensione 5★ senza commento da approvare.
+              Nessuna recensione da approvare (nessuna coperta dalle regole attive).
             </section>
           ) : (
             daApprovare.map(({ r, regola }) => {
@@ -255,7 +304,7 @@ export default async function HomePage({
                   )}
 
                   {regola && suggerito ? (
-                    <form action={approvaAction} className="dash-proposta">
+                    <form action={playAction} className="dash-proposta">
                       <div className="dash-proposta-testa">
                         Risposta prevista dalla regola «{regola.nome}»
                         <span className="muted"> · {regola.azioni.length} passaggi</span>
@@ -277,27 +326,28 @@ export default async function HomePage({
                         <button
                           type="submit"
                           className={simulazione ? "btn-primary" : "btn-primary btn-danger"}
+                          title="Approva ed esegue tutto il flusso: email, Freshdesk e — col robot — pubblica la risposta su Google. Serve Chrome chiuso."
                         >
-                          {simulazione ? "Approva (simulazione)" : "Approva e pubblica"}
+                          ▶ Play{simulazione ? " (Google in test)" : ""}
+                        </button>
+                        <button
+                          type="submit"
+                          formAction={testGoogleAction}
+                          className="btn-secondary"
+                          title="Apre il robot: trova la recensione su Google e scrive la risposta, senza pubblicare. Serve Chrome chiuso."
+                        >
+                          🔍 Test Google
                         </button>
                       </div>
                     </form>
                   ) : (
                     <p className="notice dash-senza-regola">
-                      Nessuna regola attiva copre questa recensione: si può solo inoltrare al
-                      customer care, oppure accendere una regola da{" "}
+                      Nessuna regola attiva copre questa recensione: accendi una regola da{" "}
                       <Link href="/impostazioni#automazioni">Impostazioni</Link>.
                     </p>
                   )}
 
                   <footer className="dash-piede">
-                    <form action={inoltraAction}>
-                      <input type="hidden" name="chiave" value={r.chiave} />
-                      <input type="hidden" name="label" value={label?.id ?? ""} />
-                      <button type="submit" className="btn-secondary">
-                        Inoltra al customer care →
-                      </button>
-                    </form>
                     <Link
                       className="btn-mini"
                       href={`/email?id=${encodeURIComponent(r.messaggioId)}`}

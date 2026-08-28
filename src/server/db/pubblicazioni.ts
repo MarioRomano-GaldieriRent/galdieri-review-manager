@@ -398,6 +398,20 @@ export async function codaDaRicontrollare(): Promise<VocePubblicazione[]> {
   return leggiPerStato("pubblicata", { promemoriaVerificaIl: 1 });
 }
 
+/**
+ * Le chiavi delle recensioni GIÀ pubblicate (pubblicata/verificata): servono
+ * alla lista unica della home per non rimostrare ciò che è già finito su Google.
+ * Le "approvata" NON ci sono: sono ancora da pubblicare, quindi restano in lista.
+ */
+export async function chiaviPubblicate(): Promise<Set<string>> {
+  const righe = (await (
+    await coll("pubblicazioni")
+  )
+    .find({ stato: { $in: ["pubblicata", "verificata"] } }, { projection: { _id: 1 } })
+    .toArray()) as { _id: string }[];
+  return new Set(righe.map((r) => r._id));
+}
+
 export async function leggiPubblicazione(chiave: string): Promise<VocePubblicazione | null> {
   const righe = (await (
     await coll("pubblicazioni")

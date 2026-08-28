@@ -64,6 +64,7 @@ export const COLLEZIONI: DefColl[] = [
               nomeCliente: stringa,
               stelle: { bsonType: ["int", "null"], minimum: 1, maximum: 5 },
               punteggioTesto: stringaOFalsa,
+              idGoogleRecensione: stringaOFalsa,
               testoOriginale: stringaOFalsa,
               testoItaliano: stringaO,
               ingleseDiGoogle: stringaOFalsa,

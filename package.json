@@ -4,7 +4,7 @@
   "private": true,
   "description": "Posta in arrivo Galdieri rent — legge una casella Microsoft 365 via Graph",
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev -p 4000",
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
@@ -18,7 +18,18 @@
     "analisi:trustpilot": "tsx --tsconfig tsconfig.json scripts/analisi-trustpilot.ts",
     "travaso": "tsx --tsconfig tsconfig.json scripts/travaso-sqlite.ts",
     "verifica:db": "tsx --tsconfig tsconfig.json scripts/verifica-db.ts",
-    "crea-utente": "tsx --tsconfig tsconfig.json scripts/crea-utente.ts"
+    "crea-utente": "tsx --tsconfig tsconfig.json scripts/crea-utente.ts",
+    "robot:sessione": "tsx --tsconfig tsconfig.json scripts/robot-cattura-sessione.ts",
+    "robot:recensioni": "tsx --tsconfig tsconfig.json scripts/robot-apri-recensioni.ts",
+    "robot:prova-rispondi": "tsx --tsconfig tsconfig.json scripts/robot-prova-rispondi.ts",
+    "robot:prova-recensione": "tsx --tsconfig tsconfig.json scripts/robot-prova-recensione.ts",
+    "robot:cerca-id": "tsx --tsconfig tsconfig.json scripts/robot-cerca-id.ts",
+    "robot:diagnostica": "tsx --tsconfig tsconfig.json scripts/robot-diagnostica.ts",
+    "robot:ordina": "tsx --tsconfig tsconfig.json scripts/robot-ordina.ts",
+    "robot:gruppi": "tsx --tsconfig tsconfig.json scripts/robot-gruppi.ts",
+    "robot:diag-gruppo": "tsx --tsconfig tsconfig.json scripts/robot-diag-gruppo.ts",
+    "robot:esegui": "tsx --tsconfig tsconfig.json scripts/robot-esegui.ts",
+    "robot:pubblica": "tsx --tsconfig tsconfig.json scripts/robot-pubblica.ts"
   },
   "dependencies": {
     "mongodb": "^7.5.0",
@@ -34,6 +45,7 @@
     "@types/react-dom": "^19.0.3",
     "eslint": "^8.57.1",
     "eslint-config-next": "^15.1.0",
+    "playwright": "^1.62.1",
     "prettier": "^3.4.2",
     "tsx": "^4.19.2",
     "typescript": "^5.7.3"

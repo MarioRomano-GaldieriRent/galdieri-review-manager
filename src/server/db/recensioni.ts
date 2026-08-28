@@ -86,6 +86,7 @@ export async function salvaRecensioni(
                   testoItaliano: vinceSePieno(r.italiano ?? "", "$testoItaliano"),
                   ingleseDiGoogle: vinceSePieno(r.ingleseDiGoogle ?? "", "$ingleseDiGoogle"),
                   punteggioTesto: vinceSePieno(r.punteggioTesto ?? "", "$punteggioTesto"),
+                  idGoogleRecensione: vinceSePieno(r.idGoogle ?? "", "$idGoogleRecensione"),
 
                   // sede "" è la sentinella "non riconosciuta": non deve vincere
                   sede: {
@@ -263,6 +264,7 @@ type DocRec = {
   sede: { chiave: string; nome: string; tagFreshdesk: string };
   oggetto: string;
   messaggioId: string;
+  idGoogleRecensione?: string;
   numeroMessaggi: number;
   haRisposta: boolean;
   risolto: boolean;
@@ -287,6 +289,7 @@ function componi(d: DocRec): RecensioneArchiviata {
     oggetto: d.oggetto,
     ricevutaIl: d.ricevutaIl.toISOString(),
     messaggioId: d.messaggioId,
+    idGoogle: d.idGoogleRecensione ?? "",
     numeroMessaggi: d.numeroMessaggi,
     haRisposta: d.haRisposta,
     risolto: d.risolto,

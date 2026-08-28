@@ -58,8 +58,11 @@ declare global {
 
 function nuovoClient(): Promise<MongoClient> {
   const client = new MongoClient(URI, {
-    serverSelectionTimeoutMS: 3000, // default 30s: mezzo minuto di pagina bianca se mongod è giù
-    connectTimeoutMS: 3000,
+    // 10s: abbastanza per un DB in cloud (Atlas: DNS SRV + TLS attraverso
+    // internet può superare i 3s a freddo) senza arrivare al mezzo minuto di
+    // pagina bianca del default (30s) se il database è irraggiungibile.
+    serverSelectionTimeoutMS: 10000,
+    connectTimeoutMS: 10000,
     socketTimeoutMS: 20000, // default 0 = infinito: appenderebbe il worker per sempre
     maxPoolSize: process.env.NODE_ENV === "production" ? 20 : 5,
     minPoolSize: 0,

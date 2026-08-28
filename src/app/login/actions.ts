@@ -16,6 +16,11 @@ import { registraAttivita } from "@/server/db/attivita";
 
 const str = (fd: FormData, k: string) => String(fd.get(k) ?? "").trim();
 
+// Interruttore TEMPORANEO: con AUTH_DISABILITA_TOTP attivo si entra con la sola
+// password (secondo fattore saltato). Solo per comodità in locale — va rimesso
+// prima di andare online. Non modifica il TOTP salvato degli utenti.
+const BYPASS_TOTP = /^(1|true|si|sì|yes|on)$/i.test(process.env.AUTH_DISABILITA_TOTP ?? "");
+
 /** Primo fattore: username + password. */
 export async function accediAction(formData: FormData): Promise<void> {
   const chiave = str(formData, "chiave");
@@ -27,6 +32,17 @@ export async function accediAction(formData: FormData): Promise<void> {
       redirect(`/login?e=bloccato&m=${esito.minutiBlocco ?? 15}`);
     }
     redirect(`/login?e=${esito.motivo}`);
+  }
+
+  // Con il secondo fattore disattivato (solo locale) si entra subito.
+  if (BYPASS_TOTP) {
+    await completaLogin(esito.operatoreId);
+    await registraAttivita("accesso.senza_totp", {
+      operatoreId: esito.operatoreId,
+      oggettoTipo: "operatore",
+      oggettoId: String(esito.operatoreId),
+    });
+    redirect("/");
   }
 
   await creaSessione(esito.operatoreId, "attesa_totp");
