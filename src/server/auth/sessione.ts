@@ -31,6 +31,30 @@ async function sessioni() {
   return coll("sessioni");
 }
 
+/**
+ * Deve il cookie avere il flag `secure`?
+ *
+ * `secure` fa sì che il browser mandi il cookie SOLO su HTTPS. In produzione, di
+ * norma, è quello che vogliamo. Ma se l'app gira su un PC-server in ufficio,
+ * raggiunto in LAN via http://IP:porta, un cookie `secure` non verrebbe MAI
+ * inviato e il login sembrerebbe non funzionare (si torna sempre al login).
+ *
+ * Per quel caso si può forzare con la variabile d'ambiente AUTH_COOKIE_SECURE:
+ *   - "0"/"false"  → niente secure (server LAN in HTTP)
+ *   - "1"/"true"   → sempre secure (dietro reverse proxy / HTTPS)
+ *   - non impostata → secure solo in produzione (comportamento storico)
+ *
+ * Nota: senza `secure`, su una rete non fidata le credenziali e il cookie
+ * viaggiano in chiaro. Vale la pena metterci un HTTPS (anche self-signed o un
+ * reverse proxy) e lasciare AUTH_COOKIE_SECURE=1.
+ */
+function cookieSecure(): boolean {
+  const v = (process.env.AUTH_COOKIE_SECURE ?? "").toLowerCase();
+  if (v === "0" || v === "false" || v === "no") return false;
+  if (v === "1" || v === "true" || v === "yes") return true;
+  return process.env.NODE_ENV === "production";
+}
+
 /** Crea la sessione (completa) e imposta il cookie. */
 export async function creaSessione(operatoreId: number): Promise<void> {
   const token = nuovoTokenSessione();
@@ -53,9 +77,7 @@ export async function creaSessione(operatoreId: number): Promise<void> {
     httpOnly: true,
     sameSite: "lax",
     path: "/",
-    // In locale (http) il flag secure impedirebbe l'invio del cookie: si accende
-    // solo in produzione, dove il sito è servito in https.
-    secure: process.env.NODE_ENV === "production",
+    secure: cookieSecure(),
     expires: scade,
   });
 }

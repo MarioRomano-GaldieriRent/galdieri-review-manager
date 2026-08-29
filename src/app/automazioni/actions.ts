@@ -7,10 +7,15 @@ import { eseguiRegola } from "@/server/automation/engine";
 import { eliminaEsecuzione, registraEsecuzione, svuotaEsecuzioni } from "@/server/automation/runs";
 import { caricaRecensioni, haTesto } from "@/server/reviews/load";
 import { loadSettings } from "@/server/settings";
+import { richiediAdmin } from "@/server/auth/sessione";
 
 // Azioni operative del pannello Automazioni: far partire un flusso su una
 // recensione e gestire il registro. Le regole invece si configurano in
 // Impostazioni — vedi impostazioni/actions.ts.
+//
+// È la "suite di test", riservata agli AMMINISTRATORI: può eseguire una regola
+// (in modalità reale invia davvero) e svuotare il registro. Il middleware non
+// valida la sessione, perciò la guardia di ruolo sta qui dentro ogni azione.
 
 const str = (fd: FormData, k: string) => String(fd.get(k) ?? "").trim();
 
@@ -21,6 +26,7 @@ const str = (fd: FormData, k: string) => String(fd.get(k) ?? "").trim();
  * simulazione nessun nodo di scrittura viene eseguito — vedi connectors.ts.
  */
 export async function eseguiSuRecensioneAction(formData: FormData): Promise<void> {
+  await richiediAdmin();
   const chiave = str(formData, "chiave");
   const settings = await loadSettings();
   const label = settings.labels.find((l) => l.id === str(formData, "label")) ?? settings.labels[0];
@@ -48,6 +54,7 @@ export async function eseguiSuRecensioneAction(formData: FormData): Promise<void
 
 /** Cancella una singola prova, così si può ripetere da capo. */
 export async function eliminaEsecuzioneAction(formData: FormData): Promise<void> {
+  await richiediAdmin();
   const id = str(formData, "id");
   if (id) await eliminaEsecuzione(id);
   revalidatePath("/automazioni");
@@ -56,6 +63,7 @@ export async function eliminaEsecuzioneAction(formData: FormData): Promise<void>
 }
 
 export async function svuotaRegistroAction(): Promise<void> {
+  await richiediAdmin();
   await svuotaEsecuzioni();
   revalidatePath("/automazioni");
   redirect("/automazioni");

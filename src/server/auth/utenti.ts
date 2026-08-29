@@ -215,6 +215,15 @@ export async function cambiaPassword(
       },
     },
   );
+  // Cambiare la password chiude TUTTE le sessioni aperte dell'utente: se una era
+  // stata rubata (es. sniffing su HTTP di LAN), il reset la invalida subito
+  // invece di lasciarla valida fino alla scadenza (12h). Senza questo, il reset
+  // password non caccerebbe davvero l'intruso.
+  try {
+    await (await coll("sessioni")).deleteMany({ operatoreId });
+  } catch {
+    // Non blocca il cambio password: la sessione scadrà comunque da sola.
+  }
   await registraAttivita("utente.password_cambiata", {
     operatoreId: da,
     oggettoTipo: "operatore",

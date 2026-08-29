@@ -7,6 +7,15 @@ import { testGraphConnection } from "@/server/graph/client";
 import { testTranslator } from "@/server/translate";
 import { testFreshdesk } from "@/server/integrations/freshdesk";
 import { caricaRegole, regoleDiDefault, salvaRegole } from "@/server/automation/rules";
+import { richiediAdmin } from "@/server/auth/sessione";
+
+// TUTTE le azioni di questo pannello sono riservate agli AMMINISTRATORI: toccano
+// segreti (Graph, Freshdesk, Translator, Google), la modalità reale e le regole.
+// Il middleware NON valida la sessione (gira sull'edge, senza database), quindi
+// la guardia di ruolo va messa QUI, dentro ogni azione: senza richiediAdmin()
+// chiunque riuscisse a invocare l'azione (anche solo con un cookie qualsiasi)
+// potrebbe cambiare le impostazioni. richiediAdmin() rimanda a /login o alla home
+// se chi chiama non è un admin con sessione valida.
 
 function refresh() {
   revalidatePath("/impostazioni");
@@ -22,6 +31,7 @@ const keep = (nuovo: string, vecchio: string | undefined) => (nuovo ? nuovo : (v
 // ---------------------------------------------------------------- etichette
 
 export async function saveMailboxAction(formData: FormData): Promise<void> {
+  await richiediAdmin();
   const settings = await loadSettings();
   settings.mailbox = str(formData, "mailbox");
   await saveSettings(settings);
@@ -29,6 +39,7 @@ export async function saveMailboxAction(formData: FormData): Promise<void> {
 }
 
 export async function addLabelAction(formData: FormData): Promise<void> {
+  await richiediAdmin();
   const name = str(formData, "name");
   const subjectContains = str(formData, "subjectContains");
   if (!name || !subjectContains) return;
@@ -44,6 +55,7 @@ export async function addLabelAction(formData: FormData): Promise<void> {
 }
 
 export async function updateLabelAction(formData: FormData): Promise<void> {
+  await richiediAdmin();
   const id = str(formData, "id");
   const settings = await loadSettings();
   const label = settings.labels.find((l) => l.id === id);
@@ -57,6 +69,7 @@ export async function updateLabelAction(formData: FormData): Promise<void> {
 }
 
 export async function deleteLabelAction(formData: FormData): Promise<void> {
+  await richiediAdmin();
   const id = str(formData, "id");
   const settings = await loadSettings();
   settings.labels = settings.labels.filter((l) => l.id !== id);
@@ -68,6 +81,7 @@ export async function deleteLabelAction(formData: FormData): Promise<void> {
 
 /** Accende o spegne una regola. */
 export async function cambiaStatoRegolaAction(formData: FormData): Promise<void> {
+  await richiediAdmin();
   const id = str(formData, "id");
   const regole = await caricaRegole();
   const r = regole.find((x) => x.id === id);
@@ -79,6 +93,7 @@ export async function cambiaStatoRegolaAction(formData: FormData): Promise<void>
 
 /** Salva i parametri di un nodo (es. il testo della risposta su Google). */
 export async function salvaNodoAction(formData: FormData): Promise<void> {
+  await richiediAdmin();
   const regolaId = str(formData, "regolaId");
   const azioneId = str(formData, "azioneId");
   const regole = await caricaRegole();
@@ -95,6 +110,7 @@ export async function salvaNodoAction(formData: FormData): Promise<void> {
 
 /** Riporta le regole a quelle iniziali, ricavate dai ticket reali. */
 export async function ripristinaRegoleAction(): Promise<void> {
+  await richiediAdmin();
   // "ripristino" e non "interfaccia": nella cronologia un reset totale non
   // deve somigliare a una modifica ragionata di un singolo testo.
   await salvaRegole(regoleDiDefault(), "ripristino");
@@ -111,6 +127,7 @@ export async function ripristinaRegoleAction(): Promise<void> {
  * inviare email vere. Spegnerla non richiede nulla.
  */
 export async function cambiaModoAction(formData: FormData): Promise<void> {
+  await richiediAdmin();
   const richiesto = str(formData, "modo");
   const s = await loadSettings();
 
@@ -141,6 +158,7 @@ export async function cambiaModoAction(formData: FormData): Promise<void> {
 }
 
 export async function salvaAutomationAction(formData: FormData): Promise<void> {
+  await richiediAdmin();
   const s = await loadSettings();
   s.automation = {
     emailEscalation: str(formData, "emailEscalation"),
@@ -156,6 +174,7 @@ export async function salvaAutomationAction(formData: FormData): Promise<void> {
 // ------------------------------------------------------------- integrazioni
 
 export async function saveGraphAction(formData: FormData): Promise<void> {
+  await richiediAdmin();
   const s = await loadSettings();
   s.graph = {
     tenantId: str(formData, "tenantId"),
@@ -168,6 +187,7 @@ export async function saveGraphAction(formData: FormData): Promise<void> {
 }
 
 export async function saveTranslatorAction(formData: FormData): Promise<void> {
+  await richiediAdmin();
   const s = await loadSettings();
   s.translator = {
     key: keep(str(formData, "key"), s.translator.key),
@@ -179,6 +199,7 @@ export async function saveTranslatorAction(formData: FormData): Promise<void> {
 }
 
 export async function saveFreshdeskAction(formData: FormData): Promise<void> {
+  await richiediAdmin();
   const s = await loadSettings();
   s.freshdesk = {
     domain: str(formData, "domain"),
@@ -189,6 +210,7 @@ export async function saveFreshdeskAction(formData: FormData): Promise<void> {
 }
 
 export async function saveGoogleReviewsAction(formData: FormData): Promise<void> {
+  await richiediAdmin();
   const s = await loadSettings();
   s.googleReviews = {
     clientId: str(formData, "clientId"),
@@ -208,16 +230,19 @@ function vaiAlRisultato(quale: string, ok: boolean, message: string): never {
 }
 
 export async function testGraphAction(): Promise<void> {
+  await richiediAdmin();
   const r = await testGraphConnection();
   vaiAlRisultato("graph", r.ok, r.message);
 }
 
 export async function testTranslatorAction(): Promise<void> {
+  await richiediAdmin();
   const r = await testTranslator();
   vaiAlRisultato("translator", r.ok, r.message);
 }
 
 export async function testFreshdeskAction(): Promise<void> {
+  await richiediAdmin();
   const r = await testFreshdesk();
   vaiAlRisultato("freshdesk", r.ok, r.message);
 }

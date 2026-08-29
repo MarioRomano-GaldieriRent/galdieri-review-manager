@@ -47,11 +47,46 @@ async function getAccessToken(cfg: GraphConfig): Promise<string> {
   return data.access_token;
 }
 
-async function ctx(mailbox?: string): Promise<{ token: string; base: string }> {
+/**
+ * Contesto per una chiamata: il percorso base della casella e una `fetchGraph`
+ * che aggiunge da sola l'header Authorization e `cache: no-store`.
+ *
+ * `fetchGraph` è resistente al token scaduto: se Graph risponde 401 — cosa che
+ * su un PC-server sempre acceso capita quando l'orologio è fuori sincrono e il
+ * token in cache "sembra" ancora valido ma non lo è più — svuota la cache del
+ * token e ritenta UNA sola volta con un token appena emesso. Così l'errore
+ * "Lifetime validation failed, the token is expired" si risolve da solo invece
+ * di richiedere un riavvio dell'app.
+ */
+async function ctx(mailbox?: string): Promise<{
+  base: string;
+  fetchGraph: (path: string, init?: RequestInit) => Promise<Response>;
+}> {
   const cfg = await resolveGraph();
   const mbx = mailbox || (await activeMailbox());
-  const token = await getAccessToken(cfg);
-  return { token, base: `${cfg.graphUrl}/users/${encodeURIComponent(mbx)}` };
+  const base = `${cfg.graphUrl}/users/${encodeURIComponent(mbx)}`;
+  const cacheKey = `${cfg.tenantId}:${cfg.clientId}`;
+
+  async function fetchGraph(path: string, init: RequestInit = {}): Promise<Response> {
+    const esegui = (token: string) =>
+      fetch(`${base}${path}`, {
+        ...init,
+        headers: {
+          ...(init.headers as Record<string, string> | undefined),
+          Authorization: `Bearer ${token}`,
+        },
+        cache: "no-store",
+      });
+
+    let res = await esegui(await getAccessToken(cfg));
+    if (res.status === 401) {
+      tokens.delete(cacheKey);
+      res = await esegui(await getAccessToken(cfg));
+    }
+    return res;
+  }
+
+  return { base, fetchGraph };
 }
 
 export type MailMessage = {
@@ -144,7 +179,7 @@ export async function listInbox(
 ): Promise<{ messages: MailMessage[]; total: number | null }> {
   const top = Math.min(opts.top ?? 25, 50);
   const skip = opts.skip ?? 0;
-  const { token, base } = await ctx(opts.mailbox);
+  const { fetchGraph } = await ctx(opts.mailbox);
 
   const params = new URLSearchParams({ $top: String(top), $select: LIST_FIELDS });
 
@@ -158,9 +193,8 @@ export async function listInbox(
     if (opts.unreadOnly) params.set("$filter", "isRead eq false");
   }
 
-  const res = await fetch(`${base}/mailFolders/Inbox/messages?${params}`, {
-    headers: { Authorization: `Bearer ${token}`, ConsistencyLevel: "eventual" },
-    cache: "no-store",
+  const res = await fetchGraph(`/mailFolders/Inbox/messages?${params}`, {
+    headers: { ConsistencyLevel: "eventual" },
   });
 
   const json = (await res.json()) as {
@@ -180,13 +214,10 @@ export async function listInbox(
 
 /** Legge un singolo messaggio, corpo incluso. NON lo segna come letto. */
 export async function getMessage(id: string, mailbox?: string): Promise<MailDetail> {
-  const { token, base } = await ctx(mailbox);
+  const { fetchGraph } = await ctx(mailbox);
   const params = new URLSearchParams({ $select: DETAIL_FIELDS });
 
-  const res = await fetch(`${base}/messages/${encodeURIComponent(id)}?${params}`, {
-    headers: { Authorization: `Bearer ${token}` },
-    cache: "no-store",
-  });
+  const res = await fetchGraph(`/messages/${encodeURIComponent(id)}?${params}`);
 
   const json = (await res.json()) as GraphMessage & { error?: { message?: string } };
   if (!res.ok) {
@@ -205,7 +236,7 @@ export async function getConversation(
   mailbox?: string,
 ): Promise<MailDetail[]> {
   if (!conversationId) return [];
-  const { token, base } = await ctx(mailbox);
+  const { fetchGraph } = await ctx(mailbox);
 
   const params = new URLSearchParams({
     // L'apostrofo nei literal OData si raddoppia.
@@ -214,10 +245,7 @@ export async function getConversation(
     $top: "50",
   });
 
-  const res = await fetch(`${base}/messages?${params}`, {
-    headers: { Authorization: `Bearer ${token}` },
-    cache: "no-store",
-  });
+  const res = await fetchGraph(`/messages?${params}`);
 
   const json = (await res.json()) as { value?: GraphMessage[]; error?: { message?: string } };
   if (!res.ok) {
@@ -244,7 +272,7 @@ export async function searchMessages(opts: {
   mailbox?: string;
 }): Promise<MailDetail[]> {
   if (!opts.subjectContains.trim()) return [];
-  const { token, base } = await ctx(opts.mailbox);
+  const { fetchGraph } = await ctx(opts.mailbox);
 
   const params = new URLSearchParams({
     $search: `"subject:${opts.subjectContains.replace(/"/g, "")}"`,
@@ -252,9 +280,8 @@ export async function searchMessages(opts: {
     $top: String(Math.min(opts.top ?? 50, 100)),
   });
 
-  const res = await fetch(`${base}/messages?${params}`, {
-    headers: { Authorization: `Bearer ${token}`, ConsistencyLevel: "eventual" },
-    cache: "no-store",
+  const res = await fetchGraph(`/messages?${params}`, {
+    headers: { ConsistencyLevel: "eventual" },
   });
 
   const json = (await res.json()) as { value?: GraphMessage[]; error?: { message?: string } };
@@ -273,13 +300,12 @@ export async function searchMessages(opts: {
 
 /** Segna un messaggio come letto o non letto (richiede Mail.ReadWrite). */
 export async function setReadState(id: string, isRead: boolean, mailbox?: string): Promise<void> {
-  const { token, base } = await ctx(mailbox);
+  const { fetchGraph } = await ctx(mailbox);
 
-  const res = await fetch(`${base}/messages/${encodeURIComponent(id)}`, {
+  const res = await fetchGraph(`/messages/${encodeURIComponent(id)}`, {
     method: "PATCH",
-    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ isRead }),
-    cache: "no-store",
   });
 
   if (!res.ok) {
@@ -304,7 +330,7 @@ export async function replyToMessage(
   destinatari: string[] = [],
   mailbox?: string,
 ): Promise<void> {
-  const { token, base } = await ctx(mailbox);
+  const { fetchGraph } = await ctx(mailbox);
 
   const corpo: Record<string, unknown> = { comment: commento };
   if (destinatari.length > 0) {
@@ -313,11 +339,10 @@ export async function replyToMessage(
     };
   }
 
-  const res = await fetch(`${base}/messages/${encodeURIComponent(id)}/reply`, {
+  const res = await fetchGraph(`/messages/${encodeURIComponent(id)}/reply`, {
     method: "POST",
-    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(corpo),
-    cache: "no-store",
   });
 
   if (!res.ok) {
@@ -340,7 +365,7 @@ export async function forwardMessage(
   mailbox?: string,
   copiaConoscenza: string[] = [],
 ): Promise<void> {
-  const { token, base } = await ctx(mailbox);
+  const { fetchGraph } = await ctx(mailbox);
 
   // Il CC non è un dettaglio: negli inoltri delle recensioni negative è la
   // copia a customer.care che fa nascere il ticket su Freshdesk. Senza, il
@@ -353,11 +378,10 @@ export async function forwardMessage(
     corpo.ccRecipients = copiaConoscenza.map((address) => ({ emailAddress: { address } }));
   }
 
-  const res = await fetch(`${base}/messages/${encodeURIComponent(id)}/forward`, {
+  const res = await fetchGraph(`/messages/${encodeURIComponent(id)}/forward`, {
     method: "POST",
-    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(corpo),
-    cache: "no-store",
   });
 
   if (!res.ok) {

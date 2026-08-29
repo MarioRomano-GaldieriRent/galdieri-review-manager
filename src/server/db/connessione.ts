@@ -43,6 +43,26 @@ if (["portale_assenze", "admin", "local", "config"].includes(NOME_DB)) {
 /** Scrittura che deve essere durevole prima di proseguire (storico, versioni). */
 export const SCRITTURA_CRITICA = { w: "majority" as const, j: true, wtimeoutMS: 5000 };
 
+/**
+ * L'URI del database SENZA le credenziali, per messaggi ed errori.
+ *
+ * Con Atlas l'URI è `mongodb+srv://utente:PASSWORD@host/...`: interpolarlo in un
+ * messaggio d'errore finirebbe nei log del server (CWE-532), e chi legge i log
+ * si troverebbe in mano la password del database. Qui si tolgono username e
+ * password lasciando solo host e nome database.
+ */
+function uriRedatto(uri: string): string {
+  try {
+    const u = new URL(uri);
+    u.username = "";
+    u.password = "";
+    return u.toString();
+  } catch {
+    // Non è un URL valido: togli comunque un eventuale "utente:password@" a mano.
+    return uri.replace(/\/\/[^@/]*@/, "//");
+  }
+}
+
 /*
  * Singleton su globalThis. Si memorizza la PROMISE, non il client: due
  * richieste al primo avvio devono aspettare la stessa connessione, non
@@ -75,7 +95,7 @@ function nuovoClient(): Promise<MongoClient> {
     // Una Promise rifiutata non deve restare incollata a globalThis, altrimenti
     // ogni richiesta successiva fallisce anche dopo che mongod è tornato su.
     globalThis.__galdieriMongo = undefined;
-    throw new Error(`Impossibile connettersi a MongoDB su ${URI}`, { cause: errore });
+    throw new Error(`Impossibile connettersi a MongoDB su ${uriRedatto(URI)}`, { cause: errore });
   });
 }
 

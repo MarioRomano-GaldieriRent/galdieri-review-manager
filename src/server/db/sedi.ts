@@ -71,7 +71,13 @@ export async function impostaLinkSede(
 
 /** Un campo CSV: sempre fra virgolette, con le virgolette interne raddoppiate. */
 function campo(v: string): string {
-  return `"${(v ?? "").replace(/"/g, '""')}"`;
+  let s = v ?? "";
+  // Anti CSV/formula injection: un campo che inizia con = + - @ (o TAB/CR)
+  // verrebbe interpretato da Excel/LibreOffice come FORMULA quando un collega
+  // apre l'export (es. =HYPERLINK(...) o =cmd|'/c calc'!A1). Anteponendo un
+  // apostrofo il foglio di calcolo lo tratta come testo letterale, innocuo.
+  if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`;
+  return `"${s.replace(/"/g, '""')}"`;
 }
 
 export function esportaSediCsv(sedi: Sede[]): string {
