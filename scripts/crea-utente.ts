@@ -8,8 +8,8 @@ import { creaUtente, type Ruolo } from "@/server/auth/utenti";
 //   npm run crea-utente -- --chiave mario --nome "Mario Romano" --ruolo admin
 //
 // La password si può passare con --password, ma è più sicuro ometterla: lo
-// script ne genera una robusta e la stampa una volta sola. Al primo accesso
-// l'utente attiva il TOTP e (se vuole) cambia la password.
+// script ne genera una robusta e la stampa una volta sola. L'accesso è a un
+// solo fattore (username + password); l'utente può cambiare la password dopo.
 
 function arg(nome: string): string | undefined {
   const p = `--${nome}`;
@@ -51,7 +51,7 @@ function passwordCasuale(): string {
     console.log(`  username : ${chiave}`);
     console.log(`  ruolo    : ${ruolo}`);
     if (generata) console.log(`  password : ${password}   (temporanea, mostrata solo ora)`);
-    console.log("  Al primo accesso ti chiederà di attivare il TOTP inquadrando un QR.");
+    console.log("  Accesso con username + password (nessun secondo fattore).");
     console.log("");
     process.exit(0);
   } catch (e) {

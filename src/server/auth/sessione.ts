@@ -7,16 +7,13 @@ import type { OperatoreDoc } from "./utenti";
 
 // ---------------------------------------------------------------------------
 // Sessioni di login. Il cookie contiene un token opaco; nel DB si salva solo il
-// suo hash (sessioni._id). Due fasi:
-//   attesa_totp — passata la sola password, in attesa del secondo fattore
-//   completa    — secondo fattore superato: l'utente è dentro
-// Alla promozione il token viene rigenerato (niente fissazione di sessione).
+// suo hash (sessioni._id). L'accesso è a un solo fattore: superata la password
+// la sessione nasce già "completa". L'indice TTL su scadeIl le fa sparire sole.
 // ---------------------------------------------------------------------------
 
-export type StatoSessione = "attesa_totp" | "completa";
+export type StatoSessione = "completa";
 
-const DURATA_COMPLETA_MS = 12 * 60 * 60 * 1000; // 12 ore
-const DURATA_ATTESA_MS = 10 * 60 * 1000; // 10 minuti per fare il secondo fattore
+const DURATA_MS = 12 * 60 * 60 * 1000; // 12 ore
 const RINFRESCA_USO_MS = 5 * 60 * 1000; // aggiorna "ultimo uso" al più ogni 5 min
 
 interface SessioneDoc {
@@ -34,17 +31,17 @@ async function sessioni() {
   return coll("sessioni");
 }
 
-/** Crea una sessione nello stato dato e imposta il cookie. Ritorna il token. */
-export async function creaSessione(operatoreId: number, stato: StatoSessione): Promise<void> {
+/** Crea la sessione (completa) e imposta il cookie. */
+export async function creaSessione(operatoreId: number): Promise<void> {
   const token = nuovoTokenSessione();
   const ora = new Date();
-  const scade = new Date(ora.getTime() + (stato === "completa" ? DURATA_COMPLETA_MS : DURATA_ATTESA_MS));
+  const scade = new Date(ora.getTime() + DURATA_MS);
   const ua = (await headers()).get("user-agent") ?? "";
 
   await (await sessioni()).insertOne({
     _id: hashToken(token),
     operatoreId,
-    statoAutenticazione: stato,
+    statoAutenticazione: "completa",
     creataIl: ora,
     scadeIl: scade,
     ultimoUsoIl: ora,
@@ -113,23 +110,6 @@ export async function richiediAdmin(): Promise<OperatoreDoc> {
   const op = await richiediOperatore();
   if (op.ruolo !== "admin") redirect("/");
   return op;
-}
-
-/** La sessione in attesa del secondo fattore (fra password e TOTP), o null. */
-export async function sessionePendente(): Promise<{ operatoreId: number } | null> {
-  const s = await leggiSessione();
-  if (!s || s.statoAutenticazione !== "attesa_totp") return null;
-  return { operatoreId: s.operatoreId };
-}
-
-/**
- * Promuove il login a "completa" superato il secondo fattore. Rigenera il token
- * (nuova riga, cookie nuovo) e butta la sessione d'attesa: così un token
- * catturato durante la fase password non vale nulla dopo il TOTP.
- */
-export async function completaLogin(operatoreId: number): Promise<void> {
-  await distruggiSessione();
-  await creaSessione(operatoreId, "completa");
 }
 
 /** Logout: cancella la sessione dal DB e rimuove il cookie. */

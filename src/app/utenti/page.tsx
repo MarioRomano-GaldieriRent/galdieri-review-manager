@@ -1,17 +1,10 @@
 import Link from "next/link";
 import { elencoUtenti } from "@/server/auth/utenti";
 import { richiediAdmin } from "@/server/auth/sessione";
-import {
-  azzeraTotpAction,
-  cambiaPasswordAction,
-  creaUtenteAction,
-  impostaAttivoAction,
-} from "./actions";
+import { cambiaPasswordAction, creaUtenteAction, impostaAttivoAction } from "./actions";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Utenti — GaldieriReviews" };
-
-const fmt = new Intl.DateTimeFormat("it-IT", { dateStyle: "medium" });
 
 export default async function UtentiPage({
   searchParams,
@@ -71,10 +64,7 @@ export default async function UtentiPage({
             Crea utente
           </button>
         </form>
-        <p className="hint">
-          Comunica tu la password all&apos;utente. Al primo accesso attiverà il TOTP inquadrando un
-          QR e potrà cambiarla.
-        </p>
+        <p className="hint">Comunica tu la password all&apos;utente. Potrà cambiarla in seguito.</p>
       </section>
 
       {/* --------------------------------------------------- elenco */}
@@ -88,7 +78,6 @@ export default async function UtentiPage({
                 <th>Username</th>
                 <th>Ruolo</th>
                 <th>Stato</th>
-                <th>TOTP</th>
                 <th>Azioni</th>
               </tr>
             </thead>
@@ -110,13 +99,6 @@ export default async function UtentiPage({
                         <span className="flag flag-red">disattivato</span>
                       )}
                     </td>
-                    <td>
-                      {u.totpAttivo ? (
-                        <span className="flag flag-green">attivo</span>
-                      ) : (
-                        <span className="flag flag-amber">da attivare</span>
-                      )}
-                    </td>
                     <td className="utenti-azioni">
                       {!sono && (
                         <form action={impostaAttivoAction}>
@@ -124,14 +106,6 @@ export default async function UtentiPage({
                           <input type="hidden" name="attivo" value={u.attivo ? "0" : "1"} />
                           <button type="submit" className="btn-mini">
                             {u.attivo ? "Disattiva" : "Riattiva"}
-                          </button>
-                        </form>
-                      )}
-                      {u.totpAttivo && (
-                        <form action={azzeraTotpAction}>
-                          <input type="hidden" name="id" value={u._id} />
-                          <button type="submit" className="btn-mini">
-                            Azzera TOTP
                           </button>
                         </form>
                       )}
@@ -157,9 +131,7 @@ export default async function UtentiPage({
           </table>
         </div>
         <p className="hint">
-          «Azzera TOTP» serve se un utente perde il telefono: al prossimo accesso rifà la procedura
-          col QR. Creato il {fmt.format(new Date())} · sei entrato come{" "}
-          <strong>{admin.nome}</strong>.
+          Sei entrato come <strong>{admin.nome}</strong>.
         </p>
       </section>
     </main>

@@ -752,41 +752,14 @@ export const COLLEZIONI: DefColl[] = [
       $jsonSchema: {
         bsonType: "object",
         additionalProperties: false,
-        required: [
-          "_id",
-          "hashPassword",
-          "totpAttivo",
-          "tentativiFalliti",
-          "creataIl",
-          "aggiornataIl",
-        ],
+        required: ["_id", "hashPassword", "tentativiFalliti", "creataIl", "aggiornataIl"],
         properties: {
           _id: { bsonType: "int" }, // = operatori._id
           hashPassword: { bsonType: "string", minLength: 1 }, // scrypt$N$r$p$salt$hash
-          // Secret TOTP cifrato a riposo (AES-GCM). null finché non si attiva.
-          totpCifrato: stringaO,
-          totpAttivo: boolo,
-          // Codici di recupero: solo l'hash sha256, mai il codice in chiaro.
-          codiciRecupero: {
-            bsonType: "array",
-            items: {
-              bsonType: "object",
-              additionalProperties: false,
-              required: ["hash", "usato"],
-              properties: {
-                hash: sha256,
-                usato: boolo,
-                usatoIl: dataO,
-              },
-            },
-          },
-          // Difesa forza bruta: tentativi falliti consecutivi (password e TOTP,
-          // contati separatamente) e blocco a tempo condiviso.
+          // Difesa forza bruta: tentativi falliti consecutivi e blocco a tempo.
+          // Accesso a un solo fattore: nessun secret TOTP, nessun codice di recupero.
           tentativiFalliti: { bsonType: "int", minimum: 0 },
-          tentativiTotp: { bsonType: "int", minimum: 0 },
           bloccatoFinoA: dataO,
-          // Anti-replay TOTP: ultimo passo (finestra da 30s) già consumato.
-          ultimoPassoTotp: { bsonType: "int", minimum: 0 },
           creataIl: { bsonType: "date" },
           aggiornataIl: { bsonType: "date" },
         },
@@ -798,8 +771,8 @@ export const COLLEZIONI: DefColl[] = [
   {
     // Sessioni di login. _id = hash sha256 del token (il token in chiaro vive
     // solo nel cookie): un backup del DB non contiene sessioni utilizzabili.
-    // Due fasi: "attesa_totp" dopo la sola password, "completa" dopo il secondo
-    // fattore. L'indice TTL su scadeIl le fa sparire da sole alla scadenza.
+    // Accesso a un solo fattore: la sessione nasce già "completa". L'indice TTL
+    // su scadeIl le fa sparire da sole alla scadenza.
     nome: "sessioni",
     validator: {
       $jsonSchema: {
@@ -816,7 +789,7 @@ export const COLLEZIONI: DefColl[] = [
         properties: {
           _id: sha256, // sha256 hex del token di sessione
           operatoreId: { bsonType: "int" },
-          statoAutenticazione: { enum: ["attesa_totp", "completa"] },
+          statoAutenticazione: { enum: ["completa"] },
           creataIl: { bsonType: "date" },
           scadeIl: { bsonType: "date" },
           ultimoUsoIl: { bsonType: "date" },
@@ -946,6 +919,26 @@ export async function applicaSchema(d: Db): Promise<void> {
       await d.collection(def.nome).createIndexes(def.indici);
     }
   }
+
+  // Migrazione: rimozione totale del TOTP/2FA. Toglie dai documenti credenziali
+  // esistenti i campi del secondo fattore (il validatore non li prevede più) e
+  // chiude le sessioni rimaste "in attesa del secondo fattore" (stato non più
+  // valido). Idempotente: su documenti già puliti non fa nulla.
+  await d
+    .collection("credenziali")
+    .updateMany(
+      {},
+      {
+        $unset: {
+          totpCifrato: "",
+          totpAttivo: "",
+          codiciRecupero: "",
+          tentativiTotp: "",
+          ultimoPassoTotp: "",
+        },
+      },
+    );
+  await d.collection("sessioni").deleteMany({ statoAutenticazione: { $ne: "completa" } });
 
   for (const v of VISTE) {
     const esistente = perNome.get(v.nome);

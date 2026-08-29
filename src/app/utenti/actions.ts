@@ -2,13 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import {
-  azzeraTotp,
-  cambiaPassword,
-  creaUtente,
-  impostaAttivo,
-  type Ruolo,
-} from "@/server/auth/utenti";
+import { cambiaPassword, creaUtente, impostaAttivo, type Ruolo } from "@/server/auth/utenti";
 import { richiediAdmin } from "@/server/auth/sessione";
 
 // Gestione utenti: solo admin. Ogni azione ricontrolla il ruolo (le server
@@ -51,14 +45,6 @@ export async function impostaAttivoAction(formData: FormData): Promise<void> {
   }
   revalidatePath("/utenti");
   torna({ ok: attivo ? "Utente riattivato." : "Utente disattivato." });
-}
-
-export async function azzeraTotpAction(formData: FormData): Promise<void> {
-  const admin = await richiediAdmin();
-  const id = Number(str(formData, "id"));
-  await azzeraTotp(id, admin._id);
-  revalidatePath("/utenti");
-  torna({ ok: "TOTP azzerato: l'utente lo riattiverà al prossimo accesso." });
 }
 
 export async function cambiaPasswordAction(formData: FormData): Promise<void> {
