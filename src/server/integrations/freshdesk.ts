@@ -267,6 +267,48 @@ export async function cercaTicketPerRecensione(
   };
 }
 
+/**
+ * Delle recensioni date, quali hanno il ticket GIÀ risolto/chiuso su Freshdesk.
+ *
+ * Pensata per il refresh della lista "Da approvare": scarica la lista dei ticket
+ * UNA volta sola e la riusa per TUTTE le recensioni (niente fan-out N×6 come
+ * chiamare cercaTicketPerRecensione in loop). Ed è PRUDENTE: segna "risolto"
+ * solo se, fra i ticket con quell'oggetto nati dopo l'email, sono TUTTI risolti
+ * (4) o chiusi (5). Così non toglie mai per sbaglio una recensione ancora da
+ * lavorare (nel dubbio, la tiene). Sola lettura.
+ */
+export async function chiaviRisolteDaFreshdesk(
+  recensioni: { chiave: string; oggetto: string; ricevutaIl: string }[],
+  opts: { pagine?: number } = {},
+): Promise<Set<string>> {
+  const risolte = new Set<string>();
+  if (recensioni.length === 0) return risolte;
+
+  // Una sweep condivisa: la stessa lista che serviva a ogni recensione.
+  const pagine = opts.pagine ?? 6;
+  const tutti: FdTicket[] = [];
+  for (let page = 1; page <= pagine; page++) {
+    const { tickets, hasMore } = await listTickets({ page, perPage: 100 });
+    tutti.push(...tickets);
+    if (!hasMore) break;
+  }
+
+  for (const r of recensioni) {
+    const atteso = normalizzaOggetto(r.oggetto);
+    if (!atteso) continue;
+    const soglia = new Date(r.ricevutaIl).getTime() - 5 * 60 * 1000;
+    const candidati = tutti.filter(
+      (t) =>
+        normalizzaOggetto(t.subject) === atteso &&
+        new Date(t.createdAt).getTime() >= soglia,
+    );
+    if (candidati.length > 0 && candidati.every((t) => t.status === 4 || t.status === 5)) {
+      risolte.add(r.chiave);
+    }
+  }
+  return risolte;
+}
+
 // Elenco agenti in cache: serve solo a mostrare un nome al posto di un id.
 let agentCache: { at: number; byId: Map<number, string> } | null = null;
 

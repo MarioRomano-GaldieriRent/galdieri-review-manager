@@ -4,31 +4,35 @@ import { caricaRegole, regolaPer } from "@/server/automation/rules";
 import { caricaEsecuzioni } from "@/server/automation/runs";
 import type { Azione, Regola } from "@/server/automation/types";
 import { isGraphConfigured } from "@/server/graph/client";
-import { cercaTicketPerRecensione } from "@/server/integrations/freshdesk";
+import { chiaviRisolteDaFreshdesk } from "@/server/integrations/freshdesk";
 import { caricaRecensioni, haTesto, testoRecensione, type Recensione } from "@/server/reviews/load";
 import {
   chiaviPubblicate,
   codaDaPubblicare,
-  codaDaRicontrollare,
-  ORE_RICONTROLLO,
+  storicoPubblicazioni,
   type VocePubblicazione,
 } from "@/server/db/pubblicazioni";
 import { ritentaChiusureInSospeso } from "@/server/pubblicazione";
 import { isFreshdeskConfigured } from "@/server/integrations/freshdesk";
 import { loadSettings } from "@/server/settings";
-import { playAction, testGoogleAction } from "./dashboard/actions";
-import { Stelle, VoceCoda, VoceRicontrollo } from "./da-pubblicare/Voci";
+import { apriGoogleAction, playAction } from "./dashboard/actions";
+import { VediMail } from "./VediMail";
+import { AutoAggiorna } from "./AutoAggiorna";
+import { AnteprimaFlusso } from "./AnteprimaFlusso";
+import { PassoAnteprima } from "./_ui/automazioni";
+import { Stelle, VoceCoda, VoceStorico } from "./da-pubblicare/Voci";
 import { TastieraCoda } from "./da-pubblicare/TastieraCoda";
 
-// La home è la pipeline completa di una recensione, in un'unica pagina a tre
-// passi:
+// La home è la pipeline di una recensione, in un'unica pagina:
 //
-//   Da approvare    — la recensione arriva dalla posta, si approva il «Grazie.»
-//   Da pubblicare   — la risposta approvata si incolla a mano su Google
-//   Da ricontrollare — dopo 24h si verifica che sia rimasta online
+//   Da approvare — la recensione arriva dalla posta; col tasto «Rispondi» il
+//                  robot pubblica su Google e partono email/Freshdesk.
+//   Storico      — sola lettura: la cronologia delle risposte già pubblicate
+//                  dal nostro sito (nessuna azione, solo informazioni).
+//   (Da pubblicare resta come vista di ripiego raggiungibile solo via URL.)
 //
-// I conteggi dei tab raccontano il flusso da sinistra a destra. Al momento si
-// lavorano solo le recensioni 5★ senza commento: tutto il resto è filtrato via.
+// Al momento si lavorano solo le recensioni 5★ senza commento: tutto il resto
+// è filtrato via.
 //
 // La lettura della posta (Microsoft Graph) è lenta e si fa solo sul tab «Da
 // approvare»: così pubblicare e ricontrollare — dove si lavora a raffica da
@@ -38,6 +42,66 @@ export const dynamic = "force-dynamic";
 export const metadata = { title: "GaldieriReviews" };
 
 const fmt = new Intl.DateTimeFormat("it-IT", { dateStyle: "medium", timeStyle: "short" });
+const oraFmt = new Intl.DateTimeFormat("it-IT", { hour: "2-digit", minute: "2-digit" });
+
+// Data con il giorno della settimana e il mese per esteso: "Venerdì 28 agosto
+// 2026". Intl in italiano restituisce il giorno minuscolo, quindi si mette la
+// maiuscola iniziale.
+const fmtGiorno = new Intl.DateTimeFormat("it-IT", {
+  weekday: "long",
+  day: "numeric",
+  month: "long",
+  year: "numeric",
+});
+function dataConGiorno(d: Date): string {
+  const s = fmtGiorno.format(d);
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+/** Il logo "G" di Google a 4 colori, per il tasto che apre il robot. */
+function GoogleG() {
+  return (
+    <svg viewBox="0 0 48 48" width="18" height="18" aria-hidden="true">
+      <path
+        fill="#EA4335"
+        d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"
+      />
+      <path
+        fill="#4285F4"
+        d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"
+      />
+      <path
+        fill="#FBBC05"
+        d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"
+      />
+      <path
+        fill="#34A853"
+        d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"
+      />
+    </svg>
+  );
+}
+
+/** Icona "refresh" (due frecce circolari), adatta al tema (usa currentColor). */
+function IconaAggiorna() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="24"
+      height="24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <polyline points="23 4 23 10 17 10" />
+      <polyline points="1 20 1 14 7 14" />
+      <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
+    </svg>
+  );
+}
 
 type Passo = "approvare" | "pubblicare" | "ricontrollo";
 
@@ -80,17 +144,23 @@ export default async function HomePage({
   const settings = await loadSettings();
   const simulazione = settings.modo !== "reale";
 
+  // Ora del render = ultimo aggiornamento dei dati. La pagina è force-dynamic e
+  // si ri-renderizza a ogni caricamento/refresh, quindi questo valore è sempre
+  // "l'ultima volta che la vista si è aggiornata" (mostrato nel tooltip dell'icona).
+  const aggiornatoAlle = oraFmt.format(new Date());
+
   // Code di pubblicazione: letture Mongo veloci, si caricano sempre così i tab
   // hanno i conteggi e la pubblicazione a raffica resta immediata. All'apertura
   // si ritentano, best-effort, le chiusure Freshdesk rimaste in sospeso.
   await ritentaChiusureInSospeso();
-  const [codaPubAll, codaRicAll, fdOk] = await Promise.all([
+  const [codaPubAll, storicoAll, fdOk] = await Promise.all([
     codaDaPubblicare(),
-    codaDaRicontrollare(),
+    storicoPubblicazioni(),
     isFreshdeskConfigured(),
   ]);
   const codaPub = codaPubAll.filter(soloCinqueSenzaCommento);
-  const codaRic = codaRicAll.filter(soloCinqueSenzaCommento);
+  // Lo storico è la cronologia completa delle risposte pubblicate dal sito.
+  const storico = storicoAll;
 
   // Filtro per sede sul tab «Da pubblicare» (le stelle non servono: sono tutte 5).
   const sedi = [...new Set(codaPub.map((v) => v.sedeNome).filter(Boolean))].sort();
@@ -133,24 +203,23 @@ export default async function HomePage({
       .map((r) => ({ r, regola: regolaPer(regole, r.stelle, haTesto(r)) }))
       .filter((x) => x.regola !== null);
 
-    // «Aggiorna» (tasto di pagina): verifica LIVE su Freshdesk e toglie le
-    // recensioni il cui ticket è stato risolto/chiuso da qualcun altro — così
-    // se qualcuno fuori lavora un ticket, al click il conteggio scende (4→3).
+    // «Aggiorna» (tasto di pagina): verifica su Freshdesk e toglie le recensioni
+    // il cui ticket è stato risolto/chiuso da qualcun altro — così se qualcuno
+    // fuori lavora un ticket, il conteggio scende (4→3). UNA sola lettura della
+    // lista ticket, condivisa da tutte le recensioni (niente fan-out N×).
     if (sp.fresh === "1") {
-      const verificate = await Promise.all(
-        daApprovare.map(async (x) => {
-          try {
-            const { ticket } = await cercaTicketPerRecensione(x.r.oggetto, x.r.ricevutaIl, x.r.nome);
-            const gestito = ticket ? ticket.status === 4 || ticket.status === 5 : false;
-            return gestito ? null : x;
-          } catch {
-            return x; // errore Freshdesk: non nascondo nulla, resta in lista
-          }
-        }),
-      );
-      daApprovare = verificate.filter(
-        (x): x is { r: Recensione; regola: Regola } => x !== null,
-      );
+      try {
+        const risolte = await chiaviRisolteDaFreshdesk(
+          daApprovare.map((x) => ({
+            chiave: x.r.chiave,
+            oggetto: x.r.oggetto,
+            ricevutaIl: x.r.ricevutaIl,
+          })),
+        );
+        daApprovare = daApprovare.filter((x) => !risolte.has(x.r.chiave));
+      } catch {
+        // Freshdesk non raggiungibile: non nascondo nulla, resta tutto in lista.
+      }
     }
     nApprovare = daApprovare.length;
 
@@ -205,39 +274,41 @@ export default async function HomePage({
 
       {/* -------------------------------------------------------------- tab */}
       <nav className="pub-tabs" aria-label="Fasi della pubblicazione">
-        <Link href="/" className={`pub-tab${step === "approvare" ? " is-active" : ""}`}>
+        <Link
+          href="/"
+          className={`pub-tab${step === "approvare" ? " is-active" : ""}`}
+          title="Recensioni coperte dalle regole attive, in attesa di una tua decisione"
+        >
           Da approvare
           {nApprovare !== null && <span className="chip-count">{nApprovare}</span>}
         </Link>
         <Link
           href="/?step=ricontrollo"
           className={`pub-tab${step === "ricontrollo" ? " is-active" : ""}`}
+          title="Cronologia delle risposte pubblicate dal nostro sito"
         >
-          Da ricontrollare <span className="chip-count">{codaRic.length}</span>
+          Storico
+        </Link>
+        <Link
+          href={
+            step === "approvare"
+              ? "/?fresh=1"
+              : step === "ricontrollo"
+                ? "/?step=ricontrollo"
+                : `/?step=pubblicare${sedeSel ? `&sede=${encodeURIComponent(sedeSel)}` : ""}`
+          }
+          className="pub-aggiorna"
+          title={`Ultimo aggiornamento: ${aggiornatoAlle}`}
+          aria-label="Aggiorna la vista"
+        >
+          <IconaAggiorna />
         </Link>
       </nav>
 
       {/* =================================================== Da approvare === */}
       {step === "approvare" && (
         <section className="dash-centro">
-          <div className="dash-centro-testa">
-            <div>
-              <h2>Da approvare</h2>
-              <p className="hint">
-                {daApprovare.length} recensioni coperte dalle regole attive
-                {sp.fresh === "1"
-                  ? " · verificate ora su Freshdesk"
-                  : ", in attesa di una tua decisione"}
-              </p>
-            </div>
-            <Link
-              href="/?fresh=1"
-              className="btn-secondary"
-              title="Ricontrolla su Freshdesk: se un ticket è stato risolto o chiuso da qualcun altro, la recensione sparisce dalla lista."
-            >
-              🔄 Aggiorna
-            </Link>
-          </div>
+          <AutoAggiorna />
 
           {!graphOk && (
             <section className="card">
@@ -275,23 +346,28 @@ export default async function HomePage({
                       <div>
                         <div className="dash-autore-riga">
                           <span className="review-name">{r.nome || "senza nome"}</span>
-                          {label && <span className="dash-fonte">{label.name}</span>}
                           {r.lingua && r.lingua !== "it" && (
                             <span className="dash-lingua">{r.lingua.toUpperCase()}</span>
                           )}
                         </div>
                         <div className="dash-meta">
-                          {fmt.format(new Date(r.ricevutaIl))}
+                          {dataConGiorno(new Date(r.ricevutaIl))}
                           {r.sede ? ` · ${r.sede}` : ""}
                         </div>
                       </div>
                     </div>
-                    <Stelle n={r.stelle} />
+                    <div className="dash-scheda">
+                      <Stelle n={r.stelle} />
+                      {haTesto(r) && (
+                        <div className="dash-scheda-chips">
+                          <span className="dash-chip">💬 commento</span>
+                          {/* 📷 foto: quando l'email porterà l'informazione */}
+                        </div>
+                      )}
+                    </div>
                   </header>
 
-                  <p className={`review-comment ${testo ? "" : "muted"}`}>
-                    {testo || "— nessun commento, solo punteggio —"}
-                  </p>
+                  {testo && <p className="review-comment">{testo}</p>}
 
                   {mostraOriginale && (
                     <details className="review-original">
@@ -305,10 +381,6 @@ export default async function HomePage({
 
                   {regola && suggerito ? (
                     <form action={playAction} className="dash-proposta">
-                      <div className="dash-proposta-testa">
-                        Risposta prevista dalla regola «{regola.nome}»
-                        <span className="muted"> · {regola.azioni.length} passaggi</span>
-                      </div>
                       <input type="hidden" name="chiave" value={r.chiave} />
                       <input type="hidden" name="label" value={label?.id ?? ""} />
                       <input type="hidden" name="azioneId" value={nodo!.id} />
@@ -325,19 +397,28 @@ export default async function HomePage({
                       <div className="dash-azioni">
                         <button
                           type="submit"
-                          className={simulazione ? "btn-primary" : "btn-primary btn-danger"}
-                          title="Approva ed esegue tutto il flusso: email, Freshdesk e — col robot — pubblica la risposta su Google. Serve Chrome chiuso."
+                          className="btn-rispondi"
+                          title="Risponde alla recensione: pubblica su Google (col robot), invia l'email e aggiorna il ticket."
                         >
-                          ▶ Play{simulazione ? " (Google in test)" : ""}
+                          Rispondi
                         </button>
+                        <AnteprimaFlusso titolo={`Cosa farà su «${r.nome || "questa recensione"}»`}>
+                          <ol className="ap-lista">
+                            {regola.azioni.map((a) => (
+                              <PassoAnteprima key={a.id} azione={a} />
+                            ))}
+                          </ol>
+                        </AnteprimaFlusso>
                         <button
                           type="submit"
-                          formAction={testGoogleAction}
-                          className="btn-secondary"
-                          title="Apre il robot: trova la recensione su Google e scrive la risposta, senza pubblicare. Serve Chrome chiuso."
+                          formAction={apriGoogleAction}
+                          className="btn-google"
+                          title="Apre la recensione su Google col robot: si ferma lì e decidi tu. Serve Chrome chiuso."
+                          aria-label="Apri su Google col robot"
                         >
-                          🔍 Test Google
+                          <GoogleG />
                         </button>
+                        <VediMail id={r.messaggioId} className="btn-mini" />
                       </div>
                     </form>
                   ) : (
@@ -347,16 +428,14 @@ export default async function HomePage({
                     </p>
                   )}
 
-                  <footer className="dash-piede">
-                    <Link
-                      className="btn-mini"
-                      href={`/email?id=${encodeURIComponent(r.messaggioId)}`}
-                    >
-                      Vedi l&apos;email
-                    </Link>
-                    {r.haRisposta && <span className="flag flag-green">già risposta in posta</span>}
-                    {r.risolto && <span className="flag flag-gray">ticket risolto</span>}
-                  </footer>
+                  {(r.haRisposta || r.risolto) && (
+                    <footer className="dash-piede">
+                      {r.haRisposta && (
+                        <span className="flag flag-green">già risposta in posta</span>
+                      )}
+                      {r.risolto && <span className="flag flag-gray">ticket risolto</span>}
+                    </footer>
+                  )}
                 </article>
               );
             })
@@ -441,26 +520,17 @@ export default async function HomePage({
         </section>
       )}
 
-      {/* ================================================ Da ricontrollare === */}
+      {/* =========================================================== Storico === */}
       {step === "ricontrollo" && (
         <section className="dash-centro">
-          <div className="dash-centro-testa">
-            <div>
-              <h2>Da ricontrollare</h2>
-              <p className="hint pub-ricontrollo-nota">
-                Le risposte pubblicate su Google a volte non risultano salvate. Dopo{" "}
-                {ORE_RICONTROLLO} ore si riaprono qui: controlla che la risposta ci sia e conferma,
-                oppure rimettila in coda se è sparita.
-              </p>
-            </div>
-          </div>
-
-          {codaRic.length === 0 ? (
-            <section className="card dash-vuoto">Niente da ricontrollare.</section>
+          {storico.length === 0 ? (
+            <section className="card dash-vuoto">
+              Nessuna risposta ancora pubblicata dal sito.
+            </section>
           ) : (
             <ol className="pub-lista">
-              {codaRic.map((v, i) => (
-                <VoceRicontrollo key={v.chiave} v={v} numero={i + 1} />
+              {storico.map((v, i) => (
+                <VoceStorico key={v.chiave} v={v} numero={i + 1} />
               ))}
             </ol>
           )}

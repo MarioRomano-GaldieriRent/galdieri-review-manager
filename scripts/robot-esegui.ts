@@ -20,12 +20,13 @@ import {
 // Stampa UNA riga  __ESITO__ {json}  e chiude. Nessuna attesa di INVIO: è pensato
 // per essere avviato/atteso da un'azione del server.
 
-type Job = { azione: "test" | "pubblica"; nome: string; testo: string };
+type Job = { azione: "test" | "pubblica" | "cerca"; nome: string; testo: string };
+const AZIONI = ["test", "pubblica", "cerca"] as const;
 
 function leggiJob(): Job {
   const raw = process.env.ROBOT_JOB || process.argv[2] || "";
   const j = JSON.parse(raw) as Partial<Job>;
-  if (!j.nome || (j.azione !== "test" && j.azione !== "pubblica")) {
+  if (!j.nome || !j.azione || !(AZIONI as readonly string[]).includes(j.azione)) {
     throw new Error("ROBOT_JOB non valido");
   }
   return { azione: j.azione, nome: j.nome.trim(), testo: (j.testo || "Grazie.").trim() };
@@ -68,6 +69,18 @@ function esito(o: Record<string, unknown>): void {
         .screenshot({ path: path.join(SCREENSHOT_DIR, `esegui-${job.azione}.png`) })
         .catch(() => {});
 
+      // "cerca": si FERMA sulla recensione (con la risposta già pronta nel
+      // riquadro) e LASCIA il browser aperto: procede l'operatore. Il processo
+      // resta vivo finché l'operatore non chiude la finestra (o 30 min).
+      if (job.azione === "cerca") {
+        esito({ ok: true, stato: "aperta", trovata: true, scritto: e.scritto, gruppo: gr.nome, messaggio: `Fermo sulla recensione di «${job.nome}» in «${gr.nome}». Procedi tu nella finestra.` });
+        await new Promise<void>((res) => {
+          ctx.once("close", () => res());
+          setTimeout(res, 30 * 60 * 1000);
+        });
+        return;
+      }
+
       if (!e.scritto) {
         esito({ ok: false, stato: "trovata-non-scritta", trovata: true, gruppo: gr.nome, messaggio: `Trovata in «${gr.nome}» ma non ho potuto scrivere: ${dettaglio}` });
         return;
@@ -97,6 +110,17 @@ function esito(o: Record<string, unknown>): void {
       } catch (err) {
         esito({ ok: false, stato: "pubblica-errore", trovata: true, gruppo: gr.nome, messaggio: `Trovata e scritta, ma la pubblicazione è fallita: ${err instanceof Error ? err.message : String(err)}` });
       }
+      return;
+    }
+
+    // "cerca": anche se non l'ho trovata da solo, lascio Google APERTO così
+    // l'operatore la cerca a mano nella finestra.
+    if (job.azione === "cerca") {
+      esito({ ok: true, stato: "aperta-non-trovata", trovata: false, messaggio: `Non ho trovato «${job.nome}» da solo: ho lasciato Google aperto, cercala tu nella finestra.` });
+      await new Promise<void>((res) => {
+        ctx.once("close", () => res());
+        setTimeout(res, 30 * 60 * 1000);
+      });
       return;
     }
 

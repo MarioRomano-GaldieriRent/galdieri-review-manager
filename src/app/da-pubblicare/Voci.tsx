@@ -11,6 +11,8 @@ import {
 // Componenti della coda di pubblicazione, estratti dalla pagina così la home
 // (che ora ospita l'intera pipeline) li riusa senza duplicarli.
 
+const fmtData = new Intl.DateTimeFormat("it-IT", { dateStyle: "medium", timeStyle: "short" });
+
 export function Stelle({ n }: { n: number | null }) {
   const v = n ?? 0;
   return (
@@ -157,6 +159,49 @@ export function VoceCoda({
           {v.sedeNome || "la sede"}». Puoi impostare il link diretto nella pagina Sedi.
         </p>
       )}
+    </li>
+  );
+}
+
+/**
+ * Voce dello STORICO: sola lettura, tutte le informazioni della risposta
+ * pubblicata dal nostro sito. Nessun pulsante di flusso (Google/pubblicazione):
+ * qui non si "lavora", si consulta. I badge di stato Freshdesk sono informativi
+ * (niente "Riprova").
+ */
+export function VoceStorico({ v, numero }: { v: VocePubblicazione; numero: number }) {
+  return (
+    <li className="card pub-card">
+      <div className="pub-testa">
+        <span className="pub-numero" aria-hidden="true">
+          {numero}
+        </span>
+        <div className="pub-autore">
+          <span className="review-name">{v.nomeCliente}</span>
+          {v.sedeNome && <span className="dash-lingua">{v.sedeNome}</span>}
+          {v.pubblicataIl && (
+            <span className="flag flag-gray">
+              pubblicata il {fmtData.format(new Date(v.pubblicataIl))}
+            </span>
+          )}
+          {v.ticketId != null && <span className="flag flag-gray">ticket #{v.ticketId}</span>}
+          {v.freshdeskEsito === "ok" && <span className="flag flag-green">ticket chiuso</span>}
+          {(v.freshdeskEsito === "inattesa" || v.freshdeskEsito === "fallito") && (
+            <span className="flag flag-red">ticket non chiuso</span>
+          )}
+          {v.ripubblicazioni > 0 && (
+            <span className="flag flag-amber">ripubblicazione #{v.ripubblicazioni}</span>
+          )}
+        </div>
+        <Stelle n={v.stelle} />
+      </div>
+
+      {v.testoRecensione && <p className="pub-recensione">«{v.testoRecensione}»</p>}
+
+      <div className="pub-risposta">
+        <span className="pub-etichetta">Risposta pubblicata</span>
+        <p className="pub-risposta-testo">{v.testoRisposta}</p>
+      </div>
     </li>
   );
 }

@@ -399,6 +399,25 @@ export async function codaDaRicontrollare(): Promise<VocePubblicazione[]> {
 }
 
 /**
+ * Lo STORICO: le risposte che abbiamo pubblicato dal nostro sito (stato
+ * "pubblicata" o "verificata"), dalla più recente. Sola lettura: è la
+ * cronologia, non una coda di lavoro.
+ */
+export async function storicoPubblicazioni(limite = 200): Promise<VocePubblicazione[]> {
+  const righe = (await (
+    await coll("pubblicazioni")
+  )
+    .aggregate([
+      { $match: { stato: { $in: ["pubblicata", "verificata"] } } },
+      ...LOOKUP_SEDE,
+      { $sort: { pubblicataIl: -1, approvataIl: -1 } },
+      { $limit: limite },
+    ])
+    .toArray()) as DocPub[];
+  return righe.map(componi);
+}
+
+/**
  * Le chiavi delle recensioni GIÀ pubblicate (pubblicata/verificata): servono
  * alla lista unica della home per non rimostrare ciò che è già finito su Google.
  * Le "approvata" NON ci sono: sono ancora da pubblicare, quindi restano in lista.

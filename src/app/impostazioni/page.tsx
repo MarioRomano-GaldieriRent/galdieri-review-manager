@@ -11,6 +11,7 @@ import {
 } from "@/server/settings";
 import { getGoogleReviewsStatus } from "@/server/integrations/googleReviews";
 import { caricaRegole } from "@/server/automation/rules";
+import { richiediAdmin } from "@/server/auth/sessione";
 import {
   descriviCondizione,
   PassoRegola,
@@ -72,6 +73,7 @@ export default async function ImpostazioniPage({
 }: {
   searchParams: Promise<{ test?: string; ok?: string; msg?: string; s?: string }>;
 }) {
+  await richiediAdmin(); // solo admin: rimanda alla home chi non lo è
   const sp = await searchParams;
   const settings = await loadSettings();
   const [graph, translator, freshdesk, google, mailbox, googleStatus, automation, regole] =

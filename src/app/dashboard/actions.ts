@@ -18,7 +18,8 @@ import { normalizzaSede } from "@/server/db/seed";
 import { loadSettings, modoOperativo } from "@/server/settings";
 import { richiediOperatore } from "@/server/auth/sessione";
 import { cercaTicketPerRecensione, STATO } from "@/server/integrations/freshdesk";
-import { lanciaRobot, type EsitoRobot } from "@/server/robot/lancia";
+import { avviaRobotSganciato, lanciaRobot, type EsitoRobot } from "@/server/robot/lancia";
+import { chromeInEsecuzione } from "@/server/robot/google";
 
 // Le tre azioni della dashboard: approvare la risposta, inoltrare al customer
 // care, rimettere in coda una recensione già lavorata.
@@ -164,15 +165,36 @@ function esitoQuery(chiave: string, e: EsitoRobot): Record<string, string> {
 }
 
 /**
- * 🔍 Test Google: apre il robot, trova la recensione su Google e scrive la
- * risposta, SENZA pubblicare. Serve a verificare che il robot la agganci.
+ * Tasto "G": apre il robot su Google, trova la recensione e SI FERMA lì con la
+ * risposta pronta nel riquadro, lasciando il browser aperto. Da lì l'operatore
+ * guarda e decide (pubblica, modifica, annulla). Avvio SGANCIATO: l'azione
+ * torna subito, la finestra resta aperta per conto suo.
  */
-export async function testGoogleAction(formData: FormData): Promise<void> {
+export async function apriGoogleAction(formData: FormData): Promise<void> {
   await richiediOperatore();
   const r = await trovaRecensione(formData);
   const testo = String(formData.get("testo") ?? "").trim() || "Grazie.";
-  const e = await lanciaRobot({ azione: "test", nome: r.nome, testo });
-  indietro(formData, esitoQuery(r.chiave, e));
+
+  if (chromeInEsecuzione()) {
+    indietro(
+      formData,
+      esitoQuery(r.chiave, {
+        ok: false,
+        stato: "chrome-aperto",
+        messaggio: "Chiudi tutte le finestre di Chrome, poi riclicca la G: il robot deve aprire il suo Chrome.",
+      }),
+    );
+  }
+
+  avviaRobotSganciato({ azione: "cerca", nome: r.nome, testo });
+  indietro(
+    formData,
+    esitoQuery(r.chiave, {
+      ok: true,
+      stato: "robot-aperto",
+      messaggio: `🤖 Apro il robot su Google e cerco «${r.nome}»: guarda la finestra, si ferma sulla recensione e poi procedi tu.`,
+    }),
+  );
 }
 
 /**

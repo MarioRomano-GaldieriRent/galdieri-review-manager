@@ -33,7 +33,7 @@ export const GRUPPI: { nome: string; url: string }[] = [
 ];
 
 /** Su Windows: c'è un chrome.exe in esecuzione? (dirotterebbe il lancio). */
-function chromeInEsecuzione(): boolean {
+export function chromeInEsecuzione(): boolean {
   if (process.platform !== "win32") return false;
   try {
     const out = execSync('tasklist /FI "IMAGENAME eq chrome.exe" /NH', { encoding: "utf8" });

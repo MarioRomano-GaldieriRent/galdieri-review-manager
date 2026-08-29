@@ -31,7 +31,8 @@ export async function eseguiSuRecensioneAction(formData: FormData): Promise<void
   if (!recensione) redirect("/automazioni?errore=recensione-non-trovata");
 
   const regole = await caricaRegole();
-  const regola = regolaPer(regole, recensione.stelle, haTesto(recensione));
+  // Suite di test: si esegue anche una regola SPENTA (includiSpente = true).
+  const regola = regolaPer(regole, recensione.stelle, haTesto(recensione), true);
   if (!regola) redirect("/automazioni?errore=nessuna-regola");
 
   const esecuzione = await eseguiRegola(regola, recensione);

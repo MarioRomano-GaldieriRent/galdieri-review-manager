@@ -192,9 +192,12 @@ export function regolaPer(
   regole: Regola[],
   stelle: number | null,
   conTesto: boolean,
+  // La home usa solo le regole ATTIVE. La suite di test (Automazioni) passa
+  // includiSpente=true per poter provare anche le regole non ancora accese.
+  includiSpente = false,
 ): Regola | null {
   for (const r of regole) {
-    if (!r.attiva) continue;
+    if (!includiSpente && !r.attiva) continue;
     if (stelle === null || !r.condizione.stelle.includes(stelle)) continue;
     if (r.condizione.testo === "con" && !conTesto) continue;
     if (r.condizione.testo === "senza" && conTesto) continue;

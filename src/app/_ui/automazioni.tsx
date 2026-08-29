@@ -112,7 +112,7 @@ export function cosaFa(a: Azione): string[] {
       righe.push(`Pubblica sotto la recensione: «${leggibile(p.testo ?? "")}»`);
       if (p.testoInglese)
         righe.push(`Se la recensione non è in italiano: «${leggibile(p.testoInglese)}»`);
-      righe.push("Serve l'API Google, ancora da abilitare: per ora resta in prova");
+      righe.push("La pubblica il robot su Google (col tasto Rispondi)");
       return righe;
     }
     case "sistema.attendiRisposta":
@@ -192,6 +192,33 @@ export function PassoRegola({
             </form>
           </details>
         )}
+      </div>
+    </li>
+  );
+}
+
+/**
+ * Un passo per l'ANTEPRIMA (pop-up sulla home): sola lettura, icona + colore
+ * del servizio e cosa farà su questa recensione. Niente form di modifica.
+ */
+export function PassoAnteprima({ azione }: { azione: Azione }) {
+  const meta = CATALOGO[azione.tipo];
+  const righe = cosaFa(azione);
+  return (
+    <li className={`ap-passo nodo-${meta.servizio}`}>
+      <span className="ap-icona" aria-hidden="true">
+        {ICONA[meta.servizio]}
+      </span>
+      <div className="ap-corpo">
+        <div className="ap-testa">
+          <span className="ap-titolo">{meta.titolo}</span>
+          {meta.scrittura && <span className="ap-tag">scrive</span>}
+        </div>
+        <ul className="ap-righe">
+          {righe.map((r) => (
+            <li key={r}>{r}</li>
+          ))}
+        </ul>
       </div>
     </li>
   );

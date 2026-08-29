@@ -6,7 +6,7 @@ import { spawn } from "node:child_process";
 // runner stampa. È un'operazione LENTA (apre un browser): chi la chiama sa che
 // blocca finché il robot non ha finito.
 
-export type JobRobot = { azione: "test" | "pubblica"; nome: string; testo: string };
+export type JobRobot = { azione: "test" | "pubblica" | "cerca"; nome: string; testo: string };
 
 export type EsitoRobot = {
   ok: boolean;
@@ -16,6 +16,23 @@ export type EsitoRobot = {
   trovata?: boolean;
   scritto?: boolean;
 };
+
+/**
+ * Avvia il robot e NON aspetta: apre il browser e lo lascia in mano
+ * all'operatore (usato dal tasto "G" con azione "cerca"). Processo sganciato,
+ * così l'azione del server torna subito e la finestra resta aperta da sola.
+ */
+export function avviaRobotSganciato(job: JobRobot): void {
+  const child = spawn("npm run --silent robot:esegui", {
+    cwd: process.cwd(),
+    env: { ...process.env, ROBOT_JOB: JSON.stringify(job) },
+    shell: true,
+    windowsHide: false,
+    detached: true,
+    stdio: "ignore",
+  });
+  child.unref(); // scollega il figlio: vive per conto suo, non blocca il server
+}
 
 export async function lanciaRobot(job: JobRobot): Promise<EsitoRobot> {
   return new Promise((resolve) => {

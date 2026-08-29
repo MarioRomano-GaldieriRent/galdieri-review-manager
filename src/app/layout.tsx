@@ -3,9 +3,8 @@ import Link from "next/link";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import "./globals.css";
-import { ThemeToggle } from "./ThemeToggle";
+import { GearMenu } from "./GearMenu";
 import { operatoreCorrente } from "@/server/auth/sessione";
-import { logoutAction } from "./login/actions";
 
 export const metadata: Metadata = {
   title: "GaldieriReviews",
@@ -34,6 +33,16 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
   const operatore = suLogin ? null : await operatoreCorrente();
   if (!suLogin && !operatore) redirect("/login");
 
+  // Voci riservate dell'ingranaggio, filtrate per ruolo: l'operatore lavora la
+  // home, l'admin ha anche configurazione e banco di prova.
+  const voci =
+    operatore?.ruolo === "admin"
+      ? [
+          { href: "/impostazioni", label: "Impostazioni" },
+          { href: "/automazioni", label: "Automazioni" },
+        ]
+      : [];
+
   return (
     <html lang="it" suppressHydrationWarning>
       <head>
@@ -49,25 +58,7 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
                   <span className="logo-rent">Reviews</span>
                 </span>
               </Link>
-              <nav className="app-nav">
-                <Link href="/">Pubblicazione</Link>
-                <Link href="/automazioni">Automazioni</Link>
-                <Link href="/impostazioni">Impostazioni</Link>
-              </nav>
-              <div className="app-header-destra">
-                <span
-                  className="utente-corrente"
-                  title={operatore.ruolo === "admin" ? "Amministratore" : "Operatore"}
-                >
-                  {operatore.nome}
-                </span>
-                <form action={logoutAction}>
-                  <button type="submit" className="btn-mini">
-                    Esci
-                  </button>
-                </form>
-                <ThemeToggle />
-              </div>
+              <GearMenu nome={operatore.nome} ruolo={operatore.ruolo} voci={voci} />
             </div>
           </header>
         )}

@@ -8,7 +8,9 @@ import { testoPerRecensione } from "@/server/automation/connectors";
 import { tagSede } from "@/server/automation/sedi";
 import { caricaRecensioni, haTesto, testoRecensione, type Recensione } from "@/server/reviews/load";
 import { loadSettings } from "@/server/settings";
+import { richiediAdmin } from "@/server/auth/sessione";
 import { NodoEseguito } from "../_ui/automazioni";
+import { Aggiorna } from "../_ui/Aggiorna";
 import { eliminaEsecuzioneAction, eseguiSuRecensioneAction, svuotaRegistroAction } from "./actions";
 
 export const dynamic = "force-dynamic";
@@ -53,11 +55,12 @@ function Esito({ e }: { e: Esecuzione }) {
   );
 }
 
-/** Indirizzo del pannello conservando il filtro attivo. */
-function href(stelle?: number | null, run?: string): string {
+/** Indirizzo del pannello conservando i filtri attivi (stelle, da-fare, run). */
+function href(o: { stelle?: number | null; run?: string; dafare?: boolean } = {}): string {
   const p = new URLSearchParams();
-  if (stelle) p.set("stelle", String(stelle));
-  if (run) p.set("run", run);
+  if (o.stelle) p.set("stelle", String(o.stelle));
+  if (o.run) p.set("run", o.run);
+  if (o.dafare) p.set("dafare", "1");
   const s = p.toString();
   return s ? `/automazioni?${s}` : "/automazioni";
 }
@@ -65,8 +68,9 @@ function href(stelle?: number | null, run?: string): string {
 export default async function AutomazioniPage({
   searchParams,
 }: {
-  searchParams: Promise<{ run?: string; errore?: string; stelle?: string }>;
+  searchParams: Promise<{ run?: string; errore?: string; stelle?: string; dafare?: string }>;
 }) {
+  await richiediAdmin(); // suite di test: riservata agli admin
   const sp = await searchParams;
   const settings = await loadSettings();
   const label = settings.labels[0] ?? null;
@@ -94,8 +98,10 @@ export default async function AutomazioniPage({
 
   // Solo le recensioni per cui una regola scatterebbe davvero: è questa la coda
   // di lavoro. Le altre restano visibili nel pannello Recensioni.
+  // Suite di test: si considerano TUTTE le regole (attive e spente), così si
+  // può provare qualsiasi livello di stelle prima di accenderlo in Impostazioni.
   const tuttaLaCoda = recensioni
-    .map((r) => ({ r, regola: regolaPer(regole, r.stelle, haTesto(r)) }))
+    .map((r) => ({ r, regola: regolaPer(regole, r.stelle, haTesto(r), true) }))
     .filter((x) => x.regola !== null);
   const scartate = recensioni.length - tuttaLaCoda.length;
   const attive = regole.filter((r) => r.attiva);
@@ -109,16 +115,22 @@ export default async function AutomazioniPage({
     if (r.stelle && conteggi[r.stelle] !== undefined) conteggi[r.stelle] += 1;
   }
 
-  const inCoda = stelleSel ? tuttaLaCoda.filter((x) => x.r.stelle === stelleSel) : tuttaLaCoda;
-  const daFare = inCoda.filter((x) => !ultime.has(x.r.chiave)).length;
+  const soloDaFare = sp.dafare === "1";
+  const perStelle = stelleSel ? tuttaLaCoda.filter((x) => x.r.stelle === stelleSel) : tuttaLaCoda;
+  const daFare = perStelle.filter((x) => !ultime.has(x.r.chiave)).length;
+  // "Da rispondere": solo quelle mai eseguite (non ancora provate/gestite).
+  const inCoda = soloDaFare ? perStelle.filter((x) => !ultime.has(x.r.chiave)) : perStelle;
 
   return (
     <main>
-      <h1>Automazioni</h1>
+      <div className="sec-head">
+        <h1>Automazioni</h1>
+        <Aggiorna title="Aggiorna: rilegge la posta e ricontrolla la coda" />
+      </div>
       <p className="subtitle">
-        {inCoda.length} recensioni in coda, {daFare} mai eseguite — su {recensioni.length} lette
-        dalla posta
-        {stelleSel ? ` · filtro ${stelleSel}★` : ""}
+        Banco di prova delle regole (attive e spente): {inCoda.length} recensioni
+        {soloDaFare ? " da rispondere" : " in coda"}, {daFare} mai eseguite — su {recensioni.length}{" "}
+        lette dalla posta{stelleSel ? ` · filtro ${stelleSel}★` : ""}
       </p>
 
       {/* Le recensioni escluse non spariscono in silenzio: si dice quante sono
@@ -126,19 +138,21 @@ export default async function AutomazioniPage({
       {scartate > 0 && (
         <p className="notice">
           <strong>
-            {scartate} recensioni su {recensioni.length} restano fuori dalla coda.
+            {scartate} recensioni su {recensioni.length} non sono coperte da nessuna regola.
           </strong>{" "}
-          Nessuna regola attiva le copre. Attive adesso:{" "}
-          {attive.map((r) => r.nome).join(", ") || "nessuna"}. Le altre sono già scritte ma spente e
-          si accendono da <Link href="/impostazioni#automazioni">Impostazioni</Link> una alla volta.
-          Le recensioni escluse restano tutte visibili nella <Link href="/">Dashboard</Link>.
+          Le regole ATTIVE finiscono in <Link href="/">Pubblicazione</Link>; qui le provi tutte,
+          anche le spente. Attive adesso: {attive.map((r) => r.nome).join(", ") || "nessuna"} — si
+          accendono da <Link href="/impostazioni#automazioni">Impostazioni</Link>.
         </p>
       )}
 
-      {/* Filtro per stelle: serve a simulare un livello alla volta. */}
+      {/* Filtro per stelle + «Da rispondere»: per provare un livello alla volta. */}
       {tuttaLaCoda.length > 0 && (
         <div className="star-filter">
-          <Link href={href(null)} className={`star-chip chip-all${stelleSel ? "" : " is-active"}`}>
+          <Link
+            href={href({ dafare: soloDaFare })}
+            className={`star-chip chip-all${stelleSel ? "" : " is-active"}`}
+          >
             Tutte <span className="chip-count">{tuttaLaCoda.length}</span>
           </Link>
           {[1, 2, 3, 4, 5].map((n) => {
@@ -146,7 +160,7 @@ export default async function AutomazioniPage({
             return (
               <Link
                 key={n}
-                href={attivo ? href(null) : href(n)}
+                href={attivo ? href({ dafare: soloDaFare }) : href({ stelle: n, dafare: soloDaFare })}
                 className={`star-chip s${n}${attivo ? " is-active" : ""}${conteggi[n] === 0 ? " is-empty" : ""}`}
                 aria-label={`${conteggi[n]} recensioni da ${n} stelle in coda`}
               >
@@ -158,6 +172,13 @@ export default async function AutomazioniPage({
               </Link>
             );
           })}
+          <Link
+            href={href({ stelle: stelleSel, dafare: !soloDaFare })}
+            className={`star-chip chip-all${soloDaFare ? " is-active" : ""}`}
+            title="Mostra solo le recensioni mai eseguite (da rispondere)"
+          >
+            Da rispondere <span className="chip-count">{daFare}</span>
+          </Link>
         </div>
       )}
 
@@ -211,7 +232,7 @@ export default async function AutomazioniPage({
             {stelleSel ? (
               <>
                 Nessuna recensione da {stelleSel}★ in coda.{" "}
-                <Link href={href(null)}>Togli il filtro</Link> per vedere le altre.
+                <Link href={href({ dafare: soloDaFare })}>Togli il filtro</Link> per vedere le altre.
               </>
             ) : (
               <>
@@ -359,7 +380,7 @@ export default async function AutomazioniPage({
                       </span>
                     </td>
                     <td className="thread-actions">
-                      <Link className="btn-mini" href={href(stelleSel, e.id)}>
+                      <Link className="btn-mini" href={href({ stelle: stelleSel, run: e.id, dafare: soloDaFare })}>
                         Dettaglio
                       </Link>
                       <form action={eliminaEsecuzioneAction}>
