@@ -7,64 +7,79 @@
 :root[data-theme="light"] {
   color-scheme: light;
 
-  --g-blue: #4285f4;
-  --g-blue-dark: #1a73e8;
-  --g-red: #ea4335;
-  --g-yellow: #fbbc04;
-  --g-yellow-dark: #f9ab00;
-  --g-green: #34a853;
+  /* Accento dell'app: blu Apple. I nomi --g-* restano per compatibilità coi
+     componenti, ma i valori sono la palette raffinata chiaro/scuro. */
+  --g-blue: #0071e3;
+  --g-blue-dark: #0066cc;
+  --accent-fill: #0071e3; /* riempimento bottoni: testo bianco leggibile (AA) */
+  --accent-fill-hover: #0060c9;
+  --g-red: #ff3b30;
+  --g-yellow: #ff9f0a; /* giallo brillante: solo riempimenti/pallini */
+  --g-yellow-dark: #b8730a; /* oro leggibile per stelle e testo su chiaro */
+  --g-green: #34c759; /* verde brillante: solo riempimenti/pallini */
+  --g-green-dark: #1e8236; /* verde leggibile per testo/simboli su chiaro */
 
   /* Rosso del marchio Galdieri rent */
   --brand-red: #e30613;
 
-  --bg: #ffffff;
+  --bg: #f5f5f7; /* grigio Apple: le superfici bianche "galleggiano" */
   --surface: #ffffff;
-  --surface-alt: #f8f9fa;
-  --border: #e2e5ea;
-  --text: #202124;
-  --text-soft: #5f6368;
+  --surface-alt: #f0f0f3;
+  --border: #e4e4e9;
+  --text: #1d1d1f;
+  --text-soft: #636366;
 
-  --accent-soft: #f0f6ff;
-  --row-hover: #f7faff;
+  --accent-soft: #eaf2fe;
+  --row-hover: #f5f8ff;
   --unread-bg: #eef4ff;
-  --error-bg: #fce8e6;
-  --error-border: #f7ccc8;
-  --error-text: #d93025;
+  --error-bg: #fef1f0;
+  --error-border: #f7d4d0;
+  --error-text: #d70015;
 
-  --shadow: 0 1px 2px rgba(60, 64, 67, 0.12), 0 4px 14px rgba(60, 64, 67, 0.08);
-  --shadow-hover: 0 2px 6px rgba(60, 64, 67, 0.18), 0 10px 28px rgba(60, 64, 67, 0.14);
+  --shadow: 0 0.5px 1px rgba(0, 0, 0, 0.04), 0 6px 18px rgba(0, 0, 0, 0.05);
+  --shadow-hover: 0 2px 6px rgba(0, 0, 0, 0.07), 0 18px 44px rgba(0, 0, 0, 0.11);
+
+  --header-bg: rgba(255, 255, 255, 0.72);
 }
 
 :root[data-theme="dark"] {
   color-scheme: dark;
 
-  --g-blue: #4285f4;
-  --g-blue-dark: #8ab4f8;
-  --g-red: #f28b82;
-  --g-yellow-dark: #fdd663;
+  --g-blue: #0a84ff;
+  --g-blue-dark: #409cff;
+  --accent-fill: #0071e3; /* stesso riempimento bottoni: testo bianco AA anche su scuro */
+  --accent-fill-hover: #0060c9;
+  --g-red: #ff453a;
+  --g-yellow: #ffd60a;
+  --g-yellow-dark: #ffd60a;
+  --g-green: #30d158;
+  --g-green-dark: #30d158; /* testo/simboli verdi brillanti su scuro */
 
-  --bg: #16181c;
-  --surface: #1e2126;
-  --surface-alt: #262a30;
-  --border: #363b42;
-  --text: #e8eaed;
-  --text-soft: #9aa0a6;
+  --bg: #000000; /* nero profondo (OLED), superfici elevate sopra */
+  --surface: #1c1c1e;
+  --surface-alt: #2c2c2e;
+  --border: #38383a;
+  --text: #f5f5f7;
+  --text-soft: #98989d;
 
-  --accent-soft: #22314a;
-  --row-hover: #232830;
-  --unread-bg: #1d2634;
-  --error-bg: #3c1f1d;
+  --accent-soft: #10243d;
+  --row-hover: #202022;
+  --unread-bg: #10243d;
+  --error-bg: #3a1512;
   --error-border: #5c2b27;
-  --error-text: #f28b82;
+  --error-text: #ff6961;
 
-  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 4px 14px rgba(0, 0, 0, 0.3);
-  --shadow-hover: 0 2px 6px rgba(0, 0, 0, 0.5), 0 10px 28px rgba(0, 0, 0, 0.4);
+  --shadow: 0 0.5px 1px rgba(0, 0, 0, 0.6), 0 8px 24px rgba(0, 0, 0, 0.6);
+  --shadow-hover: 0 2px 8px rgba(0, 0, 0, 0.6), 0 22px 50px rgba(0, 0, 0, 0.72);
+
+  --header-bg: rgba(28, 28, 30, 0.72);
 }
 
 :root {
-  --radius: 16px;
-  --radius-sm: 10px;
-  --rainbow: linear-gradient(90deg, #4285f4 0%, #ea4335 33%, #fbbc04 66%, #34a853 100%);
+  --radius: 18px;
+  --radius-sm: 12px;
+  --ease: cubic-bezier(0.32, 0.72, 0, 1); /* curva "morbida" alla Apple */
+  --rainbow: linear-gradient(90deg, #0071e3 0%, #5e5ce6 50%, #34c759 100%);
 }
 
 * {
@@ -81,25 +96,73 @@ body {
   background: var(--bg);
   color: var(--text);
   font-family:
-    "Google Sans",
-    "Product Sans",
-    Roboto,
-    "Segoe UI",
-    system-ui,
     -apple-system,
-    Helvetica,
+    BlinkMacSystemFont,
+    "SF Pro Text",
+    "SF Pro Display",
+    "Segoe UI",
+    Roboto,
+    system-ui,
+    "Helvetica Neue",
     Arial,
     sans-serif;
   min-height: 100vh;
-  line-height: 1.55;
+  line-height: 1.5;
+  letter-spacing: -0.011em;
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
   transition:
-    background-color 0.2s ease,
-    color 0.2s ease;
+    background-color 0.3s var(--ease),
+    color 0.3s var(--ease);
 }
 
 a {
-  color: var(--g-blue-dark);
+  color: var(--g-blue);
+  text-decoration: none;
+}
+a:hover {
+  text-decoration: underline;
+}
+
+:focus-visible {
+  outline: 2px solid var(--g-blue);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* Fuoco morbido "alla Apple" sui campi. */
+input:focus,
+textarea:focus,
+select:focus {
+  outline: none;
+  border-color: var(--g-blue);
+  box-shadow: 0 0 0 4px var(--accent-soft);
+}
+
+/* Le card di lavoro reagiscono al passaggio del mouse (leggero sollevamento). */
+.dash-card,
+.pub-card {
+  transition:
+    box-shadow 0.25s var(--ease),
+    transform 0.25s var(--ease),
+    border-color 0.2s var(--ease),
+    background-color 0.2s var(--ease);
+}
+.dash-card:hover,
+.pub-card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-hover);
+}
+
+/* Rispetta "Riduci movimento": niente animazioni né spostamenti automatici. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
 }
 
 main {
@@ -133,18 +196,13 @@ code {
 
 /* ---------- Header + marchio ---------- */
 .app-header {
-  background: var(--surface);
+  background: var(--header-bg);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  backdrop-filter: saturate(180%) blur(20px);
   border-bottom: 1px solid var(--border);
   position: sticky;
   top: 0;
   z-index: 10;
-}
-
-.app-header::before {
-  content: "";
-  display: block;
-  height: 4px;
-  background: var(--rainbow);
 }
 
 .app-header-inner {
@@ -153,7 +211,113 @@ code {
   padding: 12px 24px;
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 20px;
+}
+
+/* ---------------------------------------- ingranaggio (unico menu dell'app) */
+.gear {
+  position: relative;
+}
+.gear-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  color: var(--text-soft);
+  cursor: pointer;
+  transition:
+    background 0.15s,
+    color 0.15s,
+    border-color 0.15s;
+}
+.gear-btn:hover,
+.gear-btn[aria-expanded="true"] {
+  background: var(--surface-alt);
+  color: var(--text);
+  border-color: var(--border);
+}
+.gear-menu {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: 0;
+  min-width: 230px;
+  background: var(--surface); /* opaco: il dropdown copre, non fa trasparire */
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  box-shadow: var(--shadow-hover);
+  overflow: hidden;
+  z-index: 50;
+  transform-origin: top right;
+  animation: gear-in 0.22s var(--ease);
+}
+@keyframes gear-in {
+  from {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.gear-utente {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.gear-utente strong {
+  font-size: 0.95rem;
+}
+.gear-utente .muted {
+  font-size: 0.78rem;
+}
+.gear-sezione {
+  padding: 6px;
+  border-bottom: 1px solid var(--border);
+}
+.gear-sezione:last-child {
+  border-bottom: none;
+}
+.gear-voce {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 9px 10px;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-size: 0.9rem;
+  font-weight: 600;
+  text-decoration: none;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.gear-voce:hover {
+  background: var(--accent-soft);
+}
+.gear-riga {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 12px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text);
+}
+.gear-esci {
+  color: var(--error-text);
+}
+.gear-esci:hover {
+  background: var(--error-bg);
 }
 
 .brand {
@@ -280,7 +444,7 @@ code {
 
 .field input:focus {
   border-color: var(--g-blue);
-  box-shadow: 0 0 0 3px rgba(66, 133, 244, 0.25);
+  box-shadow: 0 0 0 4px var(--accent-soft);
 }
 
 .field.grow {
@@ -303,38 +467,45 @@ code {
 
 /* ---------- Bottoni ---------- */
 .btn-primary {
-  background: var(--g-blue);
+  background: var(--accent-fill);
   color: #fff;
   border: none;
-  border-radius: 999px;
+  border-radius: 980px;
   padding: 11px 22px;
-  font-size: 0.98rem;
-  font-weight: 600;
+  font-size: 0.95rem;
+  font-weight: 590;
+  letter-spacing: -0.01em;
   cursor: pointer;
   transition:
-    background 0.15s,
-    box-shadow 0.15s;
+    background 0.25s var(--ease),
+    box-shadow 0.25s var(--ease),
+    transform 0.15s var(--ease);
 }
 
 .btn-primary:hover {
-  background: var(--g-blue-dark);
-  box-shadow: var(--shadow-hover);
+  background: var(--accent-fill-hover);
+  box-shadow: 0 4px 14px color-mix(in srgb, var(--g-blue) 35%, transparent);
+}
+
+.btn-primary:active {
+  transform: scale(0.97);
 }
 
 .btn-secondary {
   background: var(--surface);
   border: 1px solid var(--border);
-  color: var(--g-blue-dark);
-  border-radius: 999px;
+  color: var(--g-blue);
+  border-radius: 980px;
   padding: 10px 18px;
-  font-size: 0.92rem;
-  font-weight: 600;
+  font-size: 0.9rem;
+  font-weight: 590;
   cursor: pointer;
   text-decoration: none;
   display: inline-block;
   transition:
-    background 0.15s,
-    border-color 0.15s;
+    background 0.2s var(--ease),
+    border-color 0.2s var(--ease),
+    transform 0.15s var(--ease);
 }
 
 .btn-secondary:hover {
@@ -342,9 +513,296 @@ code {
   border-color: var(--g-blue);
 }
 
+.btn-secondary:active {
+  transform: scale(0.97);
+}
+
 .btn-secondary.disabled {
   opacity: 0.45;
   cursor: default;
+}
+
+/* ---------- Tasti della card recensione: Rispondi + G ---------- */
+.btn-rispondi {
+  background: var(--accent-fill);
+  color: #fff;
+  border: none;
+  border-radius: 980px;
+  padding: 11px 26px;
+  font-size: 0.98rem;
+  font-weight: 590;
+  letter-spacing: -0.01em;
+  cursor: pointer;
+  transition:
+    background 0.25s var(--ease),
+    box-shadow 0.25s var(--ease),
+    transform 0.15s var(--ease);
+}
+.btn-rispondi:hover {
+  background: var(--accent-fill-hover);
+  box-shadow: 0 6px 18px color-mix(in srgb, var(--g-blue) 40%, transparent);
+}
+.btn-rispondi:active {
+  transform: scale(0.97);
+}
+
+/* Tasto piccolo e tondo col logo Google a 4 colori. */
+.btn-google {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  cursor: pointer;
+  transition:
+    background 0.15s,
+    border-color 0.15s,
+    box-shadow 0.15s;
+}
+.btn-google:hover {
+  background: var(--accent-soft);
+  border-color: var(--g-blue);
+  box-shadow: var(--shadow);
+}
+.btn-google svg {
+  display: block;
+}
+
+/* Tasto "occhio": anteprima del flusso della recensione. */
+.btn-occhio {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-soft);
+  cursor: pointer;
+  transition:
+    background 0.2s var(--ease),
+    border-color 0.2s var(--ease),
+    color 0.2s var(--ease),
+    box-shadow 0.2s var(--ease);
+}
+.btn-occhio:hover {
+  background: var(--accent-soft);
+  border-color: var(--g-blue);
+  color: var(--g-blue);
+  box-shadow: var(--shadow);
+}
+
+/* Corpo del pop-up: cresce e scorre dentro il modale (che resta centrato). */
+.modal-corpo {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 14px 16px 18px;
+}
+/* Pop-up dell'anteprima: più stretto della vista email. */
+.modal-flusso {
+  width: min(500px, 100%);
+}
+
+/* --- Anteprima del flusso: passi puliti con icona/colore per servizio --- */
+.ap-lista {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.ap-passo {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 10px 8px;
+  border-radius: 12px;
+}
+.ap-passo + .ap-passo {
+  border-top: 1px solid var(--border);
+  border-radius: 0;
+}
+.ap-icona {
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.95rem;
+  line-height: 1;
+  color: var(--nodo);
+  background: color-mix(in srgb, var(--nodo) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--nodo) 32%, var(--border));
+}
+.ap-corpo {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding-top: 2px;
+}
+.ap-testa {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.ap-titolo {
+  font-weight: 600;
+  font-size: 0.94rem;
+  color: var(--text);
+}
+.ap-tag {
+  font-size: 0.64rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-soft);
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 1px 8px;
+}
+.ap-righe {
+  list-style: none;
+  margin: 5px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  color: var(--text-soft);
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+.ap-righe li {
+  position: relative;
+  padding-left: 14px;
+}
+.ap-righe li::before {
+  content: "";
+  position: absolute;
+  left: 2px;
+  top: 0.62em;
+  width: 4px;
+  height: 4px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--nodo) 55%, var(--border));
+}
+
+/* ---------- Icona "Aggiorna" nella barra dei tab (solo icona, grande) ---------- */
+.pub-aggiorna {
+  margin-left: auto;
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-soft);
+  padding: 7px;
+  margin-bottom: 4px;
+  border-radius: 999px;
+  cursor: pointer;
+  text-decoration: none;
+  transition:
+    color 0.15s,
+    background 0.15s,
+    transform 0.5s ease;
+}
+.pub-aggiorna:hover {
+  color: var(--g-blue);
+  background: var(--accent-soft);
+  transform: rotate(-180deg);
+}
+.pub-aggiorna:active {
+  transform: rotate(-360deg);
+}
+
+/* Rispetta "Riduci movimento" del sistema: niente rotazione dell'icona. */
+@media (prefers-reduced-motion: reduce) {
+  .pub-aggiorna,
+  .pub-aggiorna:hover,
+  .pub-aggiorna:active {
+    transition: none;
+    transform: none;
+  }
+}
+
+/* ---------- Pop-up "Vedi mail" ---------- */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  z-index: 1000;
+}
+.modal {
+  background: var(--surface);
+  color: var(--text);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-hover);
+  width: min(760px, 100%);
+  max-height: 88vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.modal-testa {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+}
+.modal-oggetto {
+  font-size: 1rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.modal-chiudi {
+  background: transparent;
+  border: none;
+  color: var(--text-soft);
+  font-size: 1.05rem;
+  line-height: 1;
+  padding: 4px 8px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.modal-chiudi:hover {
+  background: var(--surface-alt);
+  color: var(--text);
+}
+.modal-meta {
+  padding: 10px 18px;
+  color: var(--text-soft);
+  font-size: 0.88rem;
+  border-bottom: 1px solid var(--border);
+}
+.modal-info {
+  padding: 24px 18px;
+  color: var(--text-soft);
+}
+.modal-info-ko {
+  color: var(--error-text);
+}
+.modal-mail {
+  border: none;
+  width: 100%;
+  flex: 1;
+  min-height: 340px;
+  background: #fff;
 }
 
 /* ---------- Tabella email ---------- */
@@ -414,8 +872,8 @@ code {
   font-size: 0.68rem;
   font-weight: 700;
   text-transform: uppercase;
-  border-radius: 6px;
-  padding: 2px 7px;
+  border-radius: 999px;
+  padding: 2px 9px;
 }
 
 .flag-red {
@@ -827,7 +1285,7 @@ code {
 }
 
 .flag-green {
-  color: #fff;
+  color: #1f1f1f;
   background: var(--g-green);
 }
 
@@ -1068,7 +1526,7 @@ code {
 }
 .nodo-scrive {
   background: color-mix(in srgb, var(--g-yellow) 25%, transparent);
-  color: var(--g-yellow-dark);
+  color: var(--text);
 }
 
 .nodo-corpo {
@@ -1130,7 +1588,7 @@ code {
 }
 
 .run-ok .run-simbolo {
-  color: var(--g-green);
+  color: var(--g-green-dark);
 }
 .run-simulato .run-simbolo {
   color: var(--g-blue);
@@ -1363,7 +1821,7 @@ code {
   --nodo: var(--g-blue);
 }
 .passo.nodo-email {
-  --nodo: #ff7a18;
+  --nodo: var(--g-yellow-dark);
 }
 .passo.nodo-sistema {
   --nodo: var(--text-soft);
@@ -1718,15 +2176,9 @@ main.pipeline .pub-tabs {
 }
 
 .login-campo input:focus {
-  outline: 2px solid var(--g-blue);
-  outline-offset: 1px;
+  outline: none;
   border-color: var(--g-blue);
-}
-
-.login-codice {
-  font-size: 1.4rem !important;
-  letter-spacing: 0.4em;
-  text-align: center;
+  box-shadow: 0 0 0 4px var(--accent-soft);
 }
 
 .login-invia {
@@ -1738,76 +2190,6 @@ main.pipeline .pub-tabs {
 
 .login-errore {
   margin: 0 0 14px;
-}
-
-.login-annulla-form {
-  margin-top: 12px;
-  text-align: center;
-}
-
-.login-annulla {
-  color: var(--text-soft);
-}
-
-/* --- attivazione TOTP --- */
-
-.totp-passi {
-  margin: 8px 0 0;
-  padding-left: 22px;
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
-}
-
-.totp-passi > li {
-  padding-left: 4px;
-  line-height: 1.5;
-}
-
-.totp-qr {
-  margin: 12px 0;
-  display: flex;
-  justify-content: center;
-}
-
-.totp-qr img {
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: #fff; /* i lettori vogliono contrasto: sfondo bianco anche in dark */
-  padding: 8px;
-}
-
-.totp-chiave {
-  display: inline-block;
-  margin-top: 4px;
-  font-size: 0.95rem;
-  letter-spacing: 0.12em;
-  background: var(--surface-alt);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: 4px 8px;
-}
-
-.totp-fatto {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-}
-
-.totp-codici {
-  list-style: none;
-  margin: 0;
-  padding: 14px;
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 8px 16px;
-  background: var(--surface-alt);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
-  font-size: 1rem;
-  letter-spacing: 0.06em;
-  text-align: center;
 }
 
 /* --- testata: utente + esci --- */
@@ -1976,16 +2358,17 @@ main.pipeline .pub-tabs {
 }
 
 .dash-conteggio-fatta {
-  color: var(--g-green);
-  background: rgba(52, 168, 83, 0.14);
+  color: var(--g-green-dark);
+  background: rgba(52, 199, 89, 0.14);
 }
 
 .dash-conteggio-attesa {
-  color: #b06000;
+  color: #8a4b00;
   background: rgba(249, 171, 0, 0.18);
 }
 
-:root[data-theme="dark"] .dash-conteggio-attesa {
+:root[data-theme="dark"] .dash-conteggio-attesa,
+:root[data-theme="dark"] .dash-stato-attesa {
   color: var(--g-yellow-dark);
 }
 
@@ -2059,11 +2442,11 @@ main.pipeline .pub-tabs {
 }
 
 .dash-stato-fatta {
-  color: var(--g-green);
+  color: var(--g-green-dark);
 }
 
 .dash-stato-attesa {
-  color: #b06000;
+  color: #8a4b00;
 }
 
 :root[data-theme="dark"] .dash-stato-attesa {
@@ -2095,6 +2478,33 @@ main.pipeline .pub-tabs {
 
 .dash-card {
   padding: 18px 20px;
+}
+
+/* Scheda compatta a destra: stelle + cosa contiene (solo ciò che c'è). */
+.dash-scheda {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 7px;
+}
+.dash-scheda-chips {
+  display: flex;
+  gap: 5px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.dash-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text-soft);
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 2px 9px;
+  white-space: nowrap;
 }
 
 .dash-card-testa {
@@ -2192,6 +2602,7 @@ main.pipeline .pub-tabs {
 .dash-testo:focus {
   outline: none;
   border-color: var(--brand-red);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--brand-red) 15%, transparent);
 }
 
 .dash-azioni {
@@ -2589,6 +3000,8 @@ main.pipeline .pub-tabs {
 /* Schede della coda di pubblicazione. */
 .pub-tabs {
   display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
   gap: 6px;
   margin-bottom: 18px;
   border-bottom: 1px solid var(--border);
@@ -2603,6 +3016,7 @@ main.pipeline .pub-tabs {
   color: var(--text-soft);
   font-weight: 600;
   font-size: 0.95rem;
+  white-space: nowrap;
   border-bottom: 3px solid transparent;
   margin-bottom: -1px;
 }
