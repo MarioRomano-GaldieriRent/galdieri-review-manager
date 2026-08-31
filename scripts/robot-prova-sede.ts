@@ -8,18 +8,25 @@ import {
   SCREENSHOT_DIR,
 } from "@/server/robot/google";
 
-// TEST della «parte 2» del mapping: invece di battere i gruppi, il robot va su
-// Google recensioni, CERCA la sede col nome mappato (nomeGoogle), apre le sue
-// recensioni («Leggi recensioni») e — se gli passi un cliente — scorre fino a
-// trovarne la recensione (sola lettura: non scrive né pubblica). Lascia la
-// finestra aperta; screenshot di ogni tappa in data/robot-screenshot.
+// TEST della «parte 2» del mapping. Quattro passi, in ordine:
+//   1. cerca SOLO il nome dell'attività (la sede) nella barra di Google;
+//   2. clicca l'attività;
+//   3. clicca «Leggi recensioni»;
+//   4. cerca il nome del CLIENTE nel campo di ricerca delle recensioni.
+// Sola lettura: non scrive né pubblica. Lascia la finestra aperta; screenshot
+// di ogni tappa in data/robot-screenshot.
 //
 // Prima chiudi TUTTE le finestre di Chrome (il robot apre il suo).
 //
-//   npm run robot:prova-sede                              prima sede mappata
-//   npm run robot:prova-sede -- "Nome Google"             cerca quella sede
-//   npm run robot:prova-sede -- "Nome Google" --cliente "Arthur Lavallée"
-//                                                          e trova quel cliente
+// SEDE e CLIENTE si passano in UN SOLO argomento fra virgolette, separati da //
+// così la barra riceve SOLO la sede (mai sede + cliente):
+//
+//   npm run robot:prova-sede                        prima sede mappata, senza cliente
+//   npm run robot:prova-sede -- "Nome attività"     apre solo la sede
+//   npm run robot:prova-sede -- "Nome attività // Nome Cliente"   sede + poi il cliente
+//
+// Esempio:
+//   npm run robot:prova-sede -- "Galdieri Rent Orio al Serio - Milan Bergamo // Arthur Lavallée"
 //
 // (Le sedi si mappano in Impostazioni → Mapping sedi.)
 
@@ -37,11 +44,13 @@ function caricaEnv() {
 caricaEnv();
 
 async function main() {
-  // Tutto prima di --cliente è il nome della sede; dopo, il nome del cliente.
-  const raw = process.argv.slice(2);
-  const iCli = raw.indexOf("--cliente");
-  const argNome = (iCli === -1 ? raw : raw.slice(0, iCli)).join(" ").trim();
-  const cliente = iCli === -1 ? "" : raw.slice(iCli + 1).join(" ").trim();
+  // UN solo argomento: "sede // cliente". Tutto prima di // è la SEDE (va nella
+  // barra di ricerca attività), tutto dopo è il CLIENTE (va nella ricerca delle
+  // recensioni). Così la barra riceve SOLO la sede, mai sede + cliente.
+  const raw = process.argv.slice(2).join(" ").trim();
+  const parti = raw.split("//");
+  const argNome = (parti[0] ?? "").trim();
+  const cliente = (parti[1] ?? "").trim();
 
   let nomeGoogle = argNome;
   if (!nomeGoogle) {
@@ -60,7 +69,8 @@ async function main() {
     console.log(`\nProvo la PRIMA. Per un'altra:  npm run robot:prova-sede -- "Nome Google"\n`);
   }
 
-  console.log(`Cerco la sede su Google: «${nomeGoogle}»\n`);
+  console.log(`\nNella barra cerco SOLO l'attività: «${nomeGoogle}»`);
+  console.log(`Poi, nelle recensioni, cerco il cliente: «${cliente || "(nessuno)"}»\n`);
   mkdirSync(SCREENSHOT_DIR, { recursive: true });
 
   const ctx = await apriContesto(false);
