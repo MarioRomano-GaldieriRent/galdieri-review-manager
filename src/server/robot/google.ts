@@ -761,6 +761,11 @@ export async function rispondiAllaRecensione(
 ): Promise<EsitoRisposta> {
   const log = opts.log ?? (() => {});
   const nome = nomeCliente.trim();
+  const scatto = async (tag: string) => {
+    const p = path.join(SCREENSHOT_DIR, `prova-sede-${tag}.png`);
+    await page.screenshot({ path: p }).catch(() => {});
+    log(`screenshot: ${p}`);
+  };
 
   const nomeLoc = page.getByText(nome, { exact: false }).first();
   if ((await nomeLoc.count().catch(() => 0)) === 0) {
@@ -772,16 +777,40 @@ export async function rispondiAllaRecensione(
     };
   }
   await nomeLoc.scrollIntoViewIfNeeded().catch(() => {});
-  await page.waitForTimeout(300);
+  await page.waitForTimeout(400);
+  await scatto("8a-prima-rispondi");
+
+  // DIAGNOSTICA: elenca i bottoni/link visibili, così vediamo con che etichetta
+  // Google chiama «Rispondi» in questa vista (e se compare solo al passaggio del
+  // mouse o dietro un menu ⋮).
+  const bottoni = await page
+    .$$eval("button, [role=button], a", (els) =>
+      els
+        .filter((e) => (e as HTMLElement).offsetParent !== null)
+        .map((e) =>
+          ((e.textContent || e.getAttribute("aria-label") || "").replace(/\s+/g, " ").trim()),
+        )
+        .filter((t) => t && t.length < 40),
+    )
+    .catch(() => []);
+  log(`bottoni in pagina: ${JSON.stringify([...new Set(bottoni)].slice(0, 30))}`);
 
   // Il «Rispondi» accanto al nome; se la geometria non lo prende, ripiego sul
   // primo «Rispondi» in pagina — la lista è filtrata sul cliente, quindi è il suo.
+  const reRispondi = /rispondi|reply|risposta/i;
   let rispondi = await rispondiVicinoA(page, nomeLoc);
   if (!rispondi) {
-    const primo = page.getByRole("button", { name: /Rispondi/i }).first();
-    if ((await primo.count().catch(() => 0)) > 0 && (await primo.isVisible().catch(() => false))) {
-      rispondi = primo;
-      log("uso il primo «Rispondi» in pagina (lista filtrata sul cliente).");
+    for (const loc of [
+      page.getByRole("button", { name: reRispondi }),
+      page.getByRole("link", { name: reRispondi }),
+      page.getByText(/^rispondi$/i),
+    ]) {
+      const b = loc.first();
+      if ((await b.count().catch(() => 0)) > 0 && (await b.isVisible().catch(() => false))) {
+        rispondi = b;
+        log("uso il primo «Rispondi» in pagina (lista filtrata sul cliente).");
+        break;
+      }
     }
   }
   if (!rispondi) {
@@ -789,13 +818,14 @@ export async function rispondiAllaRecensione(
       scritto: false,
       via: "nessun-rispondi",
       abilitato: false,
-      dettaglio: `Trovato «${nome}» ma nessun «Rispondi» cliccabile (forse ha già una risposta).`,
+      dettaglio: `Trovato «${nome}» ma nessun «Rispondi» cliccabile. Guarda 8a e la riga «bottoni in pagina» qui sopra: dimmi come si chiama il tasto per rispondere.`,
     };
   }
   await rispondi.scrollIntoViewIfNeeded().catch(() => {});
   await rispondi.click({ timeout: 6000 }).catch(() => {});
   log("cliccato «Rispondi».");
   await page.waitForTimeout(1200);
+  await scatto("8b-dopo-rispondi");
 
   // Testo vuoto = apro solo il riquadro, senza scrivere.
   if (!testo.trim()) {
