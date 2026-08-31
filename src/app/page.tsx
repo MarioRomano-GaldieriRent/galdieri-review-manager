@@ -537,28 +537,26 @@ export default async function HomePage({
 
                   <footer className="dash-piede">
                     {r.risolto && <span className="flag flag-gray">ticket risolto</span>}
-                    <details className="archivia">
-                      <summary
-                        className="btn-archivia"
-                        title="Metti da parte questa recensione (es. impossibile da gestire): sparisce dall'elenco e va in Archiviati"
+                    {/* Un solo passo: scrivi il motivo (facoltativo) e archivia.
+                        La recensione sparisce dall'elenco e va nella tab «Archiviati». */}
+                    <form action={archiviaAction} className="archivia-form">
+                      <input type="hidden" name="chiave" value={r.chiave} />
+                      <input type="hidden" name="label" value={label?.id ?? ""} />
+                      <input
+                        name="motivo"
+                        className="archivia-motivo"
+                        placeholder="Motivo (facoltativo, es. impossibile da gestire)"
+                        maxLength={200}
+                        aria-label="Motivo dell'archiviazione"
+                      />
+                      <button
+                        type="submit"
+                        className="btn-mini btn-archivia"
+                        title="Mette da parte questa recensione: sparisce dall'elenco e va in Archiviati"
                       >
-                        Archivia
-                      </summary>
-                      <form action={archiviaAction} className="archivia-form">
-                        <input type="hidden" name="chiave" value={r.chiave} />
-                        <input type="hidden" name="label" value={label?.id ?? ""} />
-                        <input
-                          name="motivo"
-                          className="archivia-motivo"
-                          placeholder="Motivo (facoltativo, es. impossibile da gestire)"
-                          maxLength={200}
-                          aria-label="Motivo dell'archiviazione"
-                        />
-                        <button type="submit" className="btn-mini btn-archivia-conferma">
-                          Archivia recensione
-                        </button>
-                      </form>
-                    </details>
+                        🗄 Archivia
+                      </button>
+                    </form>
                   </footer>
                 </article>
               );
