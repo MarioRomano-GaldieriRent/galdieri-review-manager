@@ -774,20 +774,30 @@ export async function rispondiAllaRecensione(
   await nomeLoc.scrollIntoViewIfNeeded().catch(() => {});
   await page.waitForTimeout(300);
 
-  const rispondi = await rispondiVicinoA(page, nomeLoc);
+  // Il «Rispondi» accanto al nome; se la geometria non lo prende, ripiego sul
+  // primo «Rispondi» in pagina — la lista è filtrata sul cliente, quindi è il suo.
+  let rispondi = await rispondiVicinoA(page, nomeLoc);
+  if (!rispondi) {
+    const primo = page.getByRole("button", { name: /Rispondi/i }).first();
+    if ((await primo.count().catch(() => 0)) > 0 && (await primo.isVisible().catch(() => false))) {
+      rispondi = primo;
+      log("uso il primo «Rispondi» in pagina (lista filtrata sul cliente).");
+    }
+  }
   if (!rispondi) {
     return {
       scritto: false,
       via: "nessun-rispondi",
       abilitato: false,
-      dettaglio: `Trovato «${nome}» ma senza «Rispondi» accanto (forse ha già una risposta).`,
+      dettaglio: `Trovato «${nome}» ma nessun «Rispondi» cliccabile (forse ha già una risposta).`,
     };
   }
   await rispondi.scrollIntoViewIfNeeded().catch(() => {});
   await rispondi.click({ timeout: 6000 }).catch(() => {});
+  log("cliccato «Rispondi».");
   await page.waitForTimeout(1200);
 
-  // Testo vuoto = TEST PURO: apro solo il riquadro e non scrivo nulla.
+  // Testo vuoto = apro solo il riquadro, senza scrivere.
   if (!testo.trim()) {
     const riquadro =
       (await page.locator('textarea, [contenteditable="true"]').count().catch(() => 0)) > 0 ||
@@ -797,20 +807,22 @@ export async function rispondiAllaRecensione(
       via: "solo-aperto",
       abilitato: false,
       dettaglio: riquadro
-        ? "Riquadro di risposta APERTO — non ho scritto niente (test puro)."
+        ? "Riquadro di risposta APERTO — non ho scritto niente."
         : "Ho cliccato «Rispondi» ma non vedo comparire il riquadro.",
     };
   }
 
   const r = await scriviRisposta(page, testo);
-  log(`riquadro trovato via ${r.via}; «Pubblica» abilitato: ${r.abilitato}`);
+  const p = path.join(SCREENSHOT_DIR, "prova-sede-8-risposta.png");
+  await page.screenshot({ path: p }).catch(() => {});
+  log(`riquadro via ${r.via}; «Pubblica» abilitato: ${r.abilitato}; screenshot: ${p}`);
   return {
     scritto: r.scritto,
     via: r.via,
     abilitato: r.abilitato,
     dettaglio: r.scritto
-      ? "Bozza scritta nel riquadro — NON pubblicata."
-      : "Ho aperto «Rispondi» ma non sono riuscito a scrivere nel riquadro.",
+      ? "«Rispondi» cliccato e testo SCRITTO nel riquadro — NON pubblicato."
+      : "Ho cliccato «Rispondi» ma non sono riuscito a scrivere nel riquadro.",
   };
 }
 

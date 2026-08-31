@@ -14,10 +14,9 @@ import {
 //   2. clicca l'attività;
 //   3. clicca «Leggi recensioni»;
 //   4. cerca il nome del CLIENTE nel campo di ricerca delle recensioni;
-//   5. apre «Rispondi» accanto alla sua recensione.
-// NON pubblica MAI. Di default NON scrive nemmeno: apre solo il riquadro per
-// dimostrare che potrebbe rispondere. Lascia la finestra aperta; screenshot di
-// ogni tappa in data/robot-screenshot.
+//   5. clicca «Rispondi» accanto alla sua recensione e SCRIVE «Grazie.» (bozza).
+// NON pubblica MAI (non clicca «Pubblica risposta»): il testo resta una bozza
+// nel riquadro. Lascia la finestra aperta; screenshot in data/robot-screenshot.
 //
 // Prima chiudi TUTTE le finestre di Chrome (il robot apre il suo).
 //
@@ -25,8 +24,9 @@ import {
 // così la barra riceve SOLO la sede (mai sede + cliente):
 //
 //   "sede"                       apre solo la sede
-//   "sede // cliente"            sede, trova il cliente e APRE «Rispondi» (non scrive)
-//   "sede // cliente // testo"   come sopra, ma scrive la bozza (mai pubblicata)
+//   "sede // cliente"            sede, cliente, clicca «Rispondi» e scrive «Grazie.»
+//   "sede // cliente // testo"   scrive quel testo invece di «Grazie.»
+//   "sede // cliente // "        clicca «Rispondi» ma NON scrive (riquadro vuoto)
 //
 // Esempio:
 //   npm run robot:prova-sede -- "Galdieri Rent Orio al Serio - Milan Bergamo // Arthur Lavallée"
@@ -54,9 +54,10 @@ async function main() {
   const parti = raw.split("//");
   const argNome = (parti[0] ?? "").trim();
   const cliente = (parti[1] ?? "").trim();
-  // VUOTO = test puro: apre solo il riquadro, NON scrive. Un testo qui lo scrive
-  // come bozza (comunque mai pubblicata).
-  const testoRisposta = (parti[2] ?? "").trim();
+  // Testo della risposta: di default «Grazie.». Clicca «Rispondi» e lo SCRIVE
+  // nel riquadro come bozza — ma NON pubblica mai. Con "// vuoto" (terzo pezzo
+  // presente ma vuoto) apre solo il riquadro senza scrivere.
+  const testoRisposta = parti.length >= 3 ? (parti[2] ?? "").trim() : "Grazie.";
 
   let nomeGoogle = argNome;
   if (!nomeGoogle) {
@@ -100,9 +101,9 @@ async function main() {
 
     if (t.trovata) {
       if (testoRisposta) {
-        console.log(`\nProvo a rispondere «${testoRisposta}» — SCRIVO la bozza, NON pubblico…`);
+        console.log(`\nClicco «Rispondi» e scrivo «${testoRisposta}» — bozza, NON pubblico…`);
       } else {
-        console.log(`\nProvo ad aprire «Rispondi» — SENZA scrivere niente (test puro)…`);
+        console.log(`\nClicco «Rispondi» — senza scrivere niente…`);
       }
       const r = await rispondiAllaRecensione(page, cliente, testoRisposta, {
         log: (m) => console.log("   " + m),
