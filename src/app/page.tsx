@@ -438,6 +438,15 @@ export default async function HomePage({
 
               return (
                 <article key={r.chiave} className="card dash-card">
+                  {/* Archiviazione: nessun campo, un solo tocco. Il form vive qui
+                      (fuori dal form "Rispondi", che non si può annidare) e il
+                      bottone «Archivia», messo tra le azioni classiche, lo invia
+                      via attributo form=. */}
+                  <form id={`arch-${r.chiave}`} action={archiviaAction} className="dash-arch-form">
+                    <input type="hidden" name="chiave" value={r.chiave} />
+                    <input type="hidden" name="label" value={label?.id ?? ""} />
+                  </form>
+
                   <header className="dash-card-testa">
                     <div className="dash-autore">
                       <span className="dash-iniziale" aria-hidden="true">
@@ -505,6 +514,7 @@ export default async function HomePage({
                         </AnteprimaFlusso>
                         <BottoneGoogle chiave={r.chiave} label={label?.id ?? ""} nome={r.nome} />
                         <VediMail id={r.messaggioId} className="btn-mini" />
+                        <BottoneArchivia chiave={r.chiave} />
                       </div>
                     </form>
                   ) : tutte ? (
@@ -526,38 +536,27 @@ export default async function HomePage({
                       <div className="dash-azioni">
                         <BottoneGoogle chiave={r.chiave} label={label?.id ?? ""} nome={r.nome} />
                         <VediMail id={r.messaggioId} className="btn-mini" />
+                        <BottoneArchivia chiave={r.chiave} />
                       </div>
                     </form>
                   ) : (
-                    <p className="notice dash-senza-regola">
-                      Nessuna regola di risposta copre questa recensione: accendi una regola da{" "}
-                      <Link href="/impostazioni#automazioni">Impostazioni</Link>.
-                    </p>
+                    <>
+                      <p className="notice dash-senza-regola">
+                        Nessuna regola di risposta copre questa recensione: accendi una regola da{" "}
+                        <Link href="/impostazioni#automazioni">Impostazioni</Link>.
+                      </p>
+                      <div className="dash-azioni">
+                        <VediMail id={r.messaggioId} className="btn-mini" />
+                        <BottoneArchivia chiave={r.chiave} />
+                      </div>
+                    </>
                   )}
 
-                  <footer className="dash-piede">
-                    {r.risolto && <span className="flag flag-gray">ticket risolto</span>}
-                    {/* Un solo passo: scrivi il motivo (facoltativo) e archivia.
-                        La recensione sparisce dall'elenco e va nella tab «Archiviati». */}
-                    <form action={archiviaAction} className="archivia-form">
-                      <input type="hidden" name="chiave" value={r.chiave} />
-                      <input type="hidden" name="label" value={label?.id ?? ""} />
-                      <input
-                        name="motivo"
-                        className="archivia-motivo"
-                        placeholder="Motivo (facoltativo, es. impossibile da gestire)"
-                        maxLength={200}
-                        aria-label="Motivo dell'archiviazione"
-                      />
-                      <button
-                        type="submit"
-                        className="btn-mini btn-archivia"
-                        title="Mette da parte questa recensione: sparisce dall'elenco e va in Archiviati"
-                      >
-                        🗄 Archivia
-                      </button>
-                    </form>
-                  </footer>
+                  {r.risolto && (
+                    <footer className="dash-piede">
+                      <span className="flag flag-gray">ticket risolto</span>
+                    </footer>
+                  )}
                 </article>
               );
             })
@@ -700,6 +699,24 @@ export default async function HomePage({
 }
 
 // --- helper ----------------------------------------------------------------
+
+/**
+ * Bottone «Archivia» da mettere in fila con le azioni classiche (Rispondi, G,
+ * Vedi mail). Non ha un form suo: invia — con un solo tocco, senza motivo — il
+ * form nascosto `arch-<chiave>` che sta sulla card, tramite l'attributo form=.
+ */
+function BottoneArchivia({ chiave }: { chiave: string }) {
+  return (
+    <button
+      type="submit"
+      form={`arch-${chiave}`}
+      className="btn-mini btn-archivia"
+      title="Mette da parte questa recensione: sparisce dall'elenco e va in Archiviati"
+    >
+      🗄 Archivia
+    </button>
+  );
+}
 
 type Esec = Awaited<ReturnType<typeof caricaEsecuzioni>>[number];
 
