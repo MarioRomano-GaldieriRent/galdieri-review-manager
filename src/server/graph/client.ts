@@ -262,8 +262,19 @@ export async function getConversation(
 }
 
 /**
- * Cerca i messaggi il cui OGGETTO contiene un testo, con il corpo incluso.
- * Cerca su tutta la casella così prende anche risposte e notifiche del flusso.
+ * Le NOTIFICHE delle recensioni (oggetto che contiene il testo cercato) più
+ * recenti, col corpo incluso.
+ *
+ * La casella è enorme (decine di migliaia di email) e molto attiva: le notifiche
+ * di Zapier sono interlacciate con tante conferme «Ticket Creato». E Graph non
+ * aiuta: $search ordina per RILEVANZA (salta le recensioni recenti — caso reale:
+ * Arthur Lavallée, 5★ di oggi, non compariva), e $filter su oggetto/mittente NON
+ * si può combinare con $orderby su receivedDateTime ("restriction too complex").
+ *
+ * Quindi si SCORRE la Posta in arrivo ordinata per DATA (receivedDateTime desc),
+ * pagina per pagina, tenendo solo le notifiche delle recensioni (oggetto giusto,
+ * escluse le conferme «Ticket Creato»), finché non se ne raccolgono abbastanza o
+ * si esauriscono le pagine. Così le recensioni recenti ci sono sempre.
  */
 export async function searchMessages(opts: {
   subjectContains: string;
@@ -274,28 +285,48 @@ export async function searchMessages(opts: {
   if (!opts.subjectContains.trim()) return [];
   const { fetchGraph } = await ctx(opts.mailbox);
 
+  const oggetto = opts.subjectContains.trim().toLowerCase();
+  const mittente = (opts.fromContains ?? "").trim().toLowerCase();
+  const voluti = Math.min(opts.top ?? 60, 200);
+  const MAX_PAGINE = 8;
+
+  const risultati: MailDetail[] = [];
   const params = new URLSearchParams({
-    $search: `"subject:${opts.subjectContains.replace(/"/g, "")}"`,
+    $orderby: "receivedDateTime desc",
     $select: DETAIL_FIELDS,
-    $top: String(Math.min(opts.top ?? 50, 100)),
+    $top: "100",
   });
+  let path: string | null = `/mailFolders/Inbox/messages?${params}`;
 
-  const res = await fetchGraph(`/messages?${params}`, {
-    headers: { ConsistencyLevel: "eventual" },
-  });
+  for (let pagina = 0; path && pagina < MAX_PAGINE && risultati.length < voluti; pagina++) {
+    const res = await fetchGraph(path);
+    const json = (await res.json()) as {
+      value?: GraphMessage[];
+      "@odata.nextLink"?: string;
+      error?: { message?: string };
+    };
+    if (!res.ok) {
+      throw new Error(`Graph ${res.status}: ${json.error?.message ?? "lettura non riuscita"}`);
+    }
 
-  const json = (await res.json()) as { value?: GraphMessage[]; error?: { message?: string } };
-  if (!res.ok) {
-    throw new Error(`Graph ${res.status}: ${json.error?.message ?? "ricerca non riuscita"}`);
+    for (const m of (json.value ?? []).map(toDetail)) {
+      const s = m.subject.toLowerCase();
+      if (!s.includes(oggetto)) continue;
+      if (s.startsWith("ticket creato")) continue; // conferma Freshdesk, non una recensione
+      if (mittente && !m.fromAddress.toLowerCase().includes(mittente)) continue;
+      risultati.push(m);
+    }
+
+    // @odata.nextLink è un URL assoluto: si tiene la parte relativa (fetchGraph
+    // riaggiunge da sé la base della casella).
+    const next = json["@odata.nextLink"];
+    const i = next ? next.indexOf("/mailFolders") : -1;
+    path = i >= 0 ? next!.substring(i) : null;
   }
 
-  const needle = (opts.fromContains ?? "").trim().toLowerCase();
-  return (json.value ?? [])
-    .map(toDetail)
-    .filter((m) => !needle || m.fromAddress.toLowerCase().includes(needle))
-    .sort(
-      (a, b) => new Date(b.receivedDateTime).getTime() - new Date(a.receivedDateTime).getTime(),
-    );
+  return risultati.sort(
+    (a, b) => new Date(b.receivedDateTime).getTime() - new Date(a.receivedDateTime).getTime(),
+  );
 }
 
 /** Segna un messaggio come letto o non letto (richiede Mail.ReadWrite). */
