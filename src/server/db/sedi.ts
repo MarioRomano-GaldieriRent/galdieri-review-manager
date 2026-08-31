@@ -1,5 +1,6 @@
 import { coll } from "./connessione";
 import { registraAttivita, OPERATORE_SISTEMA } from "./attivita";
+import { normalizzaSede } from "./seed";
 
 // Lettura e modifica delle sedi, per la pagina admin che compila i link di
 // gestione recensioni su Google (la cascata dello spec §4). Le sedi nascono
@@ -49,6 +50,21 @@ export async function leggiSedi(): Promise<Sede[]> {
     .sort({ nome: 1 })
     .toArray()) as DocSede[];
   return righe.map(componi);
+}
+
+/**
+ * Il NOME con cui cercare su Google la sede di una recensione (il mapping). Si
+ * parte dal nome sede ricavato dall'email, lo si normalizza in chiave e si legge
+ * il nomeGoogle mappato. Stringa vuota se la sede non è mappata: in quel caso il
+ * robot ripiega sulla ricerca fra i gruppi.
+ */
+export async function nomeGoogleDiSede(nomeSede: string): Promise<string> {
+  const chiave = normalizzaSede(nomeSede);
+  if (!chiave) return "";
+  const d = (await (
+    await coll<DocSede>("sedi")
+  ).findOne({ _id: chiave }, { projection: { nomeGoogle: 1 } })) as DocSede | null;
+  return (d?.nomeGoogle ?? "").trim();
 }
 
 /**

@@ -16,6 +16,7 @@ import {
 import { chiudiFreshdeskPer } from "@/server/pubblicazione";
 import { archiviaRecensione, ripristinaRecensione } from "@/server/db/recensioni";
 import { normalizzaSede } from "@/server/db/seed";
+import { nomeGoogleDiSede } from "@/server/db/sedi";
 import { loadSettings, modoOperativo } from "@/server/settings";
 import { richiediOperatore } from "@/server/auth/sessione";
 import { impostaMostraTutte } from "@/server/auth/utenti";
@@ -218,7 +219,9 @@ export async function cercaSuGoogleAction(
     };
   }
 
-  return avviaRobotConEsito({ azione: "cerca", nome: r.nome, testo: risposta });
+  // Se la sede è mappata, il robot va dritto lì; altrimenti ripiega sui gruppi.
+  const nomeGoogle = await nomeGoogleDiSede(r.sede);
+  return avviaRobotConEsito({ azione: "cerca", nome: r.nome, testo: risposta, nomeGoogle });
 }
 
 /**
@@ -249,6 +252,7 @@ export async function playAction(formData: FormData): Promise<void> {
     azione: modo === "reale" ? "pubblica" : "test",
     nome: recensione.nome,
     testo: testo || "Grazie.",
+    nomeGoogle: await nomeGoogleDiSede(recensione.sede),
   });
 
   // Via libera: in Reale serve la pubblicazione vera; in simulazione basta che

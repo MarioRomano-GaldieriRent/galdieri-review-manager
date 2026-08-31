@@ -6,7 +6,16 @@ import { spawn, type ChildProcess } from "node:child_process";
 // runner stampa. È un'operazione LENTA (apre un browser): chi la chiama sa che
 // blocca finché il robot non ha finito.
 
-export type JobRobot = { azione: "test" | "pubblica" | "cerca"; nome: string; testo: string };
+export type JobRobot = {
+  azione: "test" | "pubblica" | "cerca";
+  nome: string;
+  testo: string;
+  /**
+   * Nome dell'attività su Google della sede (dal «Mapping»), se mappata: il
+   * robot va DRITTO su quella sede. Vuoto/assente = ripiego sui gruppi.
+   */
+  nomeGoogle?: string;
+};
 
 export type EsitoRobot = {
   ok: boolean;

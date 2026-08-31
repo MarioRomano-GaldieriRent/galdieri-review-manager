@@ -891,6 +891,49 @@ export async function rispondiAllaRecensione(
   };
 }
 
+export type EsitoPerSede = {
+  trovata: boolean;
+  scritto: boolean;
+  /** La radice (pagina o iframe) dove sta il riquadro: serve per pubblicare. */
+  root: Radice | null;
+  dettaglio: string;
+};
+
+/**
+ * Flusso PER-SEDE completo: cerca la sede (nomeGoogle), apre le sue recensioni,
+ * trova il cliente e — se `testo` c'è — scrive la bozza nel «Rispondi». NON
+ * pubblica: la pubblicazione la decide il chiamante usando la `root` ritornata.
+ * Usa la scheda `page` passata (ci naviga sopra).
+ */
+export async function rispondiPerSede(
+  page: Page,
+  nomeGoogle: string,
+  nomeCliente: string,
+  testo: string,
+  opts: { log?: (m: string) => void } = {},
+): Promise<EsitoPerSede> {
+  const log = opts.log ?? (() => {});
+
+  const sede = await apriSedePerNome(page, nomeGoogle, { log });
+  if (!sede.aperta || !sede.root) {
+    return { trovata: false, scritto: false, root: null, dettaglio: `sede «${nomeGoogle}»: ${sede.dettaglio}` };
+  }
+  const root = sede.root;
+
+  const t = await cercaClienteNelleRecensioni(root, nomeCliente, { log });
+  if (!t.trovata) {
+    return { trovata: false, scritto: false, root, dettaglio: `sede «${nomeGoogle}»: ${t.dettaglio}` };
+  }
+
+  const r = await rispondiAllaRecensione(root, nomeCliente, testo, { log });
+  return {
+    trovata: true,
+    scritto: r.scritto,
+    root,
+    dettaglio: `sede «${nomeGoogle}» · ${r.dettaglio}`,
+  };
+}
+
 export type Bersaglio = {
   chiave: string;
   nomeCliente: string;
