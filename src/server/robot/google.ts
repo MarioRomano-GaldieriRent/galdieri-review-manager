@@ -742,6 +742,60 @@ export async function cercaClienteNelleRecensioni(
   };
 }
 
+export type EsitoRisposta = { scritto: boolean; via: string; abilitato: boolean; dettaglio: string };
+
+/**
+ * Trovata la recensione del cliente (già in vista dopo la ricerca), apre il
+ * «Rispondi» accanto ad essa e SCRIVE il testo nel riquadro. NON pubblica: la
+ * bozza resta lì, la pubblicazione la decide il chiamante. Ritorna se ha scritto
+ * e se «Pubblica risposta» risulta abilitato.
+ */
+export async function rispondiAllaRecensione(
+  page: Page,
+  nomeCliente: string,
+  testo: string,
+  opts: { log?: (m: string) => void } = {},
+): Promise<EsitoRisposta> {
+  const log = opts.log ?? (() => {});
+  const nome = nomeCliente.trim();
+
+  const nomeLoc = page.getByText(nome, { exact: false }).first();
+  if ((await nomeLoc.count().catch(() => 0)) === 0) {
+    return {
+      scritto: false,
+      via: "nessun-nome",
+      abilitato: false,
+      dettaglio: `«${nome}» non è in pagina: va cercato prima.`,
+    };
+  }
+  await nomeLoc.scrollIntoViewIfNeeded().catch(() => {});
+  await page.waitForTimeout(300);
+
+  const rispondi = await rispondiVicinoA(page, nomeLoc);
+  if (!rispondi) {
+    return {
+      scritto: false,
+      via: "nessun-rispondi",
+      abilitato: false,
+      dettaglio: `Trovato «${nome}» ma senza «Rispondi» accanto (forse ha già una risposta).`,
+    };
+  }
+  await rispondi.scrollIntoViewIfNeeded().catch(() => {});
+  await rispondi.click({ timeout: 6000 }).catch(() => {});
+  await page.waitForTimeout(1200);
+
+  const r = await scriviRisposta(page, testo);
+  log(`riquadro trovato via ${r.via}; «Pubblica» abilitato: ${r.abilitato}`);
+  return {
+    scritto: r.scritto,
+    via: r.via,
+    abilitato: r.abilitato,
+    dettaglio: r.scritto
+      ? "Bozza scritta nel riquadro — NON pubblicata."
+      : "Ho aperto «Rispondi» ma non sono riuscito a scrivere nel riquadro.",
+  };
+}
+
 export type Bersaglio = {
   chiave: string;
   nomeCliente: string;

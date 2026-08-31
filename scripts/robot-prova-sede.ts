@@ -4,26 +4,27 @@ import {
   apriContesto,
   apriSedePerNome,
   cercaClienteNelleRecensioni,
+  rispondiAllaRecensione,
   sessioneAttiva,
   SCREENSHOT_DIR,
 } from "@/server/robot/google";
 
-// TEST della «parte 2» del mapping. Quattro passi, in ordine:
+// TEST della «parte 2» del mapping. Cinque passi, in ordine:
 //   1. cerca SOLO il nome dell'attività (la sede) nella barra di Google;
 //   2. clicca l'attività;
 //   3. clicca «Leggi recensioni»;
-//   4. cerca il nome del CLIENTE nel campo di ricerca delle recensioni.
-// Sola lettura: non scrive né pubblica. Lascia la finestra aperta; screenshot
-// di ogni tappa in data/robot-screenshot.
+//   4. cerca il nome del CLIENTE nel campo di ricerca delle recensioni;
+//   5. apre «Rispondi» e SCRIVE la bozza — ma NON pubblica niente.
+// Lascia la finestra aperta; screenshot di ogni tappa in data/robot-screenshot.
 //
 // Prima chiudi TUTTE le finestre di Chrome (il robot apre il suo).
 //
-// SEDE e CLIENTE si passano in UN SOLO argomento fra virgolette, separati da //
+// I pezzi si passano in UN SOLO argomento fra virgolette, separati da //
 // così la barra riceve SOLO la sede (mai sede + cliente):
 //
-//   npm run robot:prova-sede                        prima sede mappata, senza cliente
-//   npm run robot:prova-sede -- "Nome attività"     apre solo la sede
-//   npm run robot:prova-sede -- "Nome attività // Nome Cliente"   sede + poi il cliente
+//   "sede"                       apre solo la sede
+//   "sede // cliente"            sede, poi trova il cliente e scrive «Grazie.»
+//   "sede // cliente // testo"   sede, cliente, e scrive quel testo
 //
 // Esempio:
 //   npm run robot:prova-sede -- "Galdieri Rent Orio al Serio - Milan Bergamo // Arthur Lavallée"
@@ -51,6 +52,7 @@ async function main() {
   const parti = raw.split("//");
   const argNome = (parti[0] ?? "").trim();
   const cliente = (parti[1] ?? "").trim();
+  const testoRisposta = (parti[2] ?? "").trim() || "Grazie.";
 
   let nomeGoogle = argNome;
   if (!nomeGoogle) {
@@ -85,16 +87,28 @@ async function main() {
   console.log(`\n→ ${esito.aperta ? "APERTA ✓" : "non aperta"} · via ${esito.via} · ${esito.dettaglio}`);
 
   // Se abbiamo un cliente e siamo sulle recensioni, lo cerchiamo con il campo
-  // di ricerca delle recensioni (non scorrendo).
+  // di ricerca delle recensioni (non scorrendo) e poi proviamo a rispondere —
+  // SCRIVENDO la bozza, senza pubblicare nulla.
   if (cliente && esito.aperta) {
     console.log(`\nCerco la recensione di «${cliente}» in questa sede…`);
     const t = await cercaClienteNelleRecensioni(page, cliente, { log: (m) => console.log("   " + m) });
     console.log(`\n→ ${t.trovata ? "TROVATA ✓" : "non trovata"} · ${t.dettaglio}`);
+
+    if (t.trovata) {
+      console.log(`\nProvo a rispondere «${testoRisposta}» — SCRIVO soltanto, NON pubblico…`);
+      const r = await rispondiAllaRecensione(page, cliente, testoRisposta, {
+        log: (m) => console.log("   " + m),
+      });
+      console.log(
+        `\n→ ${r.scritto ? "RISPOSTA SCRITTA ✓ (non pubblicata)" : "non scritta"} · «Pubblica» abilitato: ${r.abilitato} · ${r.dettaglio}`,
+      );
+    }
   } else if (cliente) {
     console.log(`\n(Non cerco «${cliente}»: non sono arrivato alle recensioni della sede.)`);
   }
 
-  console.log("\n>>> Lascio la finestra APERTA: guarda se sei sulle recensioni della sede giusta.");
+  console.log("\n>>> Lascio la finestra APERTA. Se ho scritto una risposta è solo una BOZZA:");
+  console.log(">>> NON è pubblicata — la pubblichi TU a mano, o chiudendo si scarta.");
   console.log(`>>> Screenshot delle tappe in: ${SCREENSHOT_DIR}`);
   console.log(">>> Quando hai finito, torna qui e premi INVIO per chiudere.\n");
   await new Promise<void>((ok) => process.stdin.once("data", () => ok()));
