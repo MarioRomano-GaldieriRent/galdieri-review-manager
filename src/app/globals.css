@@ -215,6 +215,33 @@ code {
   gap: 20px;
 }
 
+/* Brand + voci di navigazione dell'header (es. Statistiche), a sinistra. */
+.app-header-sinistra {
+  display: flex;
+  align-items: center;
+  gap: 22px;
+  min-width: 0;
+}
+.header-link {
+  font-size: 0.95rem;
+  font-weight: 500;
+  color: var(--text-soft);
+  text-decoration: none;
+  padding: 5px 2px;
+  border-bottom: 2px solid transparent;
+  white-space: nowrap;
+  transition:
+    color 0.15s var(--ease),
+    border-color 0.15s var(--ease);
+}
+.header-link:hover {
+  color: var(--text);
+}
+.header-link.is-active {
+  color: var(--g-blue);
+  border-bottom-color: var(--g-blue);
+}
+
 /* ---------------------------------------- ingranaggio (unico menu dell'app) */
 .gear {
   position: relative;

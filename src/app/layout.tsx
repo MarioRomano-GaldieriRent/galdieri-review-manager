@@ -27,6 +27,7 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
   // non hanno testata e non passano dal controllo di sessione.
   const pathname = (await headers()).get("x-pathname") ?? "";
   const suLogin = pathname === "/login" || pathname.startsWith("/login/");
+  const suStatistiche = pathname === "/statistiche";
 
   // Gate vero: fuori dal login serve un operatore loggato. Un cookie scaduto o
   // fasullo (che il middleware lascia passare) viene fermato qui.
@@ -52,12 +53,21 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
         {operatore && (
           <header className="app-header">
             <div className="app-header-inner">
-              <Link href="/" className="brand" aria-label="GaldieriReviews — vai alla home">
-                <span className="logo">
-                  <span className="logo-name">Galdieri</span>
-                  <span className="logo-rent">Reviews</span>
-                </span>
-              </Link>
+              <div className="app-header-sinistra">
+                <Link href="/" className="brand" aria-label="GaldieriReviews — vai alla home">
+                  <span className="logo">
+                    <span className="logo-name">Galdieri</span>
+                    <span className="logo-rent">Reviews</span>
+                  </span>
+                </Link>
+                <Link
+                  href="/statistiche"
+                  className={`header-link${suStatistiche ? " is-active" : ""}`}
+                  aria-current={suStatistiche ? "page" : undefined}
+                >
+                  Statistiche
+                </Link>
+              </div>
               <GearMenu nome={operatore.nome} ruolo={operatore.ruolo} voci={voci} />
             </div>
           </header>
