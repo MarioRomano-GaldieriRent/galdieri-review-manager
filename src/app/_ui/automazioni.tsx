@@ -1,5 +1,11 @@
-import { CATALOGO, type Azione, type EsitoNodo, type Regola } from "@/server/automation/types";
-import { salvaNodoAction } from "../impostazioni/actions";
+import {
+  automazioneDi,
+  CATALOGO,
+  type Azione,
+  type EsitoNodo,
+  type Regola,
+} from "@/server/automation/types";
+import { salvaAutomazioneRegolaAction, salvaNodoAction } from "../impostazioni/actions";
 
 // Pezzi grafici condivisi fra i due pannelli:
 //   Impostazioni → PassoRegola, per capire e configurare il flusso
@@ -221,6 +227,120 @@ export function PassoAnteprima({ azione }: { azione: Azione }) {
         </ul>
       </div>
     </li>
+  );
+}
+
+const GIORNI = [
+  { n: 1, l: "Lun" },
+  { n: 2, l: "Mar" },
+  { n: 3, l: "Mer" },
+  { n: 4, l: "Gio" },
+  { n: 5, l: "Ven" },
+  { n: 6, l: "Sab" },
+  { n: 0, l: "Dom" },
+];
+
+/**
+ * Selettore del MODO DI AUTOMAZIONE di una regola: manuale (come oggi),
+ * automatico immediato, oppure automatico a fasce (giorni + orari + attesa).
+ * I campi delle fasce contano solo per «a fasce». È solo configurazione: il
+ * motore che la esegue davvero è un passo successivo.
+ */
+export function AutomazioneRegola({ regola }: { regola: Regola }) {
+  const a = automazioneDi(regola);
+  const ritardoInOre = a.ritardoMinuti > 0 && a.ritardoMinuti % 60 === 0;
+  const ritardoValore = ritardoInOre ? a.ritardoMinuti / 60 : a.ritardoMinuti;
+  const ore = Array.from({ length: 25 }, (_, i) => i); // 0..24
+
+  return (
+    <form action={salvaAutomazioneRegolaAction} className="regola-automazione">
+      <input type="hidden" name="id" value={regola.id} />
+      <div className="auto-titolo">Come deve partire</div>
+
+      <label className="auto-modo">
+        <input type="radio" name="modo" value="manuale" defaultChecked={a.modo === "manuale"} />
+        <span>
+          <strong>Manuale</strong> — parte solo quando la avvii tu (come oggi).
+        </span>
+      </label>
+      <label className="auto-modo">
+        <input type="radio" name="modo" value="immediato" defaultChecked={a.modo === "immediato"} />
+        <span>
+          <strong>Automatico immediato</strong> — appena arriva una recensione coperta, risponde da
+          solo.
+        </span>
+      </label>
+      <label className="auto-modo">
+        <input
+          type="radio"
+          name="modo"
+          value="programmato"
+          defaultChecked={a.modo === "programmato"}
+        />
+        <span>
+          <strong>Automatico a fasce</strong> — risponde da solo, ma solo nei giorni e negli orari
+          scelti e dopo un&apos;attesa.
+        </span>
+      </label>
+
+      <fieldset className="auto-fasce">
+        <legend>Fasce — valgono solo per «automatico a fasce»</legend>
+        <div className="auto-riga">
+          <span className="auto-etichetta">Giorni</span>
+          {GIORNI.map((g) => (
+            <label key={g.n} className="auto-giorno">
+              <input
+                type="checkbox"
+                name="giorni"
+                value={g.n}
+                defaultChecked={a.giorni.length === 0 || a.giorni.includes(g.n)}
+              />
+              {g.l}
+            </label>
+          ))}
+        </div>
+        <div className="auto-riga">
+          <label className="auto-campo">
+            Dalle
+            <select name="daOra" defaultValue={String(a.daOra)}>
+              {ore.slice(0, 24).map((h) => (
+                <option key={h} value={h}>
+                  {String(h).padStart(2, "0")}:00
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="auto-campo">
+            alle
+            <select name="aOra" defaultValue={String(a.aOra)}>
+              {ore.slice(1).map((h) => (
+                <option key={h} value={h}>
+                  {String(h).padStart(2, "0")}:00
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="auto-campo">
+            Attesa dall&apos;arrivo
+            <input
+              type="number"
+              name="ritardo"
+              min={0}
+              defaultValue={String(ritardoValore)}
+              className="auto-numero"
+            />
+            <select name="ritardoUnita" defaultValue={ritardoInOre ? "ore" : "minuti"}>
+              <option value="minuti">minuti</option>
+              <option value="ore">ore</option>
+            </select>
+          </label>
+        </div>
+      </fieldset>
+
+      <button type="submit" className="btn-secondary">
+        Salva automazione
+      </button>
+    </form>
   );
 }
 

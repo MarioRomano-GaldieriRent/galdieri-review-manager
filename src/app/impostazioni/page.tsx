@@ -13,6 +13,7 @@ import { getGoogleReviewsStatus } from "@/server/integrations/googleReviews";
 import { caricaRegole } from "@/server/automation/rules";
 import { richiediAdmin } from "@/server/auth/sessione";
 import {
+  AutomazioneRegola,
   descriviCondizione,
   PassoRegola,
   quandoScatta,
@@ -285,6 +286,8 @@ export default async function ImpostazioniPage({
                           />
                         ))}
                       </ol>
+
+                      <AutomazioneRegola regola={r} />
 
                       <form action={cambiaStatoRegolaAction} className="regola-interruttore">
                         <input type="hidden" name="id" value={r.id} />

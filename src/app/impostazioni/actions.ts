@@ -7,6 +7,7 @@ import { testGraphConnection } from "@/server/graph/client";
 import { testTranslator } from "@/server/translate";
 import { testFreshdesk } from "@/server/integrations/freshdesk";
 import { caricaRegole, regoleDiDefault, salvaRegole } from "@/server/automation/rules";
+import type { ModoAutomazione } from "@/server/automation/types";
 import { richiediAdmin } from "@/server/auth/sessione";
 
 // TUTTE le azioni di questo pannello sono riservate agli AMMINISTRATORI: toccano
@@ -87,6 +88,43 @@ export async function cambiaStatoRegolaAction(formData: FormData): Promise<void>
   const r = regole.find((x) => x.id === id);
   if (!r) return;
   r.attiva = !r.attiva;
+  await salvaRegole(regole);
+  refresh();
+}
+
+/**
+ * Salva il MODO DI AUTOMAZIONE di una regola: manuale, automatico immediato o
+ * automatico a fasce (giorni + orari + attesa). Per ora è solo configurazione —
+ * il motore che la esegue è un passo successivo.
+ */
+export async function salvaAutomazioneRegolaAction(formData: FormData): Promise<void> {
+  await richiediAdmin();
+  const id = str(formData, "id");
+  const regole = await caricaRegole();
+  const r = regole.find((x) => x.id === id);
+  if (!r) return;
+
+  const modoIn = str(formData, "modo");
+  const modo: ModoAutomazione =
+    modoIn === "immediato" ? "immediato" : modoIn === "programmato" ? "programmato" : "manuale";
+
+  const giorni = [
+    ...new Set(
+      formData
+        .getAll("giorni")
+        .map((v) => Number(v))
+        .filter((n) => Number.isInteger(n) && n >= 0 && n <= 6),
+    ),
+  ].sort((a, b) => a - b);
+
+  const ora = (chiave: string, def: number) => {
+    const n = Math.round(Number(str(formData, chiave)));
+    return Number.isFinite(n) ? Math.min(24, Math.max(0, n)) : def;
+  };
+  const valore = Math.max(0, Math.round(Number(str(formData, "ritardo")) || 0));
+  const ritardoMinuti = str(formData, "ritardoUnita") === "ore" ? valore * 60 : valore;
+
+  r.automazione = { modo, giorni, daOra: ora("daOra", 9), aOra: ora("aOra", 19), ritardoMinuti };
   await salvaRegole(regole);
   refresh();
 }

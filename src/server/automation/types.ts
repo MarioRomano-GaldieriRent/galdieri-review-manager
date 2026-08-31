@@ -176,7 +176,45 @@ export type Regola = {
   attiva: boolean;
   condizione: Condizione;
   azioni: Azione[];
+  /** Come parte il flusso. Assente = manuale (comportamento storico). */
+  automazione?: Automazione;
 };
+
+// ------------------------------------------------------------- automazione
+
+export type ModoAutomazione = "manuale" | "immediato" | "programmato";
+
+/**
+ * Come deve partire il flusso di una regola:
+ *   manuale     → parte solo quando l'operatore la avvia (default, come oggi);
+ *   immediato   → appena arriva una recensione coperta, risponde da solo;
+ *   programmato → risponde da solo, ma solo nei giorni/orari scelti e dopo
+ *                 un'attesa dall'arrivo.
+ * I campi giorni/daOra/aOra/ritardoMinuti contano solo per "programmato".
+ */
+export type Automazione = {
+  modo: ModoAutomazione;
+  /** Giorni ammessi (0=dom … 6=sab); vuoto = tutti i giorni. */
+  giorni: number[];
+  /** Fascia oraria ammessa, ore 0–24 (es. 9 → 19). */
+  daOra: number;
+  aOra: number;
+  /** Attesa dall'arrivo della recensione prima di rispondere, in minuti. */
+  ritardoMinuti: number;
+};
+
+export const AUTOMAZIONE_DEFAULT: Automazione = {
+  modo: "manuale",
+  giorni: [],
+  daOra: 9,
+  aOra: 19,
+  ritardoMinuti: 0,
+};
+
+/** L'automazione della regola, coi valori di default per i campi mancanti. */
+export function automazioneDi(r: Regola): Automazione {
+  return { ...AUTOMAZIONE_DEFAULT, ...(r.automazione ?? {}) };
+}
 
 /** Vero se la recensione ricade nella condizione della regola. */
 export function condizioneSoddisfatta(

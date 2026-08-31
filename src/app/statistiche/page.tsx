@@ -392,33 +392,6 @@ export default async function StatistichePage() {
           </p>
         )}
       </section>
-
-      <section className="card">
-        <h2>Cosa non si può ancora dire</h2>
-        <ul className="stat-limiti">
-          <li>
-            <strong>Confronti con i mesi passati:</strong> l&apos;archivio nasce ora. Mesi vuoti si
-            leggerebbero come un crollo, non come assenza di dati.
-          </li>
-          <li>
-            <strong>Prima e dopo l&apos;automazione:</strong> non esiste un «prima» raccolto con lo
-            stesso metodo.
-          </li>
-          <li>
-            <strong>Stagionalità:</strong> nel noleggio è fortissima. Confrontare luglio con
-            novembre senza un anno intero di base non è un confronto, è un artefatto.
-          </li>
-          <li>
-            <strong>Tempo di risposta al cliente:</strong> si sa misurare il tempo dall&apos;arrivo
-            dell&apos;email, non da quando il cliente ha scritto la recensione. Quello vero è più
-            lungo.
-          </li>
-          <li>
-            <strong>Chi lavora da Outlook non lascia traccia:</strong> le risposte scritte fuori da
-            qui si vedono come «già risposta», ma non se ne conosce il momento esatto.
-          </li>
-        </ul>
-      </section>
     </main>
   );
 }
