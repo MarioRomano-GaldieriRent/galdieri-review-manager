@@ -17,6 +17,7 @@
     "test:lingua": "tsx --tsconfig tsconfig.json scripts/test-lingua.ts",
     "analisi:trustpilot": "tsx --tsconfig tsconfig.json scripts/analisi-trustpilot.ts",
     "travaso": "tsx --tsconfig tsconfig.json scripts/travaso-sqlite.ts",
+    "db:schema": "tsx --tsconfig tsconfig.json scripts/applica-schema.ts",
     "verifica:db": "tsx --tsconfig tsconfig.json scripts/verifica-db.ts",
     "crea-utente": "tsx --tsconfig tsconfig.json scripts/crea-utente.ts",
     "robot:sessione": "tsx --tsconfig tsconfig.json scripts/robot-cattura-sessione.ts",
