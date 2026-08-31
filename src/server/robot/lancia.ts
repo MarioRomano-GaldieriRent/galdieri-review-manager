@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 
 // Avvia il robot "usa e getta" (scripts/robot-esegui.ts) come processo figlio e
 // ne aspetta l'esito. Il lavoro viaggia nell'env ROBOT_JOB (niente argomenti da
@@ -17,12 +17,46 @@ export type EsitoRobot = {
   scritto?: boolean;
 };
 
+// -------------------------------------------------------------- un robot per volta
+//
+// Chrome usa un profilo a ISTANZA SINGOLA: due robot insieme si contenderebbero
+// lo stesso browser (crash o dirottamento). Questo lucchetto in memoria impedisce
+// il secondo avvio finché il primo non è finito (o l'operatore non ha chiuso la
+// sua finestra). Node è a thread singolo e fra il controllo e lo spawn non c'è
+// alcun await, quindi due click contemporanei NON possono passare entrambi. Vive
+// nel processo del server: se il server riparte si azzera, ma resta la rete di
+// sicurezza chromeInEsecuzione() dentro il robot.
+let robotInUso = false;
+
+function esitoOccupato(): EsitoRobot {
+  return {
+    ok: false,
+    stato: "occupato",
+    messaggio:
+      "🤖 Il robot è già in uso: aspetta che finisca l'operazione in corso (o chiudi la sua finestra di Chrome sul server), poi riprova.",
+  };
+}
+
+/** Segna il robot occupato finché il processo figlio non esce (finestra chiusa). */
+function tieniOccupato(child: ChildProcess): void {
+  robotInUso = true;
+  child.once("exit", () => {
+    robotInUso = false;
+  });
+}
+
+/** true se un robot è in esecuzione adesso. */
+export function robotOccupato(): boolean {
+  return robotInUso;
+}
+
 /**
  * Avvia il robot e NON aspetta: apre il browser e lo lascia in mano
  * all'operatore (usato dal tasto "G" con azione "cerca"). Processo sganciato,
  * così l'azione del server torna subito e la finestra resta aperta da sola.
  */
 export function avviaRobotSganciato(job: JobRobot): void {
+  if (robotInUso) return; // già occupato: non aprire un secondo Chrome
   const child = spawn("npm run --silent robot:esegui", {
     cwd: process.cwd(),
     env: { ...process.env, ROBOT_JOB: JSON.stringify(job) },
@@ -31,6 +65,7 @@ export function avviaRobotSganciato(job: JobRobot): void {
     detached: true,
     stdio: "ignore",
   });
+  tieniOccupato(child);
   child.unref(); // scollega il figlio: vive per conto suo, non blocca il server
 }
 
@@ -46,6 +81,7 @@ export function avviaRobotConEsito(
   job: JobRobot,
   { attesaMs = 150_000 }: { attesaMs?: number } = {},
 ): Promise<EsitoRobot> {
+  if (robotInUso) return Promise.resolve(esitoOccupato());
   return new Promise((resolve) => {
     const child = spawn("npm run --silent robot:esegui", {
       cwd: process.cwd(),
@@ -55,6 +91,7 @@ export function avviaRobotConEsito(
       detached: true,
       stdio: ["ignore", "pipe", "pipe"],
     });
+    tieniOccupato(child);
 
     let out = "";
     let risolto = false;
@@ -123,6 +160,7 @@ export function avviaRobotConEsito(
 }
 
 export async function lanciaRobot(job: JobRobot): Promise<EsitoRobot> {
+  if (robotInUso) return esitoOccupato();
   return new Promise((resolve) => {
     // shell:true → funziona sia con npm.cmd su Windows sia con npm su unix;
     // il comando è FISSO e il job passa dall'ambiente, quindi niente iniezione.
@@ -132,6 +170,7 @@ export async function lanciaRobot(job: JobRobot): Promise<EsitoRobot> {
       shell: true,
       windowsHide: false, // la finestra del browser dev'essere visibile
     });
+    tieniOccupato(child);
 
     let out = "";
     let risolto = false;
