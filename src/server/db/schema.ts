@@ -155,9 +155,13 @@ export const COLLEZIONI: DefColl[] = [
           _id: { bsonType: "string" }, // "" ammesso: è la sentinella
           nome: { bsonType: "string", minLength: 1 },
           tagFreshdesk: stringaOFalsa,
+          // Il MAPPING: il nome con cui cercare la sede su Google (l'attività
+          // commerciale). Stabile — il link cambia, il nome no — ed è ciò che il
+          // robot userà per andare dritto alla sede.
+          nomeGoogle: stringaOFalsa,
           // Per la coda di pubblicazione manuale: l'URL di gestione recensioni
           // della sede su Google (fallback affidabile) e il place_id, da cui
-          // costruire il link quando l'URL non c'è. Entrambi opzionali: le sedi
+          // costruire il link quando l'URL non c'è. Tutti opzionali: le sedi
           // esistenti non li hanno finché l'admin non li compila.
           googleReviewsUrl: stringaOFalsa,
           placeId: stringaOFalsa,

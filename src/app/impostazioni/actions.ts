@@ -9,7 +9,7 @@ import { testFreshdesk } from "@/server/integrations/freshdesk";
 import { caricaRegole, regoleDiDefault, salvaRegole } from "@/server/automation/rules";
 import type { ModoAutomazione } from "@/server/automation/types";
 import { richiediAdmin } from "@/server/auth/sessione";
-import { impostaLinkSede, leggiSedi } from "@/server/db/sedi";
+import { impostaNomeGoogleSede } from "@/server/db/sedi";
 
 // TUTTE le azioni di questo pannello sono riservate agli AMMINISTRATORI: toccano
 // segreti (Graph, Freshdesk, Translator, Google), la modalità reale e le regole.
@@ -159,18 +159,16 @@ export async function ripristinaRegoleAction(): Promise<void> {
 // ----------------------------------------------------------- mapping sedi
 
 /**
- * Salva il link dell'ATTIVITÀ Google di una sede (la sua pagina di gestione
- * recensioni). È lo stesso campo googleReviewsUrl usato in /sedi: qui lo si
- * compila dal «Mapping» in Impostazioni, sede per sede, così il robot potrà
- * andare dritto alla pagina giusta invece di cercare fra i gruppi. Il place_id
- * eventuale non si tocca. La sede esiste già (nasce dalle recensioni).
+ * Salva il NOME con cui cercare la sede su Google (il nome dell'attività
+ * commerciale). È il dato del «Mapping» in Impostazioni: stabile, mentre il
+ * link cambia. Con questo il robot potrà andare dritto alla sede invece di
+ * cercare fra i gruppi. La sede esiste già (nasce dalle recensioni).
  */
 export async function salvaMappingSedeAction(formData: FormData): Promise<void> {
   await richiediAdmin();
   const chiave = str(formData, "chiave");
   if (!chiave) return;
-  const attuale = (await leggiSedi()).find((s) => s.chiave === chiave);
-  await impostaLinkSede(chiave, str(formData, "googleReviewsUrl"), attuale?.placeId ?? "");
+  await impostaNomeGoogleSede(chiave, str(formData, "nomeGoogle"));
   refresh();
 }
 

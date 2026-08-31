@@ -10,6 +10,12 @@ export type Sede = {
   chiave: string;
   nome: string;
   tagFreshdesk: string;
+  /**
+   * Il NOME con cui cercare la sede su Google (il nome dell'attività
+   * commerciale). È il dato STABILE del mapping: il link cambia, il nome no.
+   * È ciò che il robot userà per andare dritto alla sede.
+   */
+  nomeGoogle: string;
   googleReviewsUrl: string;
   placeId: string;
 };
@@ -18,6 +24,7 @@ type DocSede = {
   _id: string;
   nome: string;
   tagFreshdesk?: string;
+  nomeGoogle?: string;
   googleReviewsUrl?: string;
   placeId?: string;
 };
@@ -27,6 +34,7 @@ function componi(d: DocSede): Sede {
     chiave: d._id,
     nome: d.nome,
     tagFreshdesk: d.tagFreshdesk ?? "",
+    nomeGoogle: d.nomeGoogle ?? "",
     googleReviewsUrl: d.googleReviewsUrl ?? "",
     placeId: d.placeId ?? "",
   };
@@ -41,6 +49,30 @@ export async function leggiSedi(): Promise<Sede[]> {
     .sort({ nome: 1 })
     .toArray()) as DocSede[];
   return righe.map(componi);
+}
+
+/**
+ * Imposta il NOME con cui cercare la sede su Google (il nome dell'attività
+ * commerciale). È il dato del «Mapping»: stabile, mentre il link cambia. La
+ * sentinella "" non è una sede vera e non deve riceverlo.
+ */
+export async function impostaNomeGoogleSede(
+  chiave: string,
+  nomeGoogle: string,
+  operatoreId = OPERATORE_SISTEMA,
+): Promise<boolean> {
+  if (!chiave.trim()) return false;
+  const r = await (
+    await coll("sedi")
+  ).updateOne({ _id: chiave }, { $set: { nomeGoogle: nomeGoogle.trim() } });
+  if (r.matchedCount === 0) return false;
+  await registraAttivita("sede.link", {
+    operatoreId,
+    oggettoTipo: "sede",
+    oggettoId: chiave,
+    dettaglio: `Nome Google del mapping: ${nomeGoogle.trim() ? `«${nomeGoogle.trim()}»` : "(rimosso)"}`,
+  });
+  return true;
 }
 
 export async function impostaLinkSede(

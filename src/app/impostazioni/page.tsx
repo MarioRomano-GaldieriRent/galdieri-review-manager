@@ -93,7 +93,7 @@ export default async function ImpostazioniPage({
       caricaRegole(),
       leggiSedi(),
     ]);
-  const sediMappate = sedi.filter((s) => s.googleReviewsUrl).length;
+  const sediMappate = sedi.filter((s) => s.nomeGoogle).length;
 
   const simulazione = settings.modo !== "reale";
   const graphOk = isSet(graph.tenantId) && isSet(graph.clientId) && isSet(graph.clientSecret);
@@ -387,10 +387,11 @@ export default async function ImpostazioniPage({
                 </div>
                 <p className="hint">
                   Ogni «sede» qui sotto è ricavata dall&apos;oggetto delle email delle recensioni
-                  (es. <em>Orio al Serio Milano-Bergamo</em>). Incolla accanto il link della sua{" "}
-                  <strong>attività su Google</strong> — la pagina di gestione recensioni di quella
-                  sede — così il robot potrà andare dritto lì invece di cercare fra i gruppi. Le sedi
-                  più attive sono in cima.
+                  (es. <em>Orio al Serio Milano-Bergamo</em>). Scrivi accanto il{" "}
+                  <strong>nome con cui la sede si trova su Google</strong> (il nome dell&apos;attività
+                  commerciale): è il dato stabile — il link cambia, il nome no — e con questo il
+                  robot potrà andare dritto alla sede invece di cercare fra i gruppi. Le sedi più
+                  attive sono in cima.
                 </p>
                 {conteggi && conteggi.nonRiconosciute > 0 && (
                   <p className="notice">
@@ -399,8 +400,8 @@ export default async function ImpostazioniPage({
                   </p>
                 )}
                 <p className="hint">
-                  Per compilarle tutte in una volta (CSV, place_id) c&apos;è la pagina completa{" "}
-                  <Link href="/sedi">Sedi</Link>.
+                  Cosa diversa: la pagina <Link href="/sedi">Sedi</Link> serve al{" "}
+                  <em>link diretto</em> per «Apri su Google» nella coda (il link, non il nome).
                 </p>
               </section>
 
@@ -419,35 +420,23 @@ export default async function ImpostazioniPage({
                           <span className="conn-badge conn-ok">
                             {s.conteggio} {s.conteggio === 1 ? "recensione" : "recensioni"}
                           </span>
-                          <span
-                            className={`conn-badge ${s.googleReviewsUrl ? "conn-ok" : "conn-ko"}`}
-                          >
-                            {s.googleReviewsUrl ? "mappata" : "da mappare"}
+                          <span className={`conn-badge ${s.nomeGoogle ? "conn-ok" : "conn-ko"}`}>
+                            {s.nomeGoogle ? "mappata" : "da mappare"}
                           </span>
                         </div>
                         <div className="filters-row">
                           <label className="field grow">
-                            <span>Attività Google — link gestione recensioni</span>
+                            <span>Nome con cui cercarla su Google</span>
                             <input
-                              name="googleReviewsUrl"
-                              defaultValue={s.googleReviewsUrl}
-                              placeholder="https://business.google.com/reviews/…"
+                              name="nomeGoogle"
+                              defaultValue={s.nomeGoogle}
+                              placeholder={`es. ${s.nome}`}
                             />
                           </label>
                           <div className="filters-actions">
                             <button type="submit" className="btn-mini">
                               Salva
                             </button>
-                            {s.googleReviewsUrl && (
-                              <a
-                                className="btn-mini"
-                                href={s.googleReviewsUrl}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                              >
-                                Apri ↗
-                              </a>
-                            )}
                           </div>
                         </div>
                       </form>
