@@ -2838,16 +2838,6 @@ main.pipeline .pub-tabs {
   margin-top: 12px;
 }
 
-.dash-piede {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  flex-wrap: wrap;
-  margin-top: 13px;
-  padding-top: 13px;
-  border-top: 1px solid var(--border);
-}
-
 /* ------------------------------------------------- riepilogo dell'ultima */
 
 .dash-riepilogo {

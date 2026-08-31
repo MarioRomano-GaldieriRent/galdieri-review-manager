@@ -247,9 +247,17 @@ export default async function HomePage({
       //  - ciò a cui ha GIÀ RISPOSTO l'operatore a mano (haRisposta): gestita
       //    fuori dal nostro flusso, e non finisce nemmeno nello Storico;
       //  - ciò che è stato ARCHIVIATO a mano (es. impossibile da gestire): va
-      //    nella tab «Archiviati», da dove si può ripristinare.
+      //    nella tab «Archiviati», da dove si può ripristinare;
+      //  - ciò il cui ticket risulta GIÀ RISOLTO da fuori (email «ticket
+      //    risolto» nel thread): l'ha chiuso qualcun altro, NON il nostro
+      //    sistema — quello che gestiamo noi è già uscito come "pubblicata",
+      //    quindi ciò che resta con questo segnale non ci riguarda più.
       .filter(
-        (r) => !pubblicate.has(r.chiave) && !r.haRisposta && !archiviateChiavi.has(r.chiave),
+        (r) =>
+          !pubblicate.has(r.chiave) &&
+          !r.haRisposta &&
+          !archiviateChiavi.has(r.chiave) &&
+          !r.risolto,
       )
       .map((r) => ({ r, regola: regolaPer(regole, r.stelle, haTesto(r)) }))
       // Occhio spento: solo le recensioni coperte da una regola ATTIVA (default).
@@ -552,11 +560,6 @@ export default async function HomePage({
                     </>
                   )}
 
-                  {r.risolto && (
-                    <footer className="dash-piede">
-                      <span className="flag flag-gray">ticket risolto</span>
-                    </footer>
-                  )}
                 </article>
               );
             })
