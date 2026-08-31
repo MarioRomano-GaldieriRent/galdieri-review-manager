@@ -658,13 +658,36 @@ export async function cercaClienteNelleRecensioni(
     log(`screenshot: ${p}`);
   };
 
-  // Il campo "cerca tra le recensioni" (diverso da quello delle sedi/attività).
+  // Diagnostica: elenca i campi di input VISIBILI con i loro attributi. Serve a
+  // capire con certezza qual è la ricerca DELLE RECENSIONI (placeholder /
+  // aria-label) e agganciarla, invece di indovinare.
+  const campiInfo = await page
+    .$$eval("input, textarea, [role=searchbox], [role=combobox]", (els) =>
+      els
+        .filter((e) => (e as HTMLElement).offsetParent !== null)
+        .map((e) => ({
+          tag: e.tagName.toLowerCase(),
+          type: e.getAttribute("type") || "",
+          role: e.getAttribute("role") || "",
+          placeholder: e.getAttribute("placeholder") || "",
+          aria: e.getAttribute("aria-label") || "",
+        })),
+    )
+    .catch(() => []);
+  log(`campi di input in pagina: ${JSON.stringify(campiInfo).slice(0, 700)}`);
+
+  // Il campo "cerca tra le recensioni" — deve riferirsi a RECENSIONI/recensore,
+  // NON alla ricerca delle attività (che resta in alto): quella, riempita col
+  // nome della persona, cercherebbe un'attività inesistente.
+  const perRecensioni = /recensione|recensioni|recensore|review|reviewer/i;
   const trovaCampo = async (): Promise<Locator | null> => {
     for (const loc of [
-      page.getByPlaceholder(/cerc.*recension|nelle recensioni|search.*review/i),
-      page.locator('input[aria-label*="recension" i], input[aria-label*="review" i]'),
-      page.getByRole("searchbox"),
-      page.locator('input[type="search"]'),
+      page.getByPlaceholder(perRecensioni),
+      page.locator(
+        'input[aria-label*="recension" i], input[aria-label*="recensore" i], input[aria-label*="review" i]',
+      ),
+      page.getByRole("searchbox", { name: perRecensioni }),
+      page.getByRole("combobox", { name: perRecensioni }),
     ]) {
       const c = loc.first();
       if ((await c.count().catch(() => 0)) > 0 && (await c.isVisible().catch(() => false))) return c;
@@ -673,9 +696,11 @@ export async function cercaClienteNelleRecensioni(
   };
 
   let campo = await trovaCampo();
-  // Il campo può stare dietro un'icona "lente": provo ad aprirla.
+  // Il campo può stare dietro un'icona "lente" da aprire prima.
   if (!campo) {
-    const lente = page.getByRole("button", { name: /cerca|search/i }).first();
+    const lente = page
+      .getByRole("button", { name: /cerca.*recension|cerca nelle recension|search.*review/i })
+      .first();
     if ((await lente.count().catch(() => 0)) > 0 && (await lente.isVisible().catch(() => false))) {
       await lente.click().catch(() => {});
       await page.waitForTimeout(1000);
