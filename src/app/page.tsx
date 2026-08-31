@@ -199,7 +199,13 @@ export default async function HomePage({
     // commento", accendendone altre in Impostazioni compaiono anche le loro.
     const pubblicate = await chiaviPubblicate();
     daApprovare = recensioni
-      .filter((r) => !pubblicate.has(r.chiave))
+      // Fuori dall'elenco:
+      //  - ciò che abbiamo già pubblicato noi (stato pubblicata/verificata);
+      //  - ciò a cui ha GIÀ RISPOSTO l'operatore a mano — nel thread c'è una
+      //    risposta di una persona @galdierirent.it (haRisposta). È gestita fuori
+      //    dal nostro flusso: non c'è niente da approvare, e non finisce nemmeno
+      //    nello Storico, che raccoglie solo le risposte pubblicate DAL sito.
+      .filter((r) => !pubblicate.has(r.chiave) && !r.haRisposta)
       .map((r) => ({ r, regola: regolaPer(regole, r.stelle, haTesto(r)) }))
       .filter((x) => x.regola !== null);
 
@@ -428,12 +434,9 @@ export default async function HomePage({
                     </p>
                   )}
 
-                  {(r.haRisposta || r.risolto) && (
+                  {r.risolto && (
                     <footer className="dash-piede">
-                      {r.haRisposta && (
-                        <span className="flag flag-green">già risposta in posta</span>
-                      )}
-                      {r.risolto && <span className="flag flag-gray">ticket risolto</span>}
+                      <span className="flag flag-gray">ticket risolto</span>
                     </footer>
                   )}
                 </article>
