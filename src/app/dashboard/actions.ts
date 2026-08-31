@@ -18,7 +18,7 @@ import { normalizzaSede } from "@/server/db/seed";
 import { loadSettings, modoOperativo } from "@/server/settings";
 import { richiediOperatore } from "@/server/auth/sessione";
 import { cercaTicketPerRecensione, STATO } from "@/server/integrations/freshdesk";
-import { avviaRobotSganciato, lanciaRobot, type EsitoRobot } from "@/server/robot/lancia";
+import { avviaRobotConEsito, lanciaRobot, type EsitoRobot } from "@/server/robot/lancia";
 import { chromeInEsecuzione } from "@/server/robot/google";
 
 // Le tre azioni della dashboard: approvare la risposta, inoltrare al customer
@@ -50,6 +50,18 @@ async function trovaRecensione(fd: FormData): Promise<Recensione> {
   const r = recensioni.find((x) => x.chiave === chiave);
   if (!r) indietro(fd, { errore: "recensione-non-trovata" });
   return r;
+}
+
+/** Come sopra, ma per le azioni che RITORNANO un valore (non redirigono). */
+async function trovaRecensionePerChiave(
+  chiave: string,
+  labelId: string,
+): Promise<Recensione | null> {
+  const settings = await loadSettings();
+  const label = settings.labels.find((l) => l.id === labelId) ?? settings.labels[0];
+  if (!chiave || !label) return null;
+  const { recensioni } = await caricaRecensioni(label);
+  return recensioni.find((x) => x.chiave === chiave) ?? null;
 }
 
 /**
@@ -165,36 +177,36 @@ function esitoQuery(chiave: string, e: EsitoRobot): Record<string, string> {
 }
 
 /**
- * Tasto "G": apre il robot su Google, trova la recensione e SI FERMA lì con la
- * risposta pronta nel riquadro, lasciando il browser aperto. Da lì l'operatore
- * guarda e decide (pubblica, modifica, annulla). Avvio SGANCIATO: l'azione
- * torna subito, la finestra resta aperta per conto suo.
+ * Tasto "G" (chiamato dal client, RITORNA l'esito): apre il robot su Google e
+ * aspetta SOLO il primo esito — trovata / non trovata — che il runner stampa
+ * appena finita la ricerca; poi lascia la finestra aperta per conto suo. Così il
+ * front mostra "sto cercando…" e subito dopo l'esito, senza ricaricare la pagina.
  */
-export async function apriGoogleAction(formData: FormData): Promise<void> {
+export async function cercaSuGoogleAction(
+  chiave: string,
+  labelId: string,
+  testo: string,
+): Promise<EsitoRobot> {
   await richiediOperatore();
-  const r = await trovaRecensione(formData);
-  const testo = String(formData.get("testo") ?? "").trim() || "Grazie.";
 
-  if (chromeInEsecuzione()) {
-    indietro(
-      formData,
-      esitoQuery(r.chiave, {
-        ok: false,
-        stato: "chrome-aperto",
-        messaggio: "Chiudi tutte le finestre di Chrome, poi riclicca la G: il robot deve aprire il suo Chrome.",
-      }),
-    );
+  const r = await trovaRecensionePerChiave(chiave, labelId);
+  if (!r) {
+    return {
+      ok: false,
+      stato: "recensione-non-trovata",
+      messaggio: "Recensione non più in elenco: aggiorna la pagina e riprova.",
+    };
   }
 
-  avviaRobotSganciato({ azione: "cerca", nome: r.nome, testo });
-  indietro(
-    formData,
-    esitoQuery(r.chiave, {
-      ok: true,
-      stato: "robot-aperto",
-      messaggio: `🤖 Apro il robot su Google e cerco «${r.nome}»: guarda la finestra, si ferma sulla recensione e poi procedi tu.`,
-    }),
-  );
+  if (chromeInEsecuzione()) {
+    return {
+      ok: false,
+      stato: "chrome-aperto",
+      messaggio: "Chiudi tutte le finestre di Chrome, poi riclicca la G: il robot deve aprire il suo Chrome.",
+    };
+  }
+
+  return avviaRobotConEsito({ azione: "cerca", nome: r.nome, testo: (testo || "").trim() || "Grazie." });
 }
 
 /**

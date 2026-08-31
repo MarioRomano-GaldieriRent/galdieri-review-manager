@@ -2612,6 +2612,42 @@ main.pipeline .pub-tabs {
   margin-top: 10px;
 }
 
+/* Tasto "G": rotellina di caricamento mentre il robot cerca su Google. */
+.spinner-mini {
+  display: inline-block;
+  width: 18px;
+  height: 18px;
+  border: 2px solid color-mix(in srgb, var(--g-blue) 28%, transparent);
+  border-top-color: var(--g-blue);
+  border-radius: 50%;
+  animation: spinner-mini-gira 0.7s linear infinite;
+}
+@keyframes spinner-mini-gira {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .spinner-mini {
+    animation-duration: 2.4s;
+  }
+}
+
+/* Riga d'esito della ricerca su Google: va a capo sotto i bottoni (100%). */
+.google-esito {
+  flex-basis: 100%;
+  margin-top: 2px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--text-soft);
+}
+.google-esito.ok {
+  color: var(--g-green-dark);
+}
+.google-esito.ko {
+  color: var(--error-text);
+}
+
 .dash-senza-regola {
   margin-top: 12px;
 }

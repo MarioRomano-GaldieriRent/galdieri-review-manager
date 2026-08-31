@@ -34,6 +34,94 @@ export function avviaRobotSganciato(job: JobRobot): void {
   child.unref(); // scollega il figlio: vive per conto suo, non blocca il server
 }
 
+/**
+ * Avvia il robot in modalità "cerca" e aspetta SOLO il primo esito (trovata /
+ * non trovata), che il runner stampa appena finita la ricerca — poi SGANCIA il
+ * processo e lascia la finestra aperta per conto suo. Così il front può mostrare
+ * "sto cercando…" e poi l'esito in pochi secondi, mentre la finestra resta lì
+ * per l'operatore. Se entro `attesaMs` non arriva niente, torna un esito di
+ * attesa (la finestra potrebbe essersi aperta lo stesso).
+ */
+export function avviaRobotConEsito(
+  job: JobRobot,
+  { attesaMs = 150_000 }: { attesaMs?: number } = {},
+): Promise<EsitoRobot> {
+  return new Promise((resolve) => {
+    const child = spawn("npm run --silent robot:esegui", {
+      cwd: process.cwd(),
+      env: { ...process.env, ROBOT_JOB: JSON.stringify(job) },
+      shell: true,
+      windowsHide: false,
+      detached: true,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    let out = "";
+    let risolto = false;
+    const unref = (s: unknown) => {
+      try {
+        (s as { unref?: () => void })?.unref?.();
+      } catch {
+        /* niente */
+      }
+    };
+
+    const finisci = (e: EsitoRobot) => {
+      if (risolto) return;
+      risolto = true;
+      clearTimeout(timer);
+      // Molla il processo: la finestra del robot resta aperta da sola, il server
+      // non aspetta più. `resume` svuota il buffer così il figlio non si blocca.
+      child.stdout?.removeAllListeners("data");
+      child.stderr?.removeAllListeners("data");
+      child.stdout?.resume();
+      child.stderr?.resume();
+      unref(child.stdout);
+      unref(child.stderr);
+      child.unref();
+      resolve(e);
+    };
+
+    const guarda = (d: Buffer) => {
+      out += d.toString();
+      const righe = out.split(/\r?\n/).filter((r) => r.includes("__ESITO__"));
+      const ultima = righe[righe.length - 1];
+      if (!ultima) return;
+      const m = ultima.match(/__ESITO__\s+(\{.*\})/);
+      if (!m) return;
+      try {
+        finisci(JSON.parse(m[1]) as EsitoRobot);
+      } catch {
+        /* riga incompleta: aspetto la prossima */
+      }
+    };
+
+    child.stdout?.on("data", guarda);
+    child.stderr?.on("data", guarda);
+    child.on("error", (e) =>
+      finisci({ ok: false, stato: "avvio-fallito", messaggio: `Non riesco ad avviare il robot: ${e.message}` }),
+    );
+    child.on("close", () =>
+      finisci({
+        ok: false,
+        stato: "senza-esito",
+        messaggio: out.trim().slice(-240) || "Il robot è terminato senza dare un esito.",
+      }),
+    );
+
+    const timer = setTimeout(
+      () =>
+        finisci({
+          ok: false,
+          stato: "attesa",
+          messaggio:
+            "Il robot ci sta mettendo più del previsto. La finestra potrebbe essersi aperta lo stesso sul server: controllala.",
+        }),
+      attesaMs,
+    );
+  });
+}
+
 export async function lanciaRobot(job: JobRobot): Promise<EsitoRobot> {
   return new Promise((resolve) => {
     // shell:true → funziona sia con npm.cmd su Windows sia con npm su unix;
