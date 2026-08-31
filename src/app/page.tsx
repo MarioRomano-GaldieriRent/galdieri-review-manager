@@ -86,6 +86,46 @@ function IconaAggiorna() {
   );
 }
 
+/** Occhio aperto: sto mostrando tutte le recensioni. */
+function IconaOcchio() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="20"
+      height="20"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z" />
+      <circle cx="12" cy="12" r="3" />
+    </svg>
+  );
+}
+
+/** Occhio barrato (default): mostro solo le recensioni con una regola attiva. */
+function IconaOcchioBarrato() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="20"
+      height="20"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" />
+      <line x1="1" y1="1" x2="23" y2="23" />
+    </svg>
+  );
+}
+
 type Passo = "approvare" | "pubblicare" | "ricontrollo" | "archiviati";
 
 /** Al momento si mostrano solo le recensioni a 5 stelle senza commento. */
@@ -114,9 +154,13 @@ export default async function HomePage({
     esitoMsg?: string;
     esitoChiave?: string;
     fresh?: string;
+    tutte?: string;
   }>;
 }) {
   const sp = await searchParams;
+  // Occhio in alto: spento (barrato) = solo le recensioni coperte da una regola
+  // attiva (default); acceso = TUTTE le recensioni (1–5★), in ordine di stelle.
+  const tutte = sp.tutte === "1";
   const step: Passo =
     sp.step === "pubblicare"
       ? "pubblicare"
@@ -198,7 +242,9 @@ export default async function HomePage({
         (r) => !pubblicate.has(r.chiave) && !r.haRisposta && !archiviateChiavi.has(r.chiave),
       )
       .map((r) => ({ r, regola: regolaPer(regole, r.stelle, haTesto(r)) }))
-      .filter((x) => x.regola !== null);
+      // Occhio spento: solo le recensioni coperte da una regola ATTIVA (default).
+      // Occhio acceso: TUTTE, anche quelle senza regola (regola === null).
+      .filter((x) => tutte || x.regola !== null);
 
     // «Aggiorna» (tasto di pagina): verifica su Freshdesk e toglie le recensioni
     // il cui ticket è stato risolto/chiuso da qualcun altro — così se qualcuno
@@ -217,6 +263,16 @@ export default async function HomePage({
       } catch {
         // Freshdesk non raggiungibile: non nascondo nulla, resta tutto in lista.
       }
+    }
+    // Con l'occhio acceso: ordine per stelle crescente (1★ … 5★, senza voto in
+    // fondo) e, a parità, dalla più recente. Spento resta l'ordine per data.
+    if (tutte) {
+      daApprovare.sort((a, b) => {
+        const sa = a.r.stelle ?? 99;
+        const sb = b.r.stelle ?? 99;
+        if (sa !== sb) return sa - sb;
+        return new Date(b.r.ricevutaIl).getTime() - new Date(a.r.ricevutaIl).getTime();
+      });
     }
     nApprovare = daApprovare.length;
 
@@ -300,7 +356,9 @@ export default async function HomePage({
         <Link
           href={
             step === "approvare"
-              ? "/?fresh=1"
+              ? tutte
+                ? "/?fresh=1&tutte=1"
+                : "/?fresh=1"
               : step === "ricontrollo"
                 ? "/?step=ricontrollo"
                 : step === "archiviati"
@@ -313,6 +371,24 @@ export default async function HomePage({
         >
           <IconaAggiorna />
         </Link>
+        {step === "approvare" && (
+          <Link
+            href={tutte ? "/" : "/?tutte=1"}
+            className={`pub-occhio${tutte ? " is-active" : ""}`}
+            title={
+              tutte
+                ? "Mostro TUTTE le recensioni (1–5★). Clicca per vedere solo quelle con una regola attiva."
+                : "Mostro solo le recensioni con una regola attiva. Clicca per vedere tutte (1–5★)."
+            }
+            aria-label={
+              tutte
+                ? "Mostra solo le recensioni con una regola attiva"
+                : "Mostra tutte le recensioni (da 1 a 5 stelle)"
+            }
+          >
+            {tutte ? <IconaOcchio /> : <IconaOcchioBarrato />}
+          </Link>
+        )}
       </nav>
 
       {/* =================================================== Da approvare === */}
@@ -335,7 +411,9 @@ export default async function HomePage({
 
           {daApprovare.length === 0 ? (
             <section className="card dash-vuoto">
-              Nessuna recensione da approvare (nessuna coperta dalle regole attive).
+              {tutte
+                ? "Nessuna recensione da mostrare."
+                : "Nessuna recensione da approvare (nessuna coperta dalle regole attive)."}
             </section>
           ) : (
             daApprovare.map(({ r, regola }) => {
@@ -389,14 +467,14 @@ export default async function HomePage({
                     </details>
                   )}
 
-                  {regola && suggerito ? (
+                  {suggerito ? (
+                    // Recensione coperta da una regola CON risposta (oggi solo
+                    // «5★ senza commento»): box precompilato + flusso completo.
                     <form action={playAction} className="dash-proposta">
                       <input type="hidden" name="chiave" value={r.chiave} />
                       <input type="hidden" name="label" value={label?.id ?? ""} />
                       <input type="hidden" name="azioneId" value={nodo!.id} />
                       <input type="hidden" name="testoOriginale" value={suggerito.testo} />
-                      {/* Il testo è sempre modificabile: quello che si legge è
-                          quello che parte. */}
                       <textarea
                         name="testo"
                         className="dash-testo"
@@ -408,7 +486,7 @@ export default async function HomePage({
                         <BottoneRispondi />
                         <AnteprimaFlusso titolo={`Cosa farà su «${r.nome || "questa recensione"}»`}>
                           <ol className="ap-lista">
-                            {regola.azioni.map((a) => (
+                            {regola!.azioni.map((a) => (
                               <PassoAnteprima key={a.id} azione={a} />
                             ))}
                           </ol>
@@ -417,9 +495,30 @@ export default async function HomePage({
                         <VediMail id={r.messaggioId} className="btn-mini" />
                       </div>
                     </form>
+                  ) : tutte ? (
+                    // Con l'occhio acceso: recensione SENZA regola di risposta
+                    // (o senza regola). Box VUOTO da compilare e SOLO azioni
+                    // manuali: niente Rispondi, così non parte alcun flusso
+                    // automatico (né una pubblicazione «Grazie.» su una negativa).
+                    <form action={playAction} className="dash-proposta">
+                      <input type="hidden" name="chiave" value={r.chiave} />
+                      <input type="hidden" name="label" value={label?.id ?? ""} />
+                      <textarea
+                        name="testo"
+                        className="dash-testo"
+                        rows={2}
+                        defaultValue=""
+                        placeholder="Scrivi qui la risposta…"
+                        aria-label="Testo della risposta"
+                      />
+                      <div className="dash-azioni">
+                        <BottoneGoogle chiave={r.chiave} label={label?.id ?? ""} nome={r.nome} />
+                        <VediMail id={r.messaggioId} className="btn-mini" />
+                      </div>
+                    </form>
                   ) : (
                     <p className="notice dash-senza-regola">
-                      Nessuna regola attiva copre questa recensione: accendi una regola da{" "}
+                      Nessuna regola di risposta copre questa recensione: accendi una regola da{" "}
                       <Link href="/impostazioni#automazioni">Impostazioni</Link>.
                     </p>
                   )}

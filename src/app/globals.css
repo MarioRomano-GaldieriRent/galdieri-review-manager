@@ -734,6 +734,29 @@ code {
   }
 }
 
+/* Occhio "mostra tutte": accanto all'aggiorna. Barrato/spento = grigio,
+   acceso = blu. Niente rotazione (quella è dell'icona aggiorna). */
+.pub-occhio {
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-soft);
+  padding: 7px;
+  margin-bottom: 4px;
+  border-radius: 999px;
+  cursor: pointer;
+  text-decoration: none;
+  transition:
+    color 0.15s,
+    background 0.15s;
+}
+.pub-occhio:hover,
+.pub-occhio.is-active {
+  color: var(--g-blue);
+  background: var(--accent-soft);
+}
+
 /* ---------- Pop-up "Vedi mail" ---------- */
 .modal-overlay {
   position: fixed;

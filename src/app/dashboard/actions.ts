@@ -190,6 +190,16 @@ export async function cercaSuGoogleAction(
 ): Promise<EsitoRobot> {
   await richiediOperatore();
 
+  // Il box va compilato: niente più ripiego automatico su "Grazie.".
+  const risposta = (testo || "").trim();
+  if (!risposta) {
+    return {
+      ok: false,
+      stato: "vuoto",
+      messaggio: "Scrivi prima la risposta nel box, poi clicca la G.",
+    };
+  }
+
   const r = await trovaRecensionePerChiave(chiave, labelId);
   if (!r) {
     return {
@@ -207,7 +217,7 @@ export async function cercaSuGoogleAction(
     };
   }
 
-  return avviaRobotConEsito({ azione: "cerca", nome: r.nome, testo: (testo || "").trim() || "Grazie." });
+  return avviaRobotConEsito({ azione: "cerca", nome: r.nome, testo: risposta });
 }
 
 /**
