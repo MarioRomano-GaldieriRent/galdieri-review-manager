@@ -536,15 +536,35 @@ export async function apriSedePerNome(
   await page.waitForTimeout(2500);
   await scatto("4-cliccato");
 
-  // Se non siamo già sulle recensioni, prova ad andarci.
+  // Siamo sulla scheda della sede: apri le sue recensioni con «Leggi
+  // recensioni» (o l'etichetta equivalente). È il passo che porta all'elenco su
+  // cui poi si scorre per trovare la recensione del cliente.
+  const etichettaRec = /leggi recensioni|vedi recensioni|tutte le recensioni|gestisci recensioni|recensioni|read reviews|see reviews|reviews/i;
   let nRisp = await page.getByRole("button", { name: /Rispondi/i }).count().catch(() => 0);
-  if (nRisp === 0 && !/reviews/i.test(page.url())) {
-    const voce = page.getByRole("link", { name: /recensioni|reviews/i }).first();
-    if ((await voce.count().catch(() => 0)) > 0) {
-      await voce.click().catch(() => {});
+  if (nRisp === 0) {
+    log("sulla scheda della sede: cerco «Leggi recensioni»…");
+    for (const loc of [
+      page.getByRole("button", { name: etichettaRec }),
+      page.getByRole("link", { name: etichettaRec }),
+      page.getByText(/leggi recensioni|read reviews/i),
+    ]) {
+      const v = loc.first();
+      if ((await v.count().catch(() => 0)) === 0) continue;
+      if (!(await v.isVisible().catch(() => false))) continue;
+      await v.scrollIntoViewIfNeeded().catch(() => {});
+      await v.click({ timeout: 6000 }).catch(() => {});
+      log("cliccato «Leggi recensioni»");
       await page.waitForTimeout(3000);
-      nRisp = await page.getByRole("button", { name: /Rispondi/i }).count().catch(() => 0);
+      break;
     }
+    nRisp = await page.getByRole("button", { name: /Rispondi/i }).count().catch(() => 0);
+  }
+
+  // Scorri un po' così le recensioni si caricano (poi si cerca quella giusta).
+  if (nRisp > 0) {
+    await scrollaGiu(page, 900);
+    await page.waitForTimeout(900);
+    nRisp = await page.getByRole("button", { name: /Rispondi/i }).count().catch(() => 0);
   }
   await scatto("5-recensioni");
 
@@ -553,8 +573,8 @@ export async function apriSedePerNome(
     via: "ricerca",
     dettaglio:
       nRisp > 0
-        ? `Sono sulle recensioni della sede: ${nRisp} pulsanti «Rispondi» visibili.`
-        : "Ho cliccato la sede ma non vedo recensioni con «Rispondi». Forse è la pagina dashboard: guarda gli screenshot 4 e 5.",
+        ? `Sono sulle recensioni della sede: ${nRisp} pulsanti «Rispondi» visibili. Da qui si scorre per trovare la recensione del cliente.`
+        : "Ho aperto la sede ma non vedo ancora le recensioni («Rispondi»). Forse «Leggi recensioni» ha un'altra etichetta: guarda gli screenshot 4 e 5.",
   };
 }
 
