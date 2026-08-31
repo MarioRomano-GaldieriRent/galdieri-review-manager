@@ -578,6 +578,67 @@ export async function apriSedePerNome(
   };
 }
 
+export type EsitoTrovaLista = { trovata: boolean; dettaglio: string };
+
+/**
+ * Nella lista di recensioni GIÀ APERTA (di una sede), scorre cercando il nome
+ * del cliente. SOLA LETTURA: non apre «Rispondi» e non scrive nulla — porta
+ * soltanto la card in vista. Se lo scroll non fa più crescere la lista, prova la
+ * pagina successiva. È l'ultimo passo del flusso per-sede: aperto il posto, si
+ * trova la sua recensione qui.
+ */
+export async function trovaRecensioneNellaLista(
+  page: Page,
+  nomeCliente: string,
+  opts: { maxPassi?: number; log?: (m: string) => void } = {},
+): Promise<EsitoTrovaLista> {
+  const maxPassi = opts.maxPassi ?? 60;
+  const log = opts.log ?? (() => {});
+  const nome = nomeCliente.trim();
+
+  await page
+    .getByRole("button", { name: /Rispondi/i })
+    .first()
+    .waitFor({ timeout: 12000 })
+    .catch(() => {});
+
+  let fermo = 0;
+  for (let s = 0; s <= maxPassi; s++) {
+    const nomeLoc = page.getByText(nome, { exact: false });
+    const nName = await nomeLoc.count().catch(() => 0);
+    const nRisp = await contaRispondi(page);
+    log(`passo ${s + 1}: «${nome}» = ${nName} · recensioni visibili = ${nRisp}`);
+
+    if (nName > 0) {
+      const primo = nomeLoc.first();
+      await primo.scrollIntoViewIfNeeded().catch(() => {});
+      await page.waitForTimeout(400);
+      return {
+        trovata: true,
+        dettaglio: `«${nome}» trovato al passo ${s + 1} e portato in vista (non toccato).`,
+      };
+    }
+
+    await scrollaGiu(page, 1400);
+    await page.waitForTimeout(1000);
+    const dopo = await contaRispondi(page);
+    if (dopo <= nRisp) {
+      if (await avanzaPagina(page)) {
+        fermo = 0;
+        continue;
+      }
+      fermo++;
+      if (fermo >= 2) {
+        log("fine lista.");
+        break;
+      }
+    } else {
+      fermo = 0;
+    }
+  }
+  return { trovata: false, dettaglio: `«${nome}» non trovato scorrendo le recensioni della sede.` };
+}
+
 export type Bersaglio = {
   chiave: string;
   nomeCliente: string;

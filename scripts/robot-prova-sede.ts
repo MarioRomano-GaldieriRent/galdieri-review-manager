@@ -1,16 +1,25 @@
 import { readFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
-import { apriContesto, apriSedePerNome, sessioneAttiva, SCREENSHOT_DIR } from "@/server/robot/google";
+import {
+  apriContesto,
+  apriSedePerNome,
+  sessioneAttiva,
+  SCREENSHOT_DIR,
+  trovaRecensioneNellaLista,
+} from "@/server/robot/google";
 
 // TEST della «parte 2» del mapping: invece di battere i gruppi, il robot va su
-// Google recensioni, CERCA la sede col nome mappato (nomeGoogle) e ne apre le
-// recensioni. Lascia la finestra aperta così guardi se è finito sulla sede
-// giusta; screenshot di ogni tappa in data/robot-screenshot.
+// Google recensioni, CERCA la sede col nome mappato (nomeGoogle), apre le sue
+// recensioni («Leggi recensioni») e — se gli passi un cliente — scorre fino a
+// trovarne la recensione (sola lettura: non scrive né pubblica). Lascia la
+// finestra aperta; screenshot di ogni tappa in data/robot-screenshot.
 //
 // Prima chiudi TUTTE le finestre di Chrome (il robot apre il suo).
 //
-//   npm run robot:prova-sede                 usa la PRIMA sede mappata
-//   npm run robot:prova-sede -- "Nome Google"  cerca quel nome
+//   npm run robot:prova-sede                              prima sede mappata
+//   npm run robot:prova-sede -- "Nome Google"             cerca quella sede
+//   npm run robot:prova-sede -- "Nome Google" --cliente "Arthur Lavallée"
+//                                                          e trova quel cliente
 //
 // (Le sedi si mappano in Impostazioni → Mapping sedi.)
 
@@ -28,7 +37,11 @@ function caricaEnv() {
 caricaEnv();
 
 async function main() {
-  const argNome = process.argv.slice(2).join(" ").trim();
+  // Tutto prima di --cliente è il nome della sede; dopo, il nome del cliente.
+  const raw = process.argv.slice(2);
+  const iCli = raw.indexOf("--cliente");
+  const argNome = (iCli === -1 ? raw : raw.slice(0, iCli)).join(" ").trim();
+  const cliente = iCli === -1 ? "" : raw.slice(iCli + 1).join(" ").trim();
 
   let nomeGoogle = argNome;
   if (!nomeGoogle) {
@@ -60,6 +73,15 @@ async function main() {
 
   const esito = await apriSedePerNome(page, nomeGoogle, { log: (m) => console.log("   " + m) });
   console.log(`\n→ ${esito.aperta ? "APERTA ✓" : "non aperta"} · via ${esito.via} · ${esito.dettaglio}`);
+
+  // Se abbiamo un cliente e siamo sulle recensioni, cerchiamo la sua recensione.
+  if (cliente && esito.aperta) {
+    console.log(`\nCerco la recensione di «${cliente}» in questa sede…`);
+    const t = await trovaRecensioneNellaLista(page, cliente, { log: (m) => console.log("   " + m) });
+    console.log(`\n→ ${t.trovata ? "TROVATA ✓" : "non trovata"} · ${t.dettaglio}`);
+  } else if (cliente) {
+    console.log(`\n(Non cerco «${cliente}»: non sono arrivato alle recensioni della sede.)`);
+  }
 
   console.log("\n>>> Lascio la finestra APERTA: guarda se sei sulle recensioni della sede giusta.");
   console.log(`>>> Screenshot delle tappe in: ${SCREENSHOT_DIR}`);
