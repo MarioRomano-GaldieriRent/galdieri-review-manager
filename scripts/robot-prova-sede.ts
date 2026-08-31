@@ -3,9 +3,9 @@ import path from "node:path";
 import {
   apriContesto,
   apriSedePerNome,
+  cercaClienteNelleRecensioni,
   sessioneAttiva,
   SCREENSHOT_DIR,
-  trovaRecensioneNellaLista,
 } from "@/server/robot/google";
 
 // TEST della «parte 2» del mapping: invece di battere i gruppi, il robot va su
@@ -74,10 +74,11 @@ async function main() {
   const esito = await apriSedePerNome(page, nomeGoogle, { log: (m) => console.log("   " + m) });
   console.log(`\n→ ${esito.aperta ? "APERTA ✓" : "non aperta"} · via ${esito.via} · ${esito.dettaglio}`);
 
-  // Se abbiamo un cliente e siamo sulle recensioni, cerchiamo la sua recensione.
+  // Se abbiamo un cliente e siamo sulle recensioni, lo cerchiamo con il campo
+  // di ricerca delle recensioni (non scorrendo).
   if (cliente && esito.aperta) {
     console.log(`\nCerco la recensione di «${cliente}» in questa sede…`);
-    const t = await trovaRecensioneNellaLista(page, cliente, { log: (m) => console.log("   " + m) });
+    const t = await cercaClienteNelleRecensioni(page, cliente, { log: (m) => console.log("   " + m) });
     console.log(`\n→ ${t.trovata ? "TROVATA ✓" : "non trovata"} · ${t.dettaglio}`);
   } else if (cliente) {
     console.log(`\n(Non cerco «${cliente}»: non sono arrivato alle recensioni della sede.)`);

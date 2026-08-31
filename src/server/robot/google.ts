@@ -639,6 +639,84 @@ export async function trovaRecensioneNellaLista(
   return { trovata: false, dettaglio: `«${nome}» non trovato scorrendo le recensioni della sede.` };
 }
 
+/**
+ * Nelle recensioni GIÀ APERTE di una sede, trova la recensione del cliente
+ * usando il CAMPO DI RICERCA delle recensioni: si scrive il nome e Google
+ * filtra la lista — molto più affidabile che scorrere. Se il campo non c'è,
+ * ripiega sullo scroll. SOLA LETTURA: non apre «Rispondi», non scrive nulla.
+ */
+export async function cercaClienteNelleRecensioni(
+  page: Page,
+  nomeCliente: string,
+  opts: { log?: (m: string) => void } = {},
+): Promise<EsitoTrovaLista> {
+  const log = opts.log ?? (() => {});
+  const nome = nomeCliente.trim();
+  const scatto = async (tag: string) => {
+    const p = path.join(SCREENSHOT_DIR, `prova-sede-${tag}.png`);
+    await page.screenshot({ path: p }).catch(() => {});
+    log(`screenshot: ${p}`);
+  };
+
+  // Il campo "cerca tra le recensioni" (diverso da quello delle sedi/attività).
+  const trovaCampo = async (): Promise<Locator | null> => {
+    for (const loc of [
+      page.getByPlaceholder(/cerc.*recension|nelle recensioni|search.*review/i),
+      page.locator('input[aria-label*="recension" i], input[aria-label*="review" i]'),
+      page.getByRole("searchbox"),
+      page.locator('input[type="search"]'),
+    ]) {
+      const c = loc.first();
+      if ((await c.count().catch(() => 0)) > 0 && (await c.isVisible().catch(() => false))) return c;
+    }
+    return null;
+  };
+
+  let campo = await trovaCampo();
+  // Il campo può stare dietro un'icona "lente": provo ad aprirla.
+  if (!campo) {
+    const lente = page.getByRole("button", { name: /cerca|search/i }).first();
+    if ((await lente.count().catch(() => 0)) > 0 && (await lente.isVisible().catch(() => false))) {
+      await lente.click().catch(() => {});
+      await page.waitForTimeout(1000);
+      campo = await trovaCampo();
+    }
+  }
+
+  if (!campo) {
+    log("nessun campo «cerca recensioni»: ripiego sullo scroll…");
+    return trovaRecensioneNellaLista(page, nome, { log });
+  }
+
+  await campo.click().catch(() => {});
+  await campo.fill("").catch(() => {});
+  await page.keyboard.type(nome, { delay: 30 }).catch(() => {});
+  await page.keyboard.press("Enter").catch(() => {});
+  log(`scritto «${nome}» nel campo di ricerca delle recensioni`);
+  await page.waitForTimeout(3000);
+  await scatto("6-cerca-cliente");
+
+  const nName = await page.getByText(nome, { exact: false }).count().catch(() => 0);
+  const nRisp = await contaRispondi(page);
+  if (nName > 0) {
+    await page
+      .getByText(nome, { exact: false })
+      .first()
+      .scrollIntoViewIfNeeded()
+      .catch(() => {});
+    await scatto("7-cliente");
+    return {
+      trovata: true,
+      dettaglio: `«${nome}» filtrato con la ricerca delle recensioni (${nRisp} risultati visibili).`,
+    };
+  }
+  await scatto("7-cliente");
+  return {
+    trovata: false,
+    dettaglio: `Ho cercato «${nome}» nelle recensioni ma non compare (${nRisp} risultati). Vedi gli screenshot 6 e 7.`,
+  };
+}
+
 export type Bersaglio = {
   chiave: string;
   nomeCliente: string;
