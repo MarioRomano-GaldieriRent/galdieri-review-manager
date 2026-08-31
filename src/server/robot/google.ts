@@ -163,16 +163,59 @@ export async function scriviRisposta(
   }
 
   await pg.waitForTimeout(400);
-  const abilitato = await root
-    .getByRole("button", { name: /Pubblica risposta/i })
-    .isEnabled()
-    .catch(() => false);
+  const invia = await bottoneInviaRisposta(root);
+  const abilitato = invia ? await invia.isEnabled().catch(() => true) : false;
   return { scritto: via !== "nessuno", via, abilitato };
 }
 
-/** Clicca "Pubblica risposta". */
+/**
+ * Il bottone che INVIA/PUBBLICA la risposta scritta. Cambia con la UI:
+ *  - business.google.com (gruppi): «Pubblica risposta»;
+ *  - overlay di Google Search (per-sede): è di nuovo «Rispondi», il pulsante blu
+ *    DENTRO il riquadro, accanto ad «Annulla». Da non confondere col «Rispondi»
+ *    delle ALTRE recensioni (che aprirebbe il loro riquadro): quello giusto è
+ *    l'unico sulla stessa riga di «Annulla».
+ */
+async function bottoneInviaRisposta(root: Radice): Promise<Locator | null> {
+  const pub = root.getByRole("button", { name: /Pubblica risposta/i }).first();
+  if ((await pub.count().catch(() => 0)) > 0 && (await pub.isVisible().catch(() => false))) {
+    return pub;
+  }
+  // Overlay: il submit «Rispondi» è quello accanto ad «Annulla» (stessa riga).
+  const annulla = root.getByRole("button", { name: /^Annulla$/i }).first();
+  const aBox = await annulla.boundingBox().catch(() => null);
+  if (!aBox) return null;
+  const rispondi = root.getByRole("button", { name: /^rispondi$/i });
+  const n = await rispondi.count().catch(() => 0);
+  let best: Locator | null = null;
+  let bestD = Infinity;
+  for (let i = 0; i < n; i++) {
+    const b = rispondi.nth(i);
+    const box = await b.boundingBox().catch(() => null);
+    if (!box) continue;
+    const dy = Math.abs(box.y - aBox.y);
+    if (dy < 40 && box.x < aBox.x + 5) {
+      // stessa riga di «Annulla» e alla sua sinistra: è il submit del riquadro.
+      const d = aBox.x - box.x + dy;
+      if (d < bestD) {
+        bestD = d;
+        best = b;
+      }
+    }
+  }
+  return best;
+}
+
+/** Invia/pubblica la risposta scritta (clicca il bottone giusto secondo la UI). */
 export async function pubblica(root: Radice): Promise<void> {
-  await root.getByRole("button", { name: /Pubblica risposta/i }).click({ timeout: 8000 });
+  const b = await bottoneInviaRisposta(root);
+  if (!b) {
+    throw new Error(
+      "bottone di invio non trovato (né «Pubblica risposta» né «Rispondi» accanto ad «Annulla»).",
+    );
+  }
+  await b.scrollIntoViewIfNeeded().catch(() => {});
+  await b.click({ timeout: 8000 });
 }
 
 /** Clicca "Annulla" (scarta la bozza, non pubblica). */

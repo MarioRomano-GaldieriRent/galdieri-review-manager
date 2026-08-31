@@ -155,15 +155,9 @@ const traccia = (m: string) => console.error("   " + m);
       return;
     }
 
-    // azione "pubblica": clicca «Pubblica risposta» solo se è abilitata.
-    const abilitato = await root
-      .getByRole("button", { name: /Pubblica risposta/i })
-      .isEnabled()
-      .catch(() => false);
-    if (!abilitato) {
-      esito({ ok: false, stato: "pubblica-non-abilitata", trovata: true, gruppo: dove, messaggio: `Trovata in ${dove}, testo scritto, ma «Pubblica risposta» non è attivo.` });
-      return;
-    }
+    // azione "pubblica": invia la risposta cliccando il bottone giusto secondo
+    // la UI («Pubblica risposta» nei gruppi, «Rispondi» accanto ad «Annulla»
+    // nell'overlay per-sede). È il passo che mancava: prima scriveva e basta.
     try {
       await pubblica(root);
       await paginaAperta.waitForTimeout(2500);
@@ -172,7 +166,7 @@ const traccia = (m: string) => console.error("   " + m);
         .catch(() => {});
       esito({ ok: true, stato: "pubblicata", trovata: true, scritto: true, gruppo: dove, messaggio: `Pubblicata su Google in ${dove}.` });
     } catch (err) {
-      esito({ ok: false, stato: "pubblica-errore", trovata: true, gruppo: dove, messaggio: `Trovata e scritta, ma la pubblicazione è fallita: ${err instanceof Error ? err.message : String(err)}` });
+      esito({ ok: false, stato: "pubblica-errore", trovata: true, gruppo: dove, messaggio: `Trovata e scritta, ma l'invio è fallito: ${err instanceof Error ? err.message : String(err)}` });
     }
   } catch (e) {
     esito({ ok: false, stato: "errore", messaggio: e instanceof Error ? e.message : String(e) });
