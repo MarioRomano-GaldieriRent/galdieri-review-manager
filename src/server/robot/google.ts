@@ -465,23 +465,13 @@ export async function apriSedePerNome(
   }
 
   await campo.click().catch(() => {});
+  await campo.fill("").catch(() => {}); // via eventuale testo residuo
   await page.keyboard.type(cerca, { delay: 30 }).catch(() => {});
   log(`scritto «${cerca}» nel campo di ricerca`);
-  await page.waitForTimeout(2200);
+  await page.waitForTimeout(1600);
   await scatto("3-digitato");
 
-  // Dump dei possibili risultati: se il click non prende, questi dicono con che
-  // testo Google elenca le sedi, per calibrare il match.
-  const possibili = await page
-    .$$eval("[role=option], [role=menuitem], a, li", (els) =>
-      els
-        .map((e) => (e.textContent || "").replace(/\s+/g, " ").trim())
-        .filter((t) => t && t.length < 60),
-    )
-    .catch(() => []);
-  log(`risultati visibili (primi 15): ${JSON.stringify([...new Set(possibili)].slice(0, 15))}`);
-
-  // Clicca il risultato che contiene, nell'ordine, le parole del nome.
+  // Corrisponde se il testo contiene, nell'ordine, le parole del nome.
   const re = new RegExp(
     cerca
       .replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
@@ -489,31 +479,61 @@ export async function apriSedePerNome(
       .join(".*"),
     "i",
   );
-  const risultati = [
-    page.getByRole("option", { name: re }),
-    page.getByRole("menuitem", { name: re }),
-    page.getByRole("link", { name: re }),
-    page.getByText(re),
-  ];
-  let cliccato = false;
-  for (const loc of risultati) {
-    const r = loc.first();
-    if ((await r.count().catch(() => 0)) === 0) continue;
-    if (!(await r.isVisible().catch(() => false))) continue;
-    await r.click({ timeout: 6000 }).catch(() => {});
-    cliccato = true;
-    log(`cliccato un risultato per «${cerca}»`);
-    break;
-  }
+  const sonoSuRecensioni = async () =>
+    (await page.getByRole("button", { name: /Rispondi/i }).count().catch(() => 0)) > 0;
+
+  // Dump dei candidati + click del risultato-sede che corrisponde. Ritorna true
+  // se ha cliccato qualcosa.
+  const tentaRisultato = async (): Promise<boolean> => {
+    const possibili = await page
+      .$$eval("[role=option], [role=menuitem], a, li", (els) =>
+        els
+          .map((e) => (e.textContent || "").replace(/\s+/g, " ").trim())
+          .filter((t) => t && t.length < 60),
+      )
+      .catch(() => []);
+    log(`risultati visibili (primi 15): ${JSON.stringify([...new Set(possibili)].slice(0, 15))}`);
+    for (const loc of [
+      page.getByRole("option", { name: re }),
+      page.getByRole("menuitem", { name: re }),
+      page.getByRole("link", { name: re }),
+      page.getByText(re),
+    ]) {
+      const r = loc.first();
+      if ((await r.count().catch(() => 0)) === 0) continue;
+      if (!(await r.isVisible().catch(() => false))) continue;
+      await r.click({ timeout: 6000 }).catch(() => {});
+      log(`cliccato un risultato per «${cerca}»`);
+      return true;
+    }
+    return false;
+  };
+
+  // 1) A volte i risultati compaiono già mentre scrivi (autocomplete).
+  let cliccato = await tentaRisultato();
+
+  // 2) Altrimenti LANCIA la ricerca con INVIO — molte UI mostrano i risultati
+  //    solo dopo (era il «hai scritto ma non hai cercato») — poi riprova.
   if (!cliccato) {
+    log("nessun risultato al volo: premo INVIO per lanciare la ricerca…");
+    await page.keyboard.press("Enter").catch(() => {});
+    await page.waitForTimeout(3500);
+    await scatto("3b-dopo-invio");
+    cliccato = await tentaRisultato();
+  }
+
+  // 3) L'Invio può portare DRITTO alle recensioni della sede (match unico):
+  //    in quel caso non c'è nulla da cliccare, ma va bene lo stesso.
+  if (!cliccato && !(await sonoSuRecensioni())) {
     return {
       aperta: false,
       via: "senza-risultato",
-      dettaglio: `Ho scritto «${cerca}» ma non ho trovato un risultato cliccabile che corrisponda. Vedi lo screenshot 3-digitato.`,
+      dettaglio: `Ho scritto «${cerca}» e premuto Invio, ma non ho trovato un risultato-sede da cliccare. Vedi 3-digitato e 3b-dopo-invio.`,
     };
   }
+  if (!cliccato) log("l'Invio è bastato: la pagina mostra già delle recensioni.");
 
-  await page.waitForTimeout(3500);
+  await page.waitForTimeout(2500);
   await scatto("4-cliccato");
 
   // Se non siamo già sulle recensioni, prova ad andarci.
