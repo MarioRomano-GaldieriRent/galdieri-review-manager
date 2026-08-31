@@ -1,7 +1,12 @@
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import path from "node:path";
-import { DatabaseSync } from "node:sqlite";
+// Solo il TIPO: l'import di tipo viene cancellato a runtime, così caricare
+// questo modulo NON richiede `node:sqlite`. Il modulo vero si importa in modo
+// dinamico dentro travasaTutto, e solo quando c'è davvero un SQLite da migrare
+// (vedi sotto). `node:sqlite` esiste solo su Node molto recente (≥22.5/23);
+// legandolo all'avvio, l'app non partiva sui Node LTS (18/20/22 stabile).
+import type { DatabaseSync } from "node:sqlite";
 import type { AnyBulkWriteOperation, Db, Document } from "mongodb";
 import type { DocGen } from "./connessione";
 import { scriviRegole } from "./regole";
@@ -41,6 +46,11 @@ export async function travasaTutto(d: Db): Promise<void> {
     return;
   }
 
+  // Da qui in poi serve SQLite per davvero: lo si carica ORA, non all'avvio.
+  // Se il Node in uso non ha `node:sqlite`, l'errore arriva solo a chi ha un
+  // vecchio file da migrare (praticamente solo la macchina originale), non a
+  // ogni installazione nuova.
+  const { DatabaseSync } = await import("node:sqlite");
   const sql = new DatabaseSync(PERCORSO_SQLITE, { readOnly: true });
   try {
     let righe = 0;
