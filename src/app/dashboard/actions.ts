@@ -14,6 +14,7 @@ import {
   segnaPubblicata,
 } from "@/server/db/pubblicazioni";
 import { chiudiFreshdeskPer } from "@/server/pubblicazione";
+import { archiviaRecensione, ripristinaRecensione } from "@/server/db/recensioni";
 import { normalizzaSede } from "@/server/db/seed";
 import { loadSettings, modoOperativo } from "@/server/settings";
 import { richiediOperatore } from "@/server/auth/sessione";
@@ -299,6 +300,28 @@ export async function aggiornaTicketAction(formData: FormData): Promise<void> {
     messaggio = `Freshdesk: ${e instanceof Error ? e.message : "errore"}`;
   }
   indietro(formData, esitoQuery(r.chiave, { ok, stato: "freshdesk", messaggio }));
+}
+
+/**
+ * 🗄 Archivia: mette da parte una recensione (es. impossibile da gestire). Esce
+ * dall'elenco "Da approvare" e finisce nella tab «Archiviati», con il motivo.
+ */
+export async function archiviaAction(formData: FormData): Promise<void> {
+  await richiediOperatore();
+  const chiave = str(formData, "chiave");
+  const motivo = String(formData.get("motivo") ?? "").trim().slice(0, 200);
+  if (chiave) await archiviaRecensione(chiave, motivo);
+  revalidatePath("/");
+  indietro(formData);
+}
+
+/** Ripristina: riporta una recensione archiviata fra quelle da gestire. */
+export async function ripristinaAction(formData: FormData): Promise<void> {
+  await richiediOperatore();
+  const chiave = str(formData, "chiave");
+  if (chiave) await ripristinaRecensione(chiave);
+  revalidatePath("/");
+  redirect("/?step=archiviati");
 }
 
 /** Rimette una recensione fra quelle da gestire cancellando la prova. */

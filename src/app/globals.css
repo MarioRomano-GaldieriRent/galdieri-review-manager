@@ -2659,6 +2659,65 @@ main.pipeline .pub-tabs {
   color: var(--error-text);
 }
 
+/* Tasto "Archivia" sulla card: un <details> che rivela motivo + conferma. */
+.archivia {
+  margin-left: auto;
+}
+.archivia > summary {
+  list-style: none;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text-soft);
+  padding: 4px 11px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  transition:
+    color 0.15s var(--ease),
+    border-color 0.15s var(--ease);
+}
+.archivia > summary::-webkit-details-marker {
+  display: none;
+}
+.archivia > summary:hover {
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--text-soft) 45%, var(--border));
+}
+.archivia-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+.archivia-motivo {
+  flex: 1 1 240px;
+  min-width: 0;
+  padding: 8px 11px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.archivia-motivo:focus {
+  outline: none;
+  border-color: var(--g-blue);
+}
+/* Il motivo mostrato nella tab Archiviati. */
+.archivia-motivo-vista {
+  margin: 8px 0 0;
+  font-size: 13px;
+  color: var(--text-soft);
+}
+.archivia-ripristina {
+  margin-top: 12px;
+}
+
 .dash-senza-regola {
   margin-top: 12px;
 }

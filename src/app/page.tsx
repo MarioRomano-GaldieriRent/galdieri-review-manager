@@ -15,9 +15,14 @@ import {
 import { ritentaChiusureInSospeso } from "@/server/pubblicazione";
 import { isFreshdeskConfigured } from "@/server/integrations/freshdesk";
 import { loadSettings } from "@/server/settings";
-import { playAction } from "./dashboard/actions";
+import { playAction, archiviaAction, ripristinaAction } from "./dashboard/actions";
 import { BottoneGoogle } from "./BottoneGoogle";
 import { BottoneRispondi } from "./BottoneRispondi";
+import {
+  chiaviArchiviate,
+  elencoArchiviate,
+  type RecensioneArchiviata,
+} from "@/server/db/recensioni";
 import { VediMail } from "./VediMail";
 import { AutoAggiorna } from "./AutoAggiorna";
 import { AnteprimaFlusso } from "./AnteprimaFlusso";
@@ -81,7 +86,7 @@ function IconaAggiorna() {
   );
 }
 
-type Passo = "approvare" | "pubblicare" | "ricontrollo";
+type Passo = "approvare" | "pubblicare" | "ricontrollo" | "archiviati";
 
 /** Al momento si mostrano solo le recensioni a 5 stelle senza commento. */
 function soloCinqueSenzaCommento(v: VocePubblicazione): boolean {
@@ -117,7 +122,9 @@ export default async function HomePage({
       ? "pubblicare"
       : sp.step === "ricontrollo"
         ? "ricontrollo"
-        : "approvare";
+        : sp.step === "archiviati"
+          ? "archiviati"
+          : "approvare";
 
   const settings = await loadSettings();
   const simulazione = settings.modo !== "reale";
@@ -152,6 +159,7 @@ export default async function HomePage({
   let daApprovare: { r: Recensione; regola: Regola | null }[] = [];
   let nApprovare: number | null = null;
   let runAperta: ReturnType<typeof trovaRun> = undefined;
+  let archiviate: RecensioneArchiviata[] = [];
 
   if (step === "approvare") {
     const [regole, esecuzioni, graphConf] = await Promise.all([
@@ -175,15 +183,20 @@ export default async function HomePage({
     // "approvata" ma non ancora pubblicate (robot non riuscito) restano qui per
     // riprovare col Play. Guidata dalle regole ATTIVE: oggi solo "5★ senza
     // commento", accendendone altre in Impostazioni compaiono anche le loro.
-    const pubblicate = await chiaviPubblicate();
+    const [pubblicate, archiviateChiavi] = await Promise.all([
+      chiaviPubblicate(),
+      chiaviArchiviate(),
+    ]);
     daApprovare = recensioni
       // Fuori dall'elenco:
       //  - ciò che abbiamo già pubblicato noi (stato pubblicata/verificata);
-      //  - ciò a cui ha GIÀ RISPOSTO l'operatore a mano — nel thread c'è una
-      //    risposta di una persona @galdierirent.it (haRisposta). È gestita fuori
-      //    dal nostro flusso: non c'è niente da approvare, e non finisce nemmeno
-      //    nello Storico, che raccoglie solo le risposte pubblicate DAL sito.
-      .filter((r) => !pubblicate.has(r.chiave) && !r.haRisposta)
+      //  - ciò a cui ha GIÀ RISPOSTO l'operatore a mano (haRisposta): gestita
+      //    fuori dal nostro flusso, e non finisce nemmeno nello Storico;
+      //  - ciò che è stato ARCHIVIATO a mano (es. impossibile da gestire): va
+      //    nella tab «Archiviati», da dove si può ripristinare.
+      .filter(
+        (r) => !pubblicate.has(r.chiave) && !r.haRisposta && !archiviateChiavi.has(r.chiave),
+      )
       .map((r) => ({ r, regola: regolaPer(regole, r.stelle, haTesto(r)) }))
       .filter((x) => x.regola !== null);
 
@@ -208,6 +221,10 @@ export default async function HomePage({
     nApprovare = daApprovare.length;
 
     runAperta = sp.run ? trovaRun(esecuzioni, sp.run) : undefined;
+  }
+
+  if (step === "archiviati") {
+    archiviate = await elencoArchiviate();
   }
 
   return (
@@ -274,12 +291,21 @@ export default async function HomePage({
           Storico
         </Link>
         <Link
+          href="/?step=archiviati"
+          className={`pub-tab${step === "archiviati" ? " is-active" : ""}`}
+          title="Recensioni messe da parte (es. impossibili da gestire)"
+        >
+          Archiviati
+        </Link>
+        <Link
           href={
             step === "approvare"
               ? "/?fresh=1"
               : step === "ricontrollo"
                 ? "/?step=ricontrollo"
-                : `/?step=pubblicare${sedeSel ? `&sede=${encodeURIComponent(sedeSel)}` : ""}`
+                : step === "archiviati"
+                  ? "/?step=archiviati"
+                  : `/?step=pubblicare${sedeSel ? `&sede=${encodeURIComponent(sedeSel)}` : ""}`
           }
           className="pub-aggiorna"
           title={`Ultimo aggiornamento: ${aggiornatoAlle}`}
@@ -398,11 +424,31 @@ export default async function HomePage({
                     </p>
                   )}
 
-                  {r.risolto && (
-                    <footer className="dash-piede">
-                      <span className="flag flag-gray">ticket risolto</span>
-                    </footer>
-                  )}
+                  <footer className="dash-piede">
+                    {r.risolto && <span className="flag flag-gray">ticket risolto</span>}
+                    <details className="archivia">
+                      <summary
+                        className="btn-archivia"
+                        title="Metti da parte questa recensione (es. impossibile da gestire): sparisce dall'elenco e va in Archiviati"
+                      >
+                        Archivia
+                      </summary>
+                      <form action={archiviaAction} className="archivia-form">
+                        <input type="hidden" name="chiave" value={r.chiave} />
+                        <input type="hidden" name="label" value={label?.id ?? ""} />
+                        <input
+                          name="motivo"
+                          className="archivia-motivo"
+                          placeholder="Motivo (facoltativo, es. impossibile da gestire)"
+                          maxLength={200}
+                          aria-label="Motivo dell'archiviazione"
+                        />
+                        <button type="submit" className="btn-mini btn-archivia-conferma">
+                          Archivia recensione
+                        </button>
+                      </form>
+                    </details>
+                  </footer>
                 </article>
               );
             })
@@ -498,6 +544,43 @@ export default async function HomePage({
             <ol className="pub-lista">
               {storico.map((v, i) => (
                 <VoceStorico key={v.chiave} v={v} numero={i + 1} />
+              ))}
+            </ol>
+          )}
+        </section>
+      )}
+
+      {/* =========================================================== Archiviati === */}
+      {step === "archiviati" && (
+        <section className="dash-centro">
+          {archiviate.length === 0 ? (
+            <section className="card dash-vuoto">
+              Nessuna recensione archiviata. Dalla lista «Da approvare» puoi archiviare quelle che
+              non è possibile gestire.
+            </section>
+          ) : (
+            <ol className="pub-lista">
+              {archiviate.map((r) => (
+                <li key={r.chiave} className="card dash-card">
+                  <div className="dash-autore-riga">
+                    <span className="review-name">{r.nome || "senza nome"}</span>
+                    <Stelle n={r.stelle} />
+                  </div>
+                  <div className="dash-meta">
+                    {dataConGiorno(new Date(r.ricevutaIl))}
+                    {r.sede ? ` · ${r.sede}` : ""}
+                  </div>
+                  {testoRecensione(r) && <p className="review-comment">{testoRecensione(r)}</p>}
+                  {r.motivoArchiviazione && (
+                    <p className="archivia-motivo-vista">🗄 {r.motivoArchiviazione}</p>
+                  )}
+                  <form action={ripristinaAction} className="archivia-ripristina">
+                    <input type="hidden" name="chiave" value={r.chiave} />
+                    <button type="submit" className="btn-mini">
+                      Ripristina
+                    </button>
+                  </form>
+                </li>
               ))}
             </ol>
           )}

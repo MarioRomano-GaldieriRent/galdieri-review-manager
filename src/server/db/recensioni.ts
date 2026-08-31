@@ -248,6 +248,7 @@ async function allineaLingue(recensioni: Recensione[]): Promise<void> {
 export type RecensioneArchiviata = Recensione & {
   primaVistaIl: string;
   archiviataIl: string | null;
+  motivoArchiviazione: string;
   testoTroncato: boolean;
 };
 
@@ -271,6 +272,7 @@ type DocRec = {
   ricevutaIl: Date;
   primaVistaIl: Date;
   archiviataIl: Date | null;
+  motivoArchiviazione?: string;
   testoTroncato: boolean;
 };
 
@@ -295,6 +297,7 @@ function componi(d: DocRec): RecensioneArchiviata {
     risolto: d.risolto,
     primaVistaIl: d.primaVistaIl.toISOString(),
     archiviataIl: d.archiviataIl ? d.archiviataIl.toISOString() : null,
+    motivoArchiviazione: d.motivoArchiviazione ?? "",
     testoTroncato: d.testoTroncato,
   };
 }
@@ -319,6 +322,37 @@ export async function archiviaRecensione(chiave: string, motivo: string): Promis
     [
       { $set: { archiviataIl: new Date(), motivoArchiviazione: motivo } },
       { $set: { archiviata: true } },
+    ],
+  );
+}
+
+/** Le chiavi delle recensioni archiviate: servono alla home per toglierle dall'elenco. */
+export async function chiaviArchiviate(): Promise<Set<string>> {
+  const righe = (await (
+    await coll("recensioni")
+  )
+    .find({ archiviata: true }, { projection: { _id: 1 } })
+    .toArray()) as { _id: string }[];
+  return new Set(righe.map((r) => r._id));
+}
+
+/** L'elenco delle recensioni archiviate, dalla più recente, per la tab «Archiviati». */
+export async function elencoArchiviate(limite = 200): Promise<RecensioneArchiviata[]> {
+  const righe = await (await coll<DocRec>("recensioni"))
+    .find({ archiviata: true })
+    .sort({ archiviataIl: -1 })
+    .limit(limite)
+    .toArray();
+  return righe.map(componi);
+}
+
+/** Riporta una recensione archiviata fra quelle da gestire (annulla l'archiviazione). */
+export async function ripristinaRecensione(chiave: string): Promise<void> {
+  await (await coll("recensioni")).updateOne(
+    { _id: chiave, archiviata: true },
+    [
+      { $set: { archiviataIl: null, motivoArchiviazione: "" } },
+      { $set: { archiviata: false } },
     ],
   );
 }
