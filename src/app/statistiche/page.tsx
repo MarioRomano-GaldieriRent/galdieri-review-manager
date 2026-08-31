@@ -4,6 +4,7 @@ import { loadSettings } from "@/server/settings";
 import {
   coperturaRegole,
   copertura,
+  gestione,
   lavorazione,
   lingue,
   perSede,
@@ -52,7 +53,7 @@ export default async function StatistichePage() {
   const traduzioneAttiva = await isTranslationConfigured();
 
   // Sette letture indipendenti: in parallelo, così la pagina non le aspetta in fila.
-  const [cop, settimane, p, sedi, lin, lav, regole, modoDa] = await Promise.all([
+  const [cop, settimane, p, sedi, lin, lav, regole, modoDa, g] = await Promise.all([
     copertura(),
     perSettimana(),
     punteggi(),
@@ -61,7 +62,15 @@ export default async function StatistichePage() {
     lavorazione(),
     coperturaRegole(),
     modoInVigoreDa(),
+    gestione(),
   ]);
+
+  // Media di recensioni per sede: solo sulle sedi riconosciute (la sentinella
+  // "(sede non riconosciuta)" gonfierebbe il denominatore).
+  const sediValide = sedi.filter((s) => s.sede && s.sede !== "(sede non riconosciuta)");
+  const recensioniInSedi = sediValide.reduce((sum, s) => sum + s.recensioni, 0);
+  const mediaPerSede = sediValide.length > 0 ? recensioniInSedi / sediValide.length : null;
+  const quota = (n: number) => (g.ricevute > 0 ? `${((n / g.ricevute) * 100).toFixed(0)}% delle ricevute` : undefined);
 
   const settimanaCorrente = settimanaIso(new Date().toISOString());
   const complete = settimane.filter((s) => s.settimana !== settimanaCorrente);
@@ -91,6 +100,23 @@ export default async function StatistichePage() {
         Calcolate sull&apos;archivio: {cop.recensioni} recensioni conservate, non sulle ultime email
         lette.
       </p>
+
+      {/* --------------------------------------- recensioni gestite (KPI) */}
+      <section className="card">
+        <h2>Recensioni gestite</h2>
+        <p className="hint">
+          Quante recensioni ha gestito <strong>questo sistema</strong> e quante risultano gestite
+          in totale, anche a mano fuori da qui. Sono due misure diverse: «dal sistema» = risposte
+          pubblicate dal sito; «in totale» = recensioni con una risposta rilevata nella posta
+          (incluse quelle scritte da Outlook). Le rapporto entrambe alle recensioni ricevute, senza
+          confrontarle direttamente fra loro.
+        </p>
+        <div className="stat-griglia">
+          <Riquadro titolo="Gestite dal sistema" valore={g.dalSistema} base={quota(g.dalSistema)} />
+          <Riquadro titolo="Gestite in totale" valore={g.conRisposta} base={quota(g.conRisposta)} />
+          <Riquadro titolo="Recensioni ricevute" valore={g.ricevute} base="l'intero archivio" />
+        </div>
+      </section>
 
       {/* ---------------------------------------------- copertura, in cima */}
       <section className="card">
@@ -245,8 +271,15 @@ export default async function StatistichePage() {
           sede, quindi «la sede con più recensioni negative» è una frase onesta, «la sede peggiore»
           no.
         </p>
+        <div className="stat-griglia">
+          <Riquadro
+            titolo="Media recensioni per sede"
+            valore={mediaPerSede !== null ? mediaPerSede.toFixed(1) : "—"}
+            base={`${sediValide.length} sedi riconosciute`}
+          />
+        </div>
         <div className="table-wrap">
-          <table className="data-table">
+          <table className="data-table data-table-compatta">
             <thead>
               <tr>
                 <th>Sede</th>

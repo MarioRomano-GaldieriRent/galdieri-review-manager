@@ -391,6 +391,34 @@ export async function lavorazione(): Promise<Lavorazione> {
   };
 }
 
+// ------------------------------------------------------------- gestione
+
+export type Gestione = {
+  /** Tutte le recensioni conservate in archivio. */
+  ricevute: number;
+  /** Recensioni con una risposta RILEVATA nella posta (a mano o dal sistema). */
+  conRisposta: number;
+  /** Recensioni la cui risposta è stata pubblicata DAL sito (coda pubblicazioni). */
+  dalSistema: number;
+};
+
+/**
+ * Quante recensioni ha gestito il sistema e quante risultano gestite in totale.
+ * Sono due misure DIVERSE, e la pagina lo dice: «dal sistema» conta le risposte
+ * pubblicate dal sito (collezione pubblicazioni), «in totale» conta le recensioni
+ * con una risposta rilevata nella posta — che include anche le risposte scritte a
+ * mano da Outlook. Perciò si mostrano entrambe rapportate alle recensioni ricevute
+ * (denominatore comune), senza inventare un rapporto diretto fra le due.
+ */
+export async function gestione(): Promise<Gestione> {
+  const [ricevute, conRisposta, dalSistema] = await Promise.all([
+    conta("recensioni"),
+    conta("recensioni", { haRisposta: true }),
+    conta("pubblicazioni", { stato: { $in: ["pubblicata", "verificata"] } }),
+  ]);
+  return { ricevute, conRisposta, dalSistema };
+}
+
 /**
  * Recensioni in coda coperte da una regola attiva. Le combinazioni possibili
  * sono al massimo 5 stelle × 2 valori di haTesto = 10: si materializzano in

@@ -874,6 +874,18 @@ code {
   vertical-align: top;
 }
 
+/* Variante compatta (es. tabella Sedi nelle statistiche): più densa, leggibile. */
+.data-table-compatta {
+  font-size: 0.82rem;
+}
+.data-table-compatta th,
+.data-table-compatta td {
+  padding: 6px 10px;
+}
+.data-table-compatta thead th {
+  font-size: 0.68rem;
+}
+
 .data-table thead th {
   color: var(--g-blue-dark);
   font-weight: 700;
