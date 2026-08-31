@@ -17,6 +17,7 @@ import { isFreshdeskConfigured } from "@/server/integrations/freshdesk";
 import { loadSettings } from "@/server/settings";
 import { playAction } from "./dashboard/actions";
 import { BottoneGoogle } from "./BottoneGoogle";
+import { BottoneRispondi } from "./BottoneRispondi";
 import { VediMail } from "./VediMail";
 import { AutoAggiorna } from "./AutoAggiorna";
 import { AnteprimaFlusso } from "./AnteprimaFlusso";
@@ -378,13 +379,7 @@ export default async function HomePage({
                         aria-label="Testo della risposta"
                       />
                       <div className="dash-azioni">
-                        <button
-                          type="submit"
-                          className="btn-rispondi"
-                          title="Risponde alla recensione: pubblica su Google (col robot), invia l'email e aggiorna il ticket."
-                        >
-                          Rispondi
-                        </button>
+                        <BottoneRispondi />
                         <AnteprimaFlusso titolo={`Cosa farà su «${r.nome || "questa recensione"}»`}>
                           <ol className="ap-lista">
                             {regola.azioni.map((a) => (

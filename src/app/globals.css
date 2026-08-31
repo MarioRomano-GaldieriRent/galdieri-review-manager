@@ -2632,6 +2632,17 @@ main.pipeline .pub-tabs {
     animation-duration: 2.4s;
   }
 }
+/* Variante chiara: rotellina su sfondo pieno (es. tasto blu "Rispondi"). */
+.spinner-chiaro {
+  border-color: color-mix(in srgb, currentColor 35%, transparent);
+  border-top-color: currentColor;
+}
+/* Contenuto del tasto mentre carica: rotellina + testo allineati. */
+.btn-caricamento {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
 
 /* Riga d'esito della ricerca su Google: va a capo sotto i bottoni (100%). */
 .google-esito {
