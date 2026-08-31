@@ -15,7 +15,13 @@ import {
 import { ritentaChiusureInSospeso } from "@/server/pubblicazione";
 import { isFreshdeskConfigured } from "@/server/integrations/freshdesk";
 import { loadSettings } from "@/server/settings";
-import { playAction, archiviaAction, ripristinaAction } from "./dashboard/actions";
+import { operatoreCorrente } from "@/server/auth/sessione";
+import {
+  playAction,
+  archiviaAction,
+  ripristinaAction,
+  mostraTutteAction,
+} from "./dashboard/actions";
 import { BottoneGoogle } from "./BottoneGoogle";
 import { BottoneRispondi } from "./BottoneRispondi";
 import {
@@ -154,13 +160,17 @@ export default async function HomePage({
     esitoMsg?: string;
     esitoChiave?: string;
     fresh?: string;
-    tutte?: string;
   }>;
 }) {
   const sp = await searchParams;
   // Occhio in alto: spento (barrato) = solo le recensioni coperte da una regola
   // attiva (default); acceso = TUTTE le recensioni (1–5★), in ordine di stelle.
-  const tutte = sp.tutte === "1";
+  //
+  // Non è un filtro nell'indirizzo ma una preferenza del profilo: resta com'è
+  // stata lasciata anche al prossimo accesso, e vale solo per chi la imposta.
+  // Il layout ha già fatto il gate di sessione, qui l'operatore c'è sempre.
+  const operatore = await operatoreCorrente();
+  const tutte = operatore?.mostraTutte === true;
   const step: Passo =
     sp.step === "pubblicare"
       ? "pubblicare"
@@ -356,9 +366,7 @@ export default async function HomePage({
         <Link
           href={
             step === "approvare"
-              ? tutte
-                ? "/?fresh=1&tutte=1"
-                : "/?fresh=1"
+              ? "/?fresh=1"
               : step === "ricontrollo"
                 ? "/?step=ricontrollo"
                 : step === "archiviati"
@@ -372,22 +380,26 @@ export default async function HomePage({
           <IconaAggiorna />
         </Link>
         {step === "approvare" && (
-          <Link
-            href={tutte ? "/" : "/?tutte=1"}
-            className={`pub-occhio${tutte ? " is-active" : ""}`}
-            title={
-              tutte
-                ? "Mostro TUTTE le recensioni (1–5★). Clicca per vedere solo quelle con una regola attiva."
-                : "Mostro solo le recensioni con una regola attiva. Clicca per vedere tutte (1–5★)."
-            }
-            aria-label={
-              tutte
-                ? "Mostra solo le recensioni con una regola attiva"
-                : "Mostra tutte le recensioni (da 1 a 5 stelle)"
-            }
-          >
-            {tutte ? <IconaOcchio /> : <IconaOcchioBarrato />}
-          </Link>
+          <form action={mostraTutteAction} className="pub-occhio-form">
+            <input type="hidden" name="valore" value={tutte ? "0" : "1"} />
+            <button
+              type="submit"
+              className={`pub-occhio${tutte ? " is-active" : ""}`}
+              title={
+                tutte
+                  ? "Mostro TUTTE le recensioni (1–5★). Clicca per vedere solo quelle con una regola attiva."
+                  : "Mostro solo le recensioni con una regola attiva. Clicca per vedere tutte (1–5★)."
+              }
+              aria-pressed={tutte}
+              aria-label={
+                tutte
+                  ? "Mostra solo le recensioni con una regola attiva"
+                  : "Mostra tutte le recensioni (da 1 a 5 stelle)"
+              }
+            >
+              {tutte ? <IconaOcchio /> : <IconaOcchioBarrato />}
+            </button>
+          </form>
         )}
       </nav>
 

@@ -762,8 +762,17 @@ code {
 }
 
 /* Occhio "mostra tutte": accanto all'aggiorna. Barrato/spento = grigio,
-   acceso = blu. Niente rotazione (quella è dell'icona aggiorna). */
+   acceso = blu. Niente rotazione (quella è dell'icona aggiorna).
+   È un <button> dentro una form (salva la preferenza sul profilo), quindi
+   serve azzerare lo stile nativo del bottone: sfondo, bordo e carattere. */
+.pub-occhio-form {
+  display: inline-flex;
+  align-self: center;
+}
 .pub-occhio {
+  background: none;
+  border: 0;
+  font: inherit;
   align-self: center;
   display: inline-flex;
   align-items: center;

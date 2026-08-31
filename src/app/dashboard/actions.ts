@@ -18,6 +18,7 @@ import { archiviaRecensione, ripristinaRecensione } from "@/server/db/recensioni
 import { normalizzaSede } from "@/server/db/seed";
 import { loadSettings, modoOperativo } from "@/server/settings";
 import { richiediOperatore } from "@/server/auth/sessione";
+import { impostaMostraTutte } from "@/server/auth/utenti";
 import { cercaTicketPerRecensione, STATO } from "@/server/integrations/freshdesk";
 import { avviaRobotConEsito, lanciaRobot, type EsitoRobot } from "@/server/robot/lancia";
 import { chromeInEsecuzione } from "@/server/robot/google";
@@ -341,4 +342,17 @@ export async function rimettiInCodaAction(formData: FormData): Promise<void> {
   if (id) await eliminaEsecuzione(id);
   revalidatePath("/");
   indietro(formData);
+}
+
+/**
+ * L'occhio della home: salva sul profilo di chi clicca se vuole vedere TUTTE le
+ * recensioni o solo quelle coperte da una regola attiva. Non è un filtro di
+ * sessione né un parametro nell'indirizzo: resta com'è stato lasciato, anche
+ * dopo il logout, e vale solo per quella persona.
+ */
+export async function mostraTutteAction(formData: FormData): Promise<void> {
+  const op = await richiediOperatore();
+  await impostaMostraTutte(op._id, str(formData, "valore") === "1");
+  revalidatePath("/");
+  redirect("/");
 }

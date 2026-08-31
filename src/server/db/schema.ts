@@ -217,6 +217,10 @@ export const COLLEZIONI: DefColl[] = [
           diSistema: boolo,
           creatoIl: { bsonType: "date" },
           disattivatoIl: dataO,
+          // Preferenze personali: piccole scelte di vista che seguono la persona
+          // fra un accesso e l'altro. L'occhio della home: true = mostro TUTTE
+          // le recensioni, false/assente = solo quelle con una regola attiva.
+          mostraTutte: boolo,
         },
       },
     },

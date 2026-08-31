@@ -21,17 +21,17 @@ export function AutoAggiorna() {
       const el = document.activeElement;
       if (el && (el.tagName === "TEXTAREA" || el.tagName === "INPUT")) return; // stai scrivendo
       if (document.visibilityState === "hidden") return; // scheda in secondo piano
-      // Si conserva lo stato della vista (occhio "tutte", tab, sede): senza,
-      // forzare "/?fresh=1" farebbe sparire da sole le recensioni che l'operatore
-      // sta guardando con l'occhio acceso. I parametri volatili (run, esito*)
-      // NON si riportano, così l'auto-refresh non ripropone banner vecchi.
+      // Si conserva lo stato della vista (tab, sede). L'occhio non serve più:
+      // è una preferenza salvata sul profilo, il server la rilegge da sé a ogni
+      // render. I parametri volatili (run, esito*) NON si riportano, così
+      // l'auto-refresh non ripropone banner vecchi.
       const cur = new URLSearchParams(window.location.search);
       if (cur.get("fresh") === "1") {
         router.refresh();
         return;
       }
       const next = new URLSearchParams();
-      for (const k of ["step", "sede", "tutte"]) {
+      for (const k of ["step", "sede"]) {
         const v = cur.get(k);
         if (v) next.set(k, v);
       }

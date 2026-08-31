@@ -24,6 +24,10 @@ export interface OperatoreDoc {
   diSistema: boolean;
   creatoIl: Date;
   disattivatoIl: Date | null;
+  // Preferenza personale, non un dato anagrafico: l'occhio della home. Sui
+  // profili creati prima il campo non c'è, quindi si legge come "assente =
+  // false" (default: solo le recensioni con una regola attiva).
+  mostraTutte?: boolean;
 }
 
 interface CredenzialeDoc {
@@ -195,6 +199,15 @@ export async function impostaAttivo(
     oggettoTipo: "operatore",
     oggettoId: String(operatoreId),
   });
+}
+
+/**
+ * Salva la preferenza dell'occhio della home per una persona. È una scelta di
+ * vista, non un fatto da tracciare: niente riga in attività, e vale solo per
+ * chi la imposta.
+ */
+export async function impostaMostraTutte(operatoreId: number, mostraTutte: boolean): Promise<void> {
+  await (await operatori()).updateOne({ _id: operatoreId }, { $set: { mostraTutte } });
 }
 
 /** Cambia la password di un utente (usato dalla gestione e dal cambio proprio). */
