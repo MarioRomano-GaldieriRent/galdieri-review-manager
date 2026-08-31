@@ -746,9 +746,12 @@ export type EsitoRisposta = { scritto: boolean; via: string; abilitato: boolean;
 
 /**
  * Trovata la recensione del cliente (già in vista dopo la ricerca), apre il
- * «Rispondi» accanto ad essa e SCRIVE il testo nel riquadro. NON pubblica: la
- * bozza resta lì, la pubblicazione la decide il chiamante. Ritorna se ha scritto
- * e se «Pubblica risposta» risulta abilitato.
+ * «Rispondi» accanto ad essa. NON pubblica MAI (non clicca «Pubblica risposta»).
+ *
+ * Il testo:
+ *   - se `testo` è VUOTO → apre solo il riquadro, per dimostrare che si POTREBBE
+ *     rispondere, ma NON scrive niente. È il test puro: nessuna scrittura.
+ *   - se `testo` c'è → scrive quella bozza nel riquadro (comunque non pubblicata).
  */
 export async function rispondiAllaRecensione(
   page: Page,
@@ -783,6 +786,21 @@ export async function rispondiAllaRecensione(
   await rispondi.scrollIntoViewIfNeeded().catch(() => {});
   await rispondi.click({ timeout: 6000 }).catch(() => {});
   await page.waitForTimeout(1200);
+
+  // Testo vuoto = TEST PURO: apro solo il riquadro e non scrivo nulla.
+  if (!testo.trim()) {
+    const riquadro =
+      (await page.locator('textarea, [contenteditable="true"]').count().catch(() => 0)) > 0 ||
+      (await page.getByRole("button", { name: /Pubblica risposta/i }).count().catch(() => 0)) > 0;
+    return {
+      scritto: false,
+      via: "solo-aperto",
+      abilitato: false,
+      dettaglio: riquadro
+        ? "Riquadro di risposta APERTO — non ho scritto niente (test puro)."
+        : "Ho cliccato «Rispondi» ma non vedo comparire il riquadro.",
+    };
+  }
 
   const r = await scriviRisposta(page, testo);
   log(`riquadro trovato via ${r.via}; «Pubblica» abilitato: ${r.abilitato}`);

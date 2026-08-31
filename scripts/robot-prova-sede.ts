@@ -14,8 +14,10 @@ import {
 //   2. clicca l'attività;
 //   3. clicca «Leggi recensioni»;
 //   4. cerca il nome del CLIENTE nel campo di ricerca delle recensioni;
-//   5. apre «Rispondi» e SCRIVE la bozza — ma NON pubblica niente.
-// Lascia la finestra aperta; screenshot di ogni tappa in data/robot-screenshot.
+//   5. apre «Rispondi» accanto alla sua recensione.
+// NON pubblica MAI. Di default NON scrive nemmeno: apre solo il riquadro per
+// dimostrare che potrebbe rispondere. Lascia la finestra aperta; screenshot di
+// ogni tappa in data/robot-screenshot.
 //
 // Prima chiudi TUTTE le finestre di Chrome (il robot apre il suo).
 //
@@ -23,8 +25,8 @@ import {
 // così la barra riceve SOLO la sede (mai sede + cliente):
 //
 //   "sede"                       apre solo la sede
-//   "sede // cliente"            sede, poi trova il cliente e scrive «Grazie.»
-//   "sede // cliente // testo"   sede, cliente, e scrive quel testo
+//   "sede // cliente"            sede, trova il cliente e APRE «Rispondi» (non scrive)
+//   "sede // cliente // testo"   come sopra, ma scrive la bozza (mai pubblicata)
 //
 // Esempio:
 //   npm run robot:prova-sede -- "Galdieri Rent Orio al Serio - Milan Bergamo // Arthur Lavallée"
@@ -52,7 +54,9 @@ async function main() {
   const parti = raw.split("//");
   const argNome = (parti[0] ?? "").trim();
   const cliente = (parti[1] ?? "").trim();
-  const testoRisposta = (parti[2] ?? "").trim() || "Grazie.";
+  // VUOTO = test puro: apre solo il riquadro, NON scrive. Un testo qui lo scrive
+  // come bozza (comunque mai pubblicata).
+  const testoRisposta = (parti[2] ?? "").trim();
 
   let nomeGoogle = argNome;
   if (!nomeGoogle) {
@@ -95,20 +99,22 @@ async function main() {
     console.log(`\n→ ${t.trovata ? "TROVATA ✓" : "non trovata"} · ${t.dettaglio}`);
 
     if (t.trovata) {
-      console.log(`\nProvo a rispondere «${testoRisposta}» — SCRIVO soltanto, NON pubblico…`);
+      if (testoRisposta) {
+        console.log(`\nProvo a rispondere «${testoRisposta}» — SCRIVO la bozza, NON pubblico…`);
+      } else {
+        console.log(`\nProvo ad aprire «Rispondi» — SENZA scrivere niente (test puro)…`);
+      }
       const r = await rispondiAllaRecensione(page, cliente, testoRisposta, {
         log: (m) => console.log("   " + m),
       });
-      console.log(
-        `\n→ ${r.scritto ? "RISPOSTA SCRITTA ✓ (non pubblicata)" : "non scritta"} · «Pubblica» abilitato: ${r.abilitato} · ${r.dettaglio}`,
-      );
+      console.log(`\n→ ${r.via} · ${r.dettaglio}`);
     }
   } else if (cliente) {
     console.log(`\n(Non cerco «${cliente}»: non sono arrivato alle recensioni della sede.)`);
   }
 
-  console.log("\n>>> Lascio la finestra APERTA. Se ho scritto una risposta è solo una BOZZA:");
-  console.log(">>> NON è pubblicata — la pubblichi TU a mano, o chiudendo si scarta.");
+  console.log("\n>>> Lascio la finestra APERTA. NON ho pubblicato niente su Google.");
+  console.log(">>> (Se avevo un testo, è solo una bozza nel riquadro: la pubblichi TU o si scarta.)");
   console.log(`>>> Screenshot delle tappe in: ${SCREENSHOT_DIR}`);
   console.log(">>> Quando hai finito, torna qui e premi INVIO per chiudere.\n");
   await new Promise<void>((ok) => process.stdin.once("data", () => ok()));
