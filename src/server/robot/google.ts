@@ -24,12 +24,15 @@ export const SCREENSHOT_DIR =
 
 /**
  * I gruppi di sedi su Google hanno CIASCUNO una pagina con URL proprio: si va
- * dritti lì invece di lottare col menu a tendina "Non raggruppati". Le
- * recensioni recenti sono in cima e si caricano scrollando.
+ * dritti lì invece di lottare col menu a tendina. Le recensioni recenti stanno
+ * in cima (pagina 1) di qualunque gruppo, quindi la ricerca è IN AMPIEZZA:
+ * prima pagina di tutti e tre i gruppi, poi seconda pagina di tutti, poi terza…
+ * (vedi cercaNeiGruppiPerPagina). L'ordine qui sotto è l'ordine di controllo.
  */
 export const GRUPPI: { nome: string; url: string }[] = [
-  { nome: "Point Attivi", url: "https://business.google.com/groups/112680153146377408716/reviews" },
   { nome: "Breve Termine", url: "https://business.google.com/groups/114345400402310855513/reviews" },
+  { nome: "Non Raggruppati", url: "https://business.google.com/groups/108435845803024212790/reviews" },
+  { nome: "Point Attivi", url: "https://business.google.com/groups/112680153146377408716/reviews" },
 ];
 
 /** Su Windows: c'è un chrome.exe in esecuzione? (dirotterebbe il lancio). */
@@ -231,38 +234,48 @@ async function vaiPaginaSuccessiva(page: Page): Promise<boolean> {
   return false;
 }
 
-/**
- * Cerca la recensione del cliente SCROLLANDO la lista del gruppo (le recensioni
- * recenti sono in cima; scrollando se ne caricano altre). Se lo scroll non fa
- * più crescere la lista, prova a cambiare pagina. Trovata la card col nome, vi
- * individua il "Rispondi" (recensione senza risposta), clicca e scrive il testo.
- * NON pubblica: lo decide il chiamante. opts.log riceve una riga per passo.
- */
-export async function trovaRecensioneEScrivi(
-  page: Page,
-  nomeCliente: string,
-  testo: string,
-  opts: { maxPassi?: number; log?: (m: string) => void } = {},
-): Promise<EsitoMatch> {
-  const maxPassi = opts.maxPassi ?? 80;
-  const log = opts.log ?? (() => {});
-  const nome = nomeCliente.trim();
-  const contaRisp = () => page.getByRole("button", { name: /Rispondi/i }).count().catch(() => 0);
+/** Quanti pulsanti «Rispondi» sono attualmente in pagina (misura della lista). */
+async function contaRispondi(page: Page): Promise<number> {
+  return page
+    .getByRole("button", { name: /Rispondi/i })
+    .count()
+    .catch(() => 0);
+}
 
+/**
+ * Porta la lista alla pagina SUCCESSIVA. Prima prova il pager esplicito
+ * («pagina successiva»); se non c'è — lista a scorrimento continuo — scrolla e
+ * considera avanzata la pagina solo se sono comparse nuove card. Ritorna false
+ * quando non si va oltre: è la fine del gruppo.
+ */
+async function avanzaPagina(page: Page): Promise<boolean> {
+  if (await vaiPaginaSuccessiva(page)) return true;
+  const prima = await contaRispondi(page);
+  await scrollaGiu(page, 1600);
+  await page.waitForTimeout(1200);
+  return (await contaRispondi(page)) > prima;
+}
+
+/**
+ * Cerca il nome SOLO nella pagina attualmente mostrata del gruppo (NON cambia
+ * pagina: al cambio pagina pensa cercaNeiGruppiPerPagina). Fa al più qualche
+ * scroll corto per far rendere le card di questa pagina. Trovata la card, vi
+ * individua il «Rispondi» (recensione senza risposta), clicca e scrive il testo.
+ */
+async function cercaInPaginaCorrente(
+  page: Page,
+  nome: string,
+  testo: string,
+): Promise<EsitoMatch> {
   await page
     .getByRole("button", { name: /Rispondi/i })
     .first()
     .waitFor({ timeout: 12000 })
     .catch(() => {});
 
-  let fermo = 0;
-  for (let s = 0; s <= maxPassi; s++) {
+  for (let s = 0; s < 3; s++) {
     const nomeLoc = page.getByText(nome, { exact: false });
-    const nName = await nomeLoc.count().catch(() => 0);
-    const nRisp = await contaRisp();
-    log(`passo ${s + 1}: nome «${nome}» = ${nName} · «Rispondi» visibili = ${nRisp}`);
-
-    if (nName > 0) {
+    if ((await nomeLoc.count().catch(() => 0)) > 0) {
       const primo = nomeLoc.first();
       await primo.scrollIntoViewIfNeeded().catch(() => {});
       await page.waitForTimeout(400);
@@ -281,30 +294,103 @@ export async function trovaRecensioneEScrivi(
       return {
         trovata: true,
         scritto: r.scritto,
-        dettaglio: `trovata al passo ${s + 1} · campo: ${r.via} · «Pubblica» abilitato: ${r.abilitato}`,
+        dettaglio: `campo: ${r.via} · «Pubblica» abilitato: ${r.abilitato}`,
       };
     }
-
-    // Non trovato: scrolla per caricare altre recensioni.
-    await scrollaGiu(page, 1400);
-    await page.waitForTimeout(1100);
-    const dopo = await contaRisp();
-    if (dopo <= nRisp) {
-      // La lista non cresce più: prova a cambiare pagina, se esiste.
-      if (await vaiPaginaSuccessiva(page)) {
-        fermo = 0;
-        continue;
-      }
-      fermo++;
-      if (fermo >= 2) {
-        log(`fine lista (nessuna nuova recensione caricata).`);
-        break;
-      }
-    } else {
-      fermo = 0;
+    // Non ancora: scroll corto per far rendere il resto di QUESTA pagina.
+    if (s < 2) {
+      await scrollaGiu(page, 900);
+      await page.waitForTimeout(600);
     }
   }
-  return { trovata: false, scritto: false, dettaglio: `«${nome}» non trovato nel gruppo.` };
+  return { trovata: false, scritto: false, dettaglio: "non in questa pagina" };
+}
+
+export type EsitoRicerca = {
+  trovata: boolean;
+  scritto: boolean;
+  /** Il gruppo in cui è stata trovata (null se non trovata). */
+  gruppo: string | null;
+  /** La scheda dove si è fermato (per «cerca» resta in primo piano). */
+  page: Page | null;
+  dettaglio: string;
+};
+
+/**
+ * Cerca la recensione IN AMPIEZZA fra i gruppi: prima pagina di ogni gruppo,
+ * poi seconda pagina di ogni gruppo, poi terza… Le recensioni recenti stanno in
+ * cima (pagina 1) di qualunque gruppo, quindi così si trova PRIMA ciò che è
+ * appena arrivato, invece di svuotare un gruppo intero prima di passare al
+ * successivo (che era il vecchio comportamento: rischiava di non arrivare mai a
+ * «Breve Termine»).
+ *
+ * Una scheda dedicata per gruppo tiene il segno: a ogni giro si avanza di UNA
+ * pagina e si guarda solo quella nuova — niente ri-scansioni delle già fatte.
+ *
+ * NON pubblica: apre «Rispondi» e scrive il testo; la pubblicazione la decide
+ * il chiamante. Su match lascia in primo piano la scheda giusta.
+ */
+export async function cercaNeiGruppiPerPagina(
+  ctx: BrowserContext,
+  nomeCliente: string,
+  testo: string,
+  opts: { maxPagine?: number; log?: (m: string) => void } = {},
+): Promise<EsitoRicerca> {
+  const maxPagine = opts.maxPagine ?? 5;
+  const log = opts.log ?? (() => {});
+  const nome = nomeCliente.trim();
+
+  // Una scheda per gruppo: la prima riusa quella già aperta del contesto.
+  const esistenti = ctx.pages();
+  const sessioni: { gr: (typeof GRUPPI)[number]; page: Page; esaurito: boolean }[] = [];
+  for (let i = 0; i < GRUPPI.length; i++) {
+    const page = esistenti[i] ?? (await ctx.newPage());
+    sessioni.push({ gr: GRUPPI[i], page, esaurito: false });
+  }
+
+  // Pagina 1 di ogni gruppo.
+  for (const s of sessioni) {
+    await s.page.goto(s.gr.url, { waitUntil: "domcontentloaded" }).catch(() => {});
+  }
+  await sessioni[0].page.waitForTimeout(3000);
+
+  for (let pagina = 1; pagina <= maxPagine; pagina++) {
+    let vive = 0;
+    for (const s of sessioni) {
+      if (s.esaurito) continue;
+      // Dalla 2ª pagina in poi: avanza PRIMA di guardare. Se non si va oltre,
+      // il gruppo è finito: lo si salta nei giri successivi.
+      if (pagina > 1 && !(await avanzaPagina(s.page))) {
+        s.esaurito = true;
+        log(`«${s.gr.nome}»: niente pagina ${pagina} (fine gruppo).`);
+        continue;
+      }
+      vive++;
+      await s.page.bringToFront().catch(() => {});
+      log(`«${s.gr.nome}» · pagina ${pagina}: cerco «${nome}»…`);
+      const e = await cercaInPaginaCorrente(s.page, nome, testo);
+      if (e.trovata) {
+        await s.page.bringToFront().catch(() => {});
+        return {
+          trovata: true,
+          scritto: e.scritto,
+          gruppo: s.gr.nome,
+          page: s.page,
+          dettaglio: `«${s.gr.nome}» pagina ${pagina} · ${e.dettaglio}`,
+        };
+      }
+    }
+    if (vive === 0) break; // tutti i gruppi esauriti
+  }
+
+  const nomi = GRUPPI.map((g) => g.nome).join(", ");
+  return {
+    trovata: false,
+    scritto: false,
+    gruppo: null,
+    page: sessioni[0]?.page ?? null,
+    dettaglio: `«${nome}» non trovata nelle prime ${maxPagine} pagine di: ${nomi}.`,
+  };
 }
 
 export type Bersaglio = {

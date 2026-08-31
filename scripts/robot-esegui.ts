@@ -2,11 +2,10 @@ import { mkdirSync } from "fs";
 import path from "path";
 import {
   apriContesto,
-  GRUPPI,
+  cercaNeiGruppiPerPagina,
   pubblica,
   sessioneAttiva,
   SCREENSHOT_DIR,
-  trovaRecensioneEScrivi,
 } from "@/server/robot/google";
 
 // Runner NON interattivo del robot, avviato dai bottoni della card (▶ Play /
@@ -49,82 +48,79 @@ function esito(o: Record<string, unknown>): void {
     process.exit(1);
   }
 
+  // "cerca": lascia il browser aperto finché l'operatore non chiude la finestra
+  // (o 30 min): può proseguire lui a mano.
+  const attendiChiusura = () =>
+    new Promise<void>((res) => {
+      ctx.once("close", () => res());
+      setTimeout(res, 30 * 60 * 1000);
+    });
+
   try {
-    const page = ctx.pages()[0] ?? (await ctx.newPage());
-    if (!(await sessioneAttiva(page))) {
+    const page0 = ctx.pages()[0] ?? (await ctx.newPage());
+    if (!(await sessioneAttiva(page0))) {
       esito({ ok: false, stato: "non-loggato", messaggio: "Robot non loggato su Google. Lancia: npm run robot:sessione" });
       return;
     }
 
-    let dettaglio = "";
-    for (const gr of GRUPPI) {
-      await page.goto(gr.url, { waitUntil: "domcontentloaded" }).catch(() => {});
-      await page.waitForTimeout(3000);
+    // Ricerca IN AMPIEZZA: pagina 1 di tutti i gruppi, poi pagina 2 di tutti, ecc.
+    const ric = await cercaNeiGruppiPerPagina(ctx, job.nome, job.testo, { maxPagine: 5 });
 
-      const e = await trovaRecensioneEScrivi(page, job.nome, job.testo, { maxPassi: 40 });
-      dettaglio = e.dettaglio;
-      if (!e.trovata) continue;
-
-      await page
-        .screenshot({ path: path.join(SCREENSHOT_DIR, `esegui-${job.azione}.png`) })
-        .catch(() => {});
-
-      // "cerca": si FERMA sulla recensione (con la risposta già pronta nel
-      // riquadro) e LASCIA il browser aperto: procede l'operatore. Il processo
-      // resta vivo finché l'operatore non chiude la finestra (o 30 min).
+    if (!ric.trovata || !ric.page) {
+      // "cerca": anche se non l'ho trovata da solo, lascio Google APERTO così
+      // l'operatore la cerca a mano nella finestra.
       if (job.azione === "cerca") {
-        esito({ ok: true, stato: "aperta", trovata: true, scritto: e.scritto, gruppo: gr.nome, messaggio: `Fermo sulla recensione di «${job.nome}» in «${gr.nome}». Procedi tu nella finestra.` });
-        await new Promise<void>((res) => {
-          ctx.once("close", () => res());
-          setTimeout(res, 30 * 60 * 1000);
-        });
+        esito({ ok: true, stato: "aperta-non-trovata", trovata: false, messaggio: `Non ho trovato «${job.nome}» da solo: ho lasciato Google aperto, cercala tu nella finestra.` });
+        await attendiChiusura();
         return;
       }
-
-      if (!e.scritto) {
-        esito({ ok: false, stato: "trovata-non-scritta", trovata: true, gruppo: gr.nome, messaggio: `Trovata in «${gr.nome}» ma non ho potuto scrivere: ${dettaglio}` });
-        return;
-      }
-
-      if (job.azione === "test") {
-        esito({ ok: true, stato: "scritta", trovata: true, scritto: true, gruppo: gr.nome, messaggio: `Trovata in «${gr.nome}» e scritto «${job.testo}». NON pubblicata (test).` });
-        return;
-      }
-
-      // azione "pubblica": clicca «Pubblica risposta» solo se è abilitata.
-      const abilitato = await page
-        .getByRole("button", { name: /Pubblica risposta/i })
-        .isEnabled()
-        .catch(() => false);
-      if (!abilitato) {
-        esito({ ok: false, stato: "pubblica-non-abilitata", trovata: true, gruppo: gr.nome, messaggio: `Trovata in «${gr.nome}», testo scritto, ma «Pubblica risposta» non è attivo.` });
-        return;
-      }
-      try {
-        await pubblica(page);
-        await page.waitForTimeout(2500);
-        await page
-          .screenshot({ path: path.join(SCREENSHOT_DIR, "esegui-pubblicata.png") })
-          .catch(() => {});
-        esito({ ok: true, stato: "pubblicata", trovata: true, scritto: true, gruppo: gr.nome, messaggio: `Pubblicata su Google in «${gr.nome}».` });
-      } catch (err) {
-        esito({ ok: false, stato: "pubblica-errore", trovata: true, gruppo: gr.nome, messaggio: `Trovata e scritta, ma la pubblicazione è fallita: ${err instanceof Error ? err.message : String(err)}` });
-      }
+      esito({ ok: false, stato: "non-trovata", trovata: false, messaggio: `«${job.nome}» non trovata nei gruppi. ${ric.dettaglio}` });
       return;
     }
 
-    // "cerca": anche se non l'ho trovata da solo, lascio Google APERTO così
-    // l'operatore la cerca a mano nella finestra.
+    const page = ric.page;
+    const gruppo = ric.gruppo ?? "";
+    await page
+      .screenshot({ path: path.join(SCREENSHOT_DIR, `esegui-${job.azione}.png`) })
+      .catch(() => {});
+
+    // "cerca": si FERMA sulla recensione (con la risposta già pronta nel
+    // riquadro) e LASCIA il browser aperto: procede l'operatore.
     if (job.azione === "cerca") {
-      esito({ ok: true, stato: "aperta-non-trovata", trovata: false, messaggio: `Non ho trovato «${job.nome}» da solo: ho lasciato Google aperto, cercala tu nella finestra.` });
-      await new Promise<void>((res) => {
-        ctx.once("close", () => res());
-        setTimeout(res, 30 * 60 * 1000);
-      });
+      esito({ ok: true, stato: "aperta", trovata: true, scritto: ric.scritto, gruppo, messaggio: `Fermo sulla recensione di «${job.nome}» in «${gruppo}». Procedi tu nella finestra.` });
+      await attendiChiusura();
       return;
     }
 
-    esito({ ok: false, stato: "non-trovata", trovata: false, messaggio: `«${job.nome}» non trovata nei gruppi (Point Attivi / Breve Termine). ${dettaglio}` });
+    if (!ric.scritto) {
+      esito({ ok: false, stato: "trovata-non-scritta", trovata: true, gruppo, messaggio: `Trovata in «${gruppo}» ma non ho potuto scrivere: ${ric.dettaglio}` });
+      return;
+    }
+
+    if (job.azione === "test") {
+      esito({ ok: true, stato: "scritta", trovata: true, scritto: true, gruppo, messaggio: `Trovata in «${gruppo}» e scritto «${job.testo}». NON pubblicata (test).` });
+      return;
+    }
+
+    // azione "pubblica": clicca «Pubblica risposta» solo se è abilitata.
+    const abilitato = await page
+      .getByRole("button", { name: /Pubblica risposta/i })
+      .isEnabled()
+      .catch(() => false);
+    if (!abilitato) {
+      esito({ ok: false, stato: "pubblica-non-abilitata", trovata: true, gruppo, messaggio: `Trovata in «${gruppo}», testo scritto, ma «Pubblica risposta» non è attivo.` });
+      return;
+    }
+    try {
+      await pubblica(page);
+      await page.waitForTimeout(2500);
+      await page
+        .screenshot({ path: path.join(SCREENSHOT_DIR, "esegui-pubblicata.png") })
+        .catch(() => {});
+      esito({ ok: true, stato: "pubblicata", trovata: true, scritto: true, gruppo, messaggio: `Pubblicata su Google in «${gruppo}».` });
+    } catch (err) {
+      esito({ ok: false, stato: "pubblica-errore", trovata: true, gruppo, messaggio: `Trovata e scritta, ma la pubblicazione è fallita: ${err instanceof Error ? err.message : String(err)}` });
+    }
   } catch (e) {
     esito({ ok: false, stato: "errore", messaggio: e instanceof Error ? e.message : String(e) });
   } finally {

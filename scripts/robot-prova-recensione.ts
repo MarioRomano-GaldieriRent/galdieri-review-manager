@@ -3,20 +3,18 @@ import path from "path";
 import {
   annulla,
   apriContesto,
-  GRUPPI,
+  cercaNeiGruppiPerPagina,
   sessioneAttiva,
   SCREENSHOT_DIR,
-  trovaRecensioneEScrivi,
 } from "@/server/robot/google";
 
 // Test OSSERVABILE del match su UNA recensione (Margherita è solo un esempio).
-// Va DRITTO alla pagina di ogni gruppo (Point Attivi / Breve Termine hanno un
-// URL proprio: niente menu a tendina), scrolla cercando il nome, scrive «Grazie»
-// e si ferma (Annulla, NON pubblica). Lascia le schede aperte finché premi INVIO.
+// Cerca IN AMPIEZZA: prima pagina di ogni gruppo (Breve Termine / Non
+// Raggruppati / Point Attivi), poi seconda pagina di ognuno, ecc. — una scheda
+// per gruppo. Trovata la card scrive «Grazie» e si ferma (Annulla, NON pubblica).
+// Lascia le schede aperte finché premi INVIO.
 //
 //   npm run robot:prova-recensione -- "Margherita del Canto"
-
-const pausa = (ms: number) => new Promise((ok) => setTimeout(ok, ms));
 
 (async () => {
   const nome = process.argv.slice(2).join(" ").trim() || "Margherita del Canto";
@@ -24,43 +22,31 @@ const pausa = (ms: number) => new Promise((ok) => setTimeout(ok, ms));
 
   mkdirSync(SCREENSHOT_DIR, { recursive: true });
   const ctx = await apriContesto(false);
-  const pagine = [ctx.pages()[0] ?? (await ctx.newPage()), await ctx.newPage()];
+  const page0 = ctx.pages()[0] ?? (await ctx.newPage());
 
-  if (!(await sessioneAttiva(pagine[0]))) {
+  if (!(await sessioneAttiva(page0))) {
     console.log("Non risulti loggato. Fai prima:  npm run robot:sessione");
     await ctx.close();
     process.exit(1);
   }
 
-  let esito = { trovata: false, scritto: false, dettaglio: "non cercata" };
-  for (let i = 0; i < GRUPPI.length; i++) {
-    const gr = GRUPPI[i];
-    const page = pagine[i];
-    console.log(`\n===== SCHEDA ${i + 1} · gruppo "${gr.nome}" =====`);
-    await page.bringToFront().catch(() => {}); // porta questa scheda in primo piano
-    console.log(`  1) vado dritto alla pagina del gruppo:`);
-    console.log(`     ${gr.url}`);
-    await page.goto(gr.url, { waitUntil: "domcontentloaded" }).catch(() => {});
-    await pausa(3500);
+  const esito = await cercaNeiGruppiPerPagina(ctx, nome, "Grazie.", {
+    log: (m) => console.log("   " + m),
+  });
+  console.log(`\n→ trovata: ${esito.trovata} · scritto: ${esito.scritto} · ${esito.dettaglio}`);
 
-    console.log(`  2) cerco «${nome}» scrollando (le recenti sono in cima)…`);
-    esito = await trovaRecensioneEScrivi(page, nome, "Grazie.", {
-      log: (m) => console.log("       " + m),
-    });
-    console.log(`  → trovata: ${esito.trovata} · scritto: ${esito.scritto} · ${esito.dettaglio}`);
-
-    const shot = path.join(SCREENSHOT_DIR, `match-${gr.nome.replace(/\s+/g, "-").toLowerCase()}.png`);
-    await page.screenshot({ path: shot }).catch(() => {});
-    if (esito.trovata) break;
+  if (esito.page) {
+    const tag = (esito.gruppo || "match").replace(/\s+/g, "-").toLowerCase();
+    await esito.page.screenshot({ path: path.join(SCREENSHOT_DIR, `match-${tag}.png`) }).catch(() => {});
   }
 
   console.log(esito.trovata ? "\nTROVATA. (Non ho pubblicato: è un test.)" : "\nNON trovata in nessun gruppo.");
-  console.log("\n>>> Lascio le DUE schede APERTE: guardale pure (una per gruppo).");
+  console.log("\n>>> Lascio le schede APERTE (una per gruppo): guardale pure.");
   console.log(">>> Quando hai finito, torna qui e premi INVIO per chiudere.\n");
   await new Promise<void>((ok) => process.stdin.once("data", () => ok()));
 
-  await annulla(pagine[0]).catch(() => {});
-  await annulla(pagine[1]).catch(() => {});
+  // Scarta l'eventuale bozza scritta durante il test, poi chiudi.
+  if (esito.page) await annulla(esito.page).catch(() => {});
   await ctx.close();
   process.exit(0);
 })().catch((e) => {
