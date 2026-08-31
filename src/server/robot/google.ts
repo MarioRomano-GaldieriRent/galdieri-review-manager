@@ -393,6 +393,151 @@ export async function cercaNeiGruppiPerPagina(
   };
 }
 
+export type EsitoSede = { aperta: boolean; via: string; dettaglio: string };
+
+/**
+ * Cerca una sede su Google PER NOME (il `nomeGoogle` mappato) e ne apre le
+ * recensioni, senza passare per i gruppi: è la strada della «parte 2» del
+ * mapping. I selettori di Google cambiano spesso, quindi questa è la prima
+ * versione da CALIBRARE dal vivo — logga i passaggi, salva screenshot a ogni
+ * tappa e prova più strategie. Ritorna se è arrivata a una lista di recensioni
+ * (conta i pulsanti «Rispondi»).
+ */
+export async function apriSedePerNome(
+  page: Page,
+  nome: string,
+  opts: { log?: (m: string) => void } = {},
+): Promise<EsitoSede> {
+  const log = opts.log ?? (() => {});
+  const cerca = nome.trim();
+  const scatto = async (tag: string) => {
+    const p = path.join(SCREENSHOT_DIR, `prova-sede-${tag}.png`);
+    await page.screenshot({ path: p }).catch(() => {});
+    log(`screenshot: ${p}`);
+  };
+
+  await page
+    .goto("https://business.google.com/reviews", { waitUntil: "domcontentloaded" })
+    .catch(() => {});
+  await page.waitForTimeout(3500);
+  await scatto("1-arrivo");
+
+  // Trova un campo di ricerca: prima direttamente in pagina, poi aprendo il
+  // controllo in alto a sinistra (quello dei gruppi/sedi), che di solito porta
+  // dentro un campo di ricerca delle sedi.
+  const trovaCampo = async (): Promise<Locator | null> => {
+    const campi = [
+      page.getByRole("searchbox"),
+      page.getByRole("combobox"),
+      page.getByPlaceholder(/cerc|search/i),
+      page.locator('input[type="search"]'),
+      page.locator('input[aria-label*="cerc" i], input[aria-label*="search" i]'),
+    ];
+    for (const loc of campi) {
+      const c = loc.first();
+      if ((await c.count().catch(() => 0)) > 0 && (await c.isVisible().catch(() => false))) return c;
+    }
+    return null;
+  };
+
+  let campo = await trovaCampo();
+  if (!campo) {
+    log("nessun campo di ricerca diretto: apro il controllo sedi/gruppi in alto a sinistra…");
+    const ctrl = page
+      .getByRole("button", { name: /non raggruppati|raggrupp|point|breve termine|sedi|tutte le/i })
+      .first();
+    if ((await ctrl.count().catch(() => 0)) > 0) {
+      await ctrl.click().catch(() => {});
+      await page.waitForTimeout(1500);
+      await scatto("2-picker");
+      campo = await trovaCampo();
+    }
+  }
+
+  if (!campo) {
+    await scatto("2-senza-campo");
+    return {
+      aperta: false,
+      via: "nessun-campo",
+      dettaglio:
+        "Non ho trovato un campo per cercare la sede. Guarda gli screenshot e dimmi com'è fatta la pagina.",
+    };
+  }
+
+  await campo.click().catch(() => {});
+  await page.keyboard.type(cerca, { delay: 30 }).catch(() => {});
+  log(`scritto «${cerca}» nel campo di ricerca`);
+  await page.waitForTimeout(2200);
+  await scatto("3-digitato");
+
+  // Dump dei possibili risultati: se il click non prende, questi dicono con che
+  // testo Google elenca le sedi, per calibrare il match.
+  const possibili = await page
+    .$$eval("[role=option], [role=menuitem], a, li", (els) =>
+      els
+        .map((e) => (e.textContent || "").replace(/\s+/g, " ").trim())
+        .filter((t) => t && t.length < 60),
+    )
+    .catch(() => []);
+  log(`risultati visibili (primi 15): ${JSON.stringify([...new Set(possibili)].slice(0, 15))}`);
+
+  // Clicca il risultato che contiene, nell'ordine, le parole del nome.
+  const re = new RegExp(
+    cerca
+      .replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+      .split(/\s+/)
+      .join(".*"),
+    "i",
+  );
+  const risultati = [
+    page.getByRole("option", { name: re }),
+    page.getByRole("menuitem", { name: re }),
+    page.getByRole("link", { name: re }),
+    page.getByText(re),
+  ];
+  let cliccato = false;
+  for (const loc of risultati) {
+    const r = loc.first();
+    if ((await r.count().catch(() => 0)) === 0) continue;
+    if (!(await r.isVisible().catch(() => false))) continue;
+    await r.click({ timeout: 6000 }).catch(() => {});
+    cliccato = true;
+    log(`cliccato un risultato per «${cerca}»`);
+    break;
+  }
+  if (!cliccato) {
+    return {
+      aperta: false,
+      via: "senza-risultato",
+      dettaglio: `Ho scritto «${cerca}» ma non ho trovato un risultato cliccabile che corrisponda. Vedi lo screenshot 3-digitato.`,
+    };
+  }
+
+  await page.waitForTimeout(3500);
+  await scatto("4-cliccato");
+
+  // Se non siamo già sulle recensioni, prova ad andarci.
+  let nRisp = await page.getByRole("button", { name: /Rispondi/i }).count().catch(() => 0);
+  if (nRisp === 0 && !/reviews/i.test(page.url())) {
+    const voce = page.getByRole("link", { name: /recensioni|reviews/i }).first();
+    if ((await voce.count().catch(() => 0)) > 0) {
+      await voce.click().catch(() => {});
+      await page.waitForTimeout(3000);
+      nRisp = await page.getByRole("button", { name: /Rispondi/i }).count().catch(() => 0);
+    }
+  }
+  await scatto("5-recensioni");
+
+  return {
+    aperta: nRisp > 0,
+    via: "ricerca",
+    dettaglio:
+      nRisp > 0
+        ? `Sono sulle recensioni della sede: ${nRisp} pulsanti «Rispondi» visibili.`
+        : "Ho cliccato la sede ma non vedo recensioni con «Rispondi». Forse è la pagina dashboard: guarda gli screenshot 4 e 5.",
+  };
+}
+
 export type Bersaglio = {
   chiave: string;
   nomeCliente: string;

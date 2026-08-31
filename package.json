@@ -24,6 +24,7 @@
     "robot:recensioni": "tsx --tsconfig tsconfig.json scripts/robot-apri-recensioni.ts",
     "robot:prova-rispondi": "tsx --tsconfig tsconfig.json scripts/robot-prova-rispondi.ts",
     "robot:prova-recensione": "tsx --tsconfig tsconfig.json scripts/robot-prova-recensione.ts",
+    "robot:prova-sede": "tsx --tsconfig tsconfig.json scripts/robot-prova-sede.ts",
     "robot:cerca-id": "tsx --tsconfig tsconfig.json scripts/robot-cerca-id.ts",
     "robot:diagnostica": "tsx --tsconfig tsconfig.json scripts/robot-diagnostica.ts",
     "robot:ordina": "tsx --tsconfig tsconfig.json scripts/robot-ordina.ts",
