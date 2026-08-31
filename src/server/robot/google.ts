@@ -1,6 +1,6 @@
 import path from "path";
 import { execSync } from "node:child_process";
-import { chromium, type BrowserContext, type Locator, type Page } from "playwright";
+import { chromium, type BrowserContext, type Frame, type Locator, type Page } from "playwright";
 
 // ---------------------------------------------------------------------------
 // Automazione del browser per rispondere alle recensioni Google (l'API non è
@@ -21,6 +21,19 @@ export const PROFILO_DIR =
   process.env.ROBOT_PROFILO_DIR || path.join(process.cwd(), "data", "robot-profilo");
 export const SCREENSHOT_DIR =
   process.env.ROBOT_SCREENSHOT_DIR || path.join(process.cwd(), "data", "robot-screenshot");
+
+/**
+ * Contesto DOM su cui operare: la PAGINA o un suo IFRAME. Le recensioni di una
+ * singola sede, aperte da Google Search con «Leggi recensioni», stanno dentro
+ * un iframe: getByRole/getByText/locator vanno chiamati su QUEL frame, non sulla
+ * pagina, altrimenti non trovano niente. Page e Frame condividono i metodi di
+ * query; per tastiera, attese e screenshot serve la Page, che si ricava con
+ * paginaDi().
+ */
+type Radice = Page | Frame;
+function paginaDi(r: Radice): Page {
+  return typeof (r as Frame).page === "function" ? (r as Frame).page() : (r as Page);
+}
 
 /**
  * I gruppi di sedi su Google hanno CIASCUNO una pagina con URL proprio: si va
@@ -124,16 +137,17 @@ export async function selezionaGruppo(page: Page, nomeGruppo: string): Promise<b
  * Ritorna diagnostica: quale campo ha trovato e se "Pubblica" si è abilitato.
  */
 export async function scriviRisposta(
-  page: Page,
+  root: Radice,
   testo: string,
 ): Promise<{ scritto: boolean; via: string; abilitato: boolean }> {
+  const pg = paginaDi(root);
   const candidati: [string, Locator][] = [
-    ["textbox-nome", page.getByRole("textbox", { name: /rispost/i })],
-    ["placeholder", page.getByPlaceholder(/La tua risposta/i)],
-    ["textarea-aria", page.locator('textarea[aria-label*="rispost" i]')],
-    ["editable-aria", page.locator('[contenteditable="true"][aria-label*="rispost" i]')],
-    ["textarea", page.locator("textarea")],
-    ["editable", page.locator('[contenteditable="true"]')],
+    ["textbox-nome", root.getByRole("textbox", { name: /rispost/i })],
+    ["placeholder", root.getByPlaceholder(/La tua risposta/i)],
+    ["textarea-aria", root.locator('textarea[aria-label*="rispost" i]')],
+    ["editable-aria", root.locator('[contenteditable="true"][aria-label*="rispost" i]')],
+    ["textarea", root.locator("textarea")],
+    ["editable", root.locator('[contenteditable="true"]')],
   ];
 
   let via = "nessuno";
@@ -142,14 +156,14 @@ export async function scriviRisposta(
     if (c > 0) {
       const campo = loc.last();
       await campo.click({ timeout: 4000 }).catch(() => {});
-      await page.keyboard.type(testo, { delay: 15 }).catch(() => {});
+      await pg.keyboard.type(testo, { delay: 15 }).catch(() => {});
       via = `${nome} (trovati ${c})`;
       break;
     }
   }
 
-  await page.waitForTimeout(400);
-  const abilitato = await page
+  await pg.waitForTimeout(400);
+  const abilitato = await root
     .getByRole("button", { name: /Pubblica risposta/i })
     .isEnabled()
     .catch(() => false);
@@ -157,13 +171,13 @@ export async function scriviRisposta(
 }
 
 /** Clicca "Pubblica risposta". */
-export async function pubblica(page: Page): Promise<void> {
-  await page.getByRole("button", { name: /Pubblica risposta/i }).click({ timeout: 8000 });
+export async function pubblica(root: Radice): Promise<void> {
+  await root.getByRole("button", { name: /Pubblica risposta/i }).click({ timeout: 8000 });
 }
 
 /** Clicca "Annulla" (scarta la bozza, non pubblica). */
-export async function annulla(page: Page): Promise<void> {
-  await page
+export async function annulla(root: Radice): Promise<void> {
+  await root
     .getByRole("button", { name: /^Annulla$/i })
     .first()
     .click({ timeout: 5000 })
@@ -172,11 +186,13 @@ export async function annulla(page: Page): Promise<void> {
 
 // --- Match della recensione specifica -------------------------------------
 
-/** Il pulsante "Rispondi" più vicino SOTTO l'elemento del nome (stessa card). */
-async function rispondiVicinoA(page: Page, nomeEl: Locator): Promise<Locator | null> {
+/** Il «Rispondi» (bottone o link) più vicino SOTTO l'elemento del nome (stessa card). */
+async function rispondiVicinoA(root: Radice, nomeEl: Locator): Promise<Locator | null> {
   const nameBox = await nomeEl.boundingBox().catch(() => null);
   if (!nameBox) return null;
-  const buttons = page.getByRole("button", { name: /Rispondi/i });
+  const buttons = root
+    .getByRole("button", { name: /rispondi/i })
+    .or(root.getByRole("link", { name: /rispondi/i }));
   const count = await buttons.count().catch(() => 0);
   let best: Locator | null = null;
   let bestDy = Infinity;
@@ -195,8 +211,8 @@ async function rispondiVicinoA(page: Page, nomeEl: Locator): Promise<Locator | n
 }
 
 /** Scorre il contenitore scrollabile più grande (o la finestra) verso il basso. */
-export async function scrollaGiu(page: Page, px = 1200): Promise<void> {
-  await page
+export async function scrollaGiu(root: Radice, px = 1200): Promise<void> {
+  await root
     .evaluate((d) => {
       let best: Element | null = null;
       let bestH = 0;
@@ -215,11 +231,11 @@ export async function scrollaGiu(page: Page, px = 1200): Promise<void> {
 export type EsitoMatch = { trovata: boolean; scritto: boolean; dettaglio: string };
 
 /** Va alla pagina successiva delle recensioni (pulsante "navigate_next"). true se avanza. */
-async function vaiPaginaSuccessiva(page: Page): Promise<boolean> {
+async function vaiPaginaSuccessiva(root: Radice): Promise<boolean> {
   const candidati = [
-    page.getByRole("button", { name: /pagina successiva|successiv|next/i }),
-    page.locator('button:has-text("navigate_next")'),
-    page.locator('[aria-label*="successiv" i]'),
+    root.getByRole("button", { name: /pagina successiva|successiv|next/i }),
+    root.locator('button:has-text("navigate_next")'),
+    root.locator('[aria-label*="successiv" i]'),
   ];
   for (const loc of candidati) {
     const b = loc.first();
@@ -228,18 +244,17 @@ async function vaiPaginaSuccessiva(page: Page): Promise<boolean> {
     if (!(await b.isVisible().catch(() => false))) continue;
     await b.scrollIntoViewIfNeeded().catch(() => {});
     await b.click().catch(() => {});
-    await page.waitForTimeout(1800);
+    await paginaDi(root).waitForTimeout(1800);
     return true;
   }
   return false;
 }
 
-/** Quanti pulsanti «Rispondi» sono attualmente in pagina (misura della lista). */
-async function contaRispondi(page: Page): Promise<number> {
-  return page
-    .getByRole("button", { name: /Rispondi/i })
-    .count()
-    .catch(() => 0);
+/** Quanti «Rispondi» (bottone o link) sono ora nella radice — misura della lista. */
+async function contaRispondi(root: Radice): Promise<number> {
+  const b = await root.getByRole("button", { name: /rispondi/i }).count().catch(() => 0);
+  const l = await root.getByRole("link", { name: /rispondi/i }).count().catch(() => 0);
+  return b + l;
 }
 
 /**
@@ -248,12 +263,22 @@ async function contaRispondi(page: Page): Promise<number> {
  * considera avanzata la pagina solo se sono comparse nuove card. Ritorna false
  * quando non si va oltre: è la fine del gruppo.
  */
-async function avanzaPagina(page: Page): Promise<boolean> {
-  if (await vaiPaginaSuccessiva(page)) return true;
-  const prima = await contaRispondi(page);
-  await scrollaGiu(page, 1600);
-  await page.waitForTimeout(1200);
-  return (await contaRispondi(page)) > prima;
+async function avanzaPagina(root: Radice): Promise<boolean> {
+  if (await vaiPaginaSuccessiva(root)) return true;
+  const prima = await contaRispondi(root);
+  await scrollaGiu(root, 1600);
+  await paginaDi(root).waitForTimeout(1200);
+  return (await contaRispondi(root)) > prima;
+}
+
+/** La radice dove stanno le recensioni: la pagina, o l'iframe che le contiene. */
+async function radiceConRecensioni(page: Page): Promise<Radice> {
+  if ((await contaRispondi(page)) > 0) return page;
+  for (const f of page.frames()) {
+    if (f === page.mainFrame()) continue;
+    if ((await contaRispondi(f).catch(() => 0)) > 0) return f;
+  }
+  return page;
 }
 
 /**
@@ -393,7 +418,13 @@ export async function cercaNeiGruppiPerPagina(
   };
 }
 
-export type EsitoSede = { aperta: boolean; via: string; dettaglio: string };
+export type EsitoSede = {
+  aperta: boolean;
+  via: string;
+  dettaglio: string;
+  /** La radice dove sono le recensioni (pagina o iframe): la usa chi cerca il cliente. */
+  root?: Radice;
+};
 
 /**
  * Cerca una sede su Google PER NOME (il `nomeGoogle` mappato) e ne apre le
@@ -536,12 +567,12 @@ export async function apriSedePerNome(
   await page.waitForTimeout(2500);
   await scatto("4-cliccato");
 
-  // Siamo sulla scheda della sede: apri le sue recensioni con «Leggi
-  // recensioni» (o l'etichetta equivalente). È il passo che porta all'elenco su
-  // cui poi si scorre per trovare la recensione del cliente.
+  // Siamo sulla scheda della sede (su Google Search): apri le recensioni con
+  // «Leggi recensioni». Il pannello che si apre sta DENTRO UN IFRAME, quindi le
+  // recensioni non sono nella pagina ma in un frame: lo individua radiceConRecensioni.
   const etichettaRec = /leggi recensioni|vedi recensioni|tutte le recensioni|gestisci recensioni|recensioni|read reviews|see reviews|reviews/i;
-  let nRisp = await page.getByRole("button", { name: /Rispondi/i }).count().catch(() => 0);
-  if (nRisp === 0) {
+  let root: Radice = await radiceConRecensioni(page);
+  if ((await contaRispondi(root)) === 0) {
     log("sulla scheda della sede: cerco «Leggi recensioni»…");
     for (const loc of [
       page.getByRole("button", { name: etichettaRec }),
@@ -557,24 +588,27 @@ export async function apriSedePerNome(
       await page.waitForTimeout(3000);
       break;
     }
-    nRisp = await page.getByRole("button", { name: /Rispondi/i }).count().catch(() => 0);
+    root = await radiceConRecensioni(page);
   }
+  if (root !== page) log("le recensioni sono dentro un iframe: opero lì.");
 
   // Scorri un po' così le recensioni si caricano (poi si cerca quella giusta).
+  let nRisp = await contaRispondi(root);
   if (nRisp > 0) {
-    await scrollaGiu(page, 900);
-    await page.waitForTimeout(900);
-    nRisp = await page.getByRole("button", { name: /Rispondi/i }).count().catch(() => 0);
+    await scrollaGiu(root, 700);
+    await paginaDi(root).waitForTimeout(800);
+    nRisp = await contaRispondi(root);
   }
   await scatto("5-recensioni");
 
   return {
     aperta: nRisp > 0,
     via: "ricerca",
+    root,
     dettaglio:
       nRisp > 0
-        ? `Sono sulle recensioni della sede: ${nRisp} pulsanti «Rispondi» visibili. Da qui si scorre per trovare la recensione del cliente.`
-        : "Ho aperto la sede ma non vedo ancora le recensioni («Rispondi»). Forse «Leggi recensioni» ha un'altra etichetta: guarda gli screenshot 4 e 5.",
+        ? `Sono sulle recensioni della sede: ${nRisp} «Rispondi»${root !== page ? " (in un iframe)" : ""}. Da qui si trova la recensione del cliente.`
+        : "Ho aperto la sede ma non vedo ancora le recensioni («Rispondi»), nemmeno in un iframe. Guarda gli screenshot 4 e 5.",
   };
 }
 
@@ -588,42 +622,43 @@ export type EsitoTrovaLista = { trovata: boolean; dettaglio: string };
  * trova la sua recensione qui.
  */
 export async function trovaRecensioneNellaLista(
-  page: Page,
+  root: Radice,
   nomeCliente: string,
   opts: { maxPassi?: number; log?: (m: string) => void } = {},
 ): Promise<EsitoTrovaLista> {
   const maxPassi = opts.maxPassi ?? 60;
   const log = opts.log ?? (() => {});
   const nome = nomeCliente.trim();
+  const pg = paginaDi(root);
 
-  await page
-    .getByRole("button", { name: /Rispondi/i })
+  await root
+    .getByRole("button", { name: /rispondi/i })
     .first()
     .waitFor({ timeout: 12000 })
     .catch(() => {});
 
   let fermo = 0;
   for (let s = 0; s <= maxPassi; s++) {
-    const nomeLoc = page.getByText(nome, { exact: false });
+    const nomeLoc = root.getByText(nome, { exact: false });
     const nName = await nomeLoc.count().catch(() => 0);
-    const nRisp = await contaRispondi(page);
+    const nRisp = await contaRispondi(root);
     log(`passo ${s + 1}: «${nome}» = ${nName} · recensioni visibili = ${nRisp}`);
 
     if (nName > 0) {
       const primo = nomeLoc.first();
       await primo.scrollIntoViewIfNeeded().catch(() => {});
-      await page.waitForTimeout(400);
+      await pg.waitForTimeout(400);
       return {
         trovata: true,
         dettaglio: `«${nome}» trovato al passo ${s + 1} e portato in vista (non toccato).`,
       };
     }
 
-    await scrollaGiu(page, 1400);
-    await page.waitForTimeout(1000);
-    const dopo = await contaRispondi(page);
+    await scrollaGiu(root, 1400);
+    await pg.waitForTimeout(1000);
+    const dopo = await contaRispondi(root);
     if (dopo <= nRisp) {
-      if (await avanzaPagina(page)) {
+      if (await avanzaPagina(root)) {
         fermo = 0;
         continue;
       }
@@ -646,23 +681,24 @@ export async function trovaRecensioneNellaLista(
  * ripiega sullo scroll. SOLA LETTURA: non apre «Rispondi», non scrive nulla.
  */
 export async function cercaClienteNelleRecensioni(
-  page: Page,
+  root: Radice,
   nomeCliente: string,
   opts: { log?: (m: string) => void } = {},
 ): Promise<EsitoTrovaLista> {
   const log = opts.log ?? (() => {});
   const nome = nomeCliente.trim();
+  const pg = paginaDi(root);
   const scatto = async (tag: string) => {
     const p = path.join(SCREENSHOT_DIR, `prova-sede-${tag}.png`);
-    await page.screenshot({ path: p }).catch(() => {});
+    await pg.screenshot({ path: p }).catch(() => {});
     log(`screenshot: ${p}`);
   };
 
-  // Diagnostica: elenca i campi di input VISIBILI con i loro attributi. Serve a
-  // capire con certezza qual è la ricerca DELLE RECENSIONI (placeholder /
-  // aria-label) e agganciarla, invece di indovinare.
-  const campiInfo = await page
-    .$$eval("input, textarea, [role=searchbox], [role=combobox]", (els) =>
+  // Diagnostica: elenca i campi di input VISIBILI nella radice (pagina o iframe),
+  // per capire se c'è una ricerca DELLE RECENSIONI e agganciarla.
+  const campiInfo = await root
+    .locator("input, textarea, [role=searchbox], [role=combobox]")
+    .evaluateAll((els) =>
       els
         .filter((e) => (e as HTMLElement).offsetParent !== null)
         .map((e) => ({
@@ -673,21 +709,19 @@ export async function cercaClienteNelleRecensioni(
           aria: e.getAttribute("aria-label") || "",
         })),
     )
-    .catch(() => []);
-  log(`campi di input in pagina: ${JSON.stringify(campiInfo).slice(0, 700)}`);
+    .catch(() => [] as unknown[]);
+  log(`campi di input: ${JSON.stringify(campiInfo).slice(0, 700)}`);
 
-  // Il campo "cerca tra le recensioni" — deve riferirsi a RECENSIONI/recensore,
-  // NON alla ricerca delle attività (che resta in alto): quella, riempita col
-  // nome della persona, cercherebbe un'attività inesistente.
+  // Il campo "cerca tra le recensioni" — deve riferirsi a RECENSIONI/recensore.
   const perRecensioni = /recensione|recensioni|recensore|review|reviewer/i;
   const trovaCampo = async (): Promise<Locator | null> => {
     for (const loc of [
-      page.getByPlaceholder(perRecensioni),
-      page.locator(
+      root.getByPlaceholder(perRecensioni),
+      root.locator(
         'input[aria-label*="recension" i], input[aria-label*="recensore" i], input[aria-label*="review" i]',
       ),
-      page.getByRole("searchbox", { name: perRecensioni }),
-      page.getByRole("combobox", { name: perRecensioni }),
+      root.getByRole("searchbox", { name: perRecensioni }),
+      root.getByRole("combobox", { name: perRecensioni }),
     ]) {
       const c = loc.first();
       if ((await c.count().catch(() => 0)) > 0 && (await c.isVisible().catch(() => false))) return c;
@@ -698,33 +732,33 @@ export async function cercaClienteNelleRecensioni(
   let campo = await trovaCampo();
   // Il campo può stare dietro un'icona "lente" da aprire prima.
   if (!campo) {
-    const lente = page
+    const lente = root
       .getByRole("button", { name: /cerca.*recension|cerca nelle recension|search.*review/i })
       .first();
     if ((await lente.count().catch(() => 0)) > 0 && (await lente.isVisible().catch(() => false))) {
       await lente.click().catch(() => {});
-      await page.waitForTimeout(1000);
+      await pg.waitForTimeout(1000);
       campo = await trovaCampo();
     }
   }
 
   if (!campo) {
     log("nessun campo «cerca recensioni»: ripiego sullo scroll…");
-    return trovaRecensioneNellaLista(page, nome, { log });
+    return trovaRecensioneNellaLista(root, nome, { log });
   }
 
   await campo.click().catch(() => {});
   await campo.fill("").catch(() => {});
-  await page.keyboard.type(nome, { delay: 30 }).catch(() => {});
-  await page.keyboard.press("Enter").catch(() => {});
+  await pg.keyboard.type(nome, { delay: 30 }).catch(() => {});
+  await pg.keyboard.press("Enter").catch(() => {});
   log(`scritto «${nome}» nel campo di ricerca delle recensioni`);
-  await page.waitForTimeout(3000);
+  await pg.waitForTimeout(3000);
   await scatto("6-cerca-cliente");
 
-  const nName = await page.getByText(nome, { exact: false }).count().catch(() => 0);
-  const nRisp = await contaRispondi(page);
+  const nName = await root.getByText(nome, { exact: false }).count().catch(() => 0);
+  const nRisp = await contaRispondi(root);
   if (nName > 0) {
-    await page
+    await root
       .getByText(nome, { exact: false })
       .first()
       .scrollIntoViewIfNeeded()
@@ -754,61 +788,62 @@ export type EsitoRisposta = { scritto: boolean; via: string; abilitato: boolean;
  *   - se `testo` c'è → scrive quella bozza nel riquadro (comunque non pubblicata).
  */
 export async function rispondiAllaRecensione(
-  page: Page,
+  root: Radice,
   nomeCliente: string,
   testo: string,
   opts: { log?: (m: string) => void } = {},
 ): Promise<EsitoRisposta> {
   const log = opts.log ?? (() => {});
   const nome = nomeCliente.trim();
+  const pg = paginaDi(root);
   const scatto = async (tag: string) => {
     const p = path.join(SCREENSHOT_DIR, `prova-sede-${tag}.png`);
-    await page.screenshot({ path: p }).catch(() => {});
+    await pg.screenshot({ path: p }).catch(() => {});
     log(`screenshot: ${p}`);
   };
 
-  const nomeLoc = page.getByText(nome, { exact: false }).first();
+  const nomeLoc = root.getByText(nome, { exact: false }).first();
   if ((await nomeLoc.count().catch(() => 0)) === 0) {
     return {
       scritto: false,
       via: "nessun-nome",
       abilitato: false,
-      dettaglio: `«${nome}» non è in pagina: va cercato prima.`,
+      dettaglio: `«${nome}» non è nella lista: va cercato prima.`,
     };
   }
   await nomeLoc.scrollIntoViewIfNeeded().catch(() => {});
-  await page.waitForTimeout(400);
+  await pg.waitForTimeout(400);
   await scatto("8a-prima-rispondi");
 
-  // DIAGNOSTICA: elenca i bottoni/link visibili, così vediamo con che etichetta
-  // Google chiama «Rispondi» in questa vista (e se compare solo al passaggio del
-  // mouse o dietro un menu ⋮).
-  const bottoni = await page
-    .$$eval("button, [role=button], a", (els) =>
+  // DIAGNOSTICA: elenca i bottoni/link visibili nella radice (pagina o iframe),
+  // così vediamo con che etichetta Google chiama «Rispondi» in questa vista.
+  const bottoni = await root
+    .locator("button, [role=button], a")
+    .evaluateAll((els) =>
       els
         .filter((e) => (e as HTMLElement).offsetParent !== null)
         .map((e) =>
-          ((e.textContent || e.getAttribute("aria-label") || "").replace(/\s+/g, " ").trim()),
+          (e.textContent || e.getAttribute("aria-label") || "").replace(/\s+/g, " ").trim(),
         )
         .filter((t) => t && t.length < 40),
     )
-    .catch(() => []);
-  log(`bottoni in pagina: ${JSON.stringify([...new Set(bottoni)].slice(0, 30))}`);
+    .catch(() => [] as string[]);
+  log(`bottoni: ${JSON.stringify([...new Set(bottoni)].slice(0, 30))}`);
 
   // Il «Rispondi» accanto al nome; se la geometria non lo prende, ripiego sul
-  // primo «Rispondi» in pagina — la lista è filtrata sul cliente, quindi è il suo.
+  // primo «Rispondi» in vista — la lista è filtrata sul cliente, quindi è il suo.
   const reRispondi = /rispondi|reply|risposta/i;
-  let rispondi = await rispondiVicinoA(page, nomeLoc);
+  let rispondi = await rispondiVicinoA(root, nomeLoc);
   if (!rispondi) {
     for (const loc of [
-      page.getByRole("button", { name: reRispondi }),
-      page.getByRole("link", { name: reRispondi }),
-      page.getByText(/^rispondi$/i),
+      root.getByRole("button", { name: reRispondi }),
+      root.getByRole("link", { name: reRispondi }),
+      root.getByText(/^rispondi$/i),
     ]) {
       const b = loc.first();
       if ((await b.count().catch(() => 0)) > 0 && (await b.isVisible().catch(() => false))) {
         rispondi = b;
-        log("uso il primo «Rispondi» in pagina (lista filtrata sul cliente).");
+        log("uso il primo «Rispondi» in vista (lista filtrata sul cliente).");
         break;
       }
     }
@@ -818,20 +853,20 @@ export async function rispondiAllaRecensione(
       scritto: false,
       via: "nessun-rispondi",
       abilitato: false,
-      dettaglio: `Trovato «${nome}» ma nessun «Rispondi» cliccabile. Guarda 8a e la riga «bottoni in pagina» qui sopra: dimmi come si chiama il tasto per rispondere.`,
+      dettaglio: `Trovato «${nome}» ma nessun «Rispondi» cliccabile. Guarda 8a e la riga «bottoni» qui sopra.`,
     };
   }
   await rispondi.scrollIntoViewIfNeeded().catch(() => {});
   await rispondi.click({ timeout: 6000 }).catch(() => {});
   log("cliccato «Rispondi».");
-  await page.waitForTimeout(1200);
+  await pg.waitForTimeout(1200);
   await scatto("8b-dopo-rispondi");
 
   // Testo vuoto = apro solo il riquadro, senza scrivere.
   if (!testo.trim()) {
     const riquadro =
-      (await page.locator('textarea, [contenteditable="true"]').count().catch(() => 0)) > 0 ||
-      (await page.getByRole("button", { name: /Pubblica risposta/i }).count().catch(() => 0)) > 0;
+      (await root.locator('textarea, [contenteditable="true"]').count().catch(() => 0)) > 0 ||
+      (await root.getByRole("button", { name: /Pubblica risposta/i }).count().catch(() => 0)) > 0;
     return {
       scritto: false,
       via: "solo-aperto",
@@ -842,9 +877,9 @@ export async function rispondiAllaRecensione(
     };
   }
 
-  const r = await scriviRisposta(page, testo);
+  const r = await scriviRisposta(root, testo);
   const p = path.join(SCREENSHOT_DIR, "prova-sede-8-risposta.png");
-  await page.screenshot({ path: p }).catch(() => {});
+  await pg.screenshot({ path: p }).catch(() => {});
   log(`riquadro via ${r.via}; «Pubblica» abilitato: ${r.abilitato}; screenshot: ${p}`);
   return {
     scritto: r.scritto,

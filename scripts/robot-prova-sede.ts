@@ -91,12 +91,13 @@ async function main() {
   const esito = await apriSedePerNome(page, nomeGoogle, { log: (m) => console.log("   " + m) });
   console.log(`\n→ ${esito.aperta ? "APERTA ✓" : "non aperta"} · via ${esito.via} · ${esito.dettaglio}`);
 
-  // Se abbiamo un cliente e siamo sulle recensioni, lo cerchiamo con il campo
-  // di ricerca delle recensioni (non scorrendo) e poi proviamo a rispondere —
-  // SCRIVENDO la bozza, senza pubblicare nulla.
-  if (cliente && esito.aperta) {
+  // Se abbiamo un cliente e siamo sulle recensioni, lo cerchiamo nella radice
+  // giusta (le recensioni della sede stanno in un iframe: la usa esito.root) e
+  // poi proviamo a rispondere — SCRIVENDO la bozza, senza pubblicare nulla.
+  if (cliente && esito.aperta && esito.root) {
+    const root = esito.root;
     console.log(`\nCerco la recensione di «${cliente}» in questa sede…`);
-    const t = await cercaClienteNelleRecensioni(page, cliente, { log: (m) => console.log("   " + m) });
+    const t = await cercaClienteNelleRecensioni(root, cliente, { log: (m) => console.log("   " + m) });
     console.log(`\n→ ${t.trovata ? "TROVATA ✓" : "non trovata"} · ${t.dettaglio}`);
 
     if (t.trovata) {
@@ -105,7 +106,7 @@ async function main() {
       } else {
         console.log(`\nClicco «Rispondi» — senza scrivere niente…`);
       }
-      const r = await rispondiAllaRecensione(page, cliente, testoRisposta, {
+      const r = await rispondiAllaRecensione(root, cliente, testoRisposta, {
         log: (m) => console.log("   " + m),
       });
       console.log(`\n→ ${r.via} · ${r.dettaglio}`);
