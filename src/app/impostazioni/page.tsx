@@ -12,6 +12,8 @@ import {
 import { getGoogleReviewsStatus } from "@/server/integrations/googleReviews";
 import { caricaRegole } from "@/server/automation/rules";
 import { richiediAdmin } from "@/server/auth/sessione";
+import { leggiSedi } from "@/server/db/sedi";
+import { conteggioRecensioniPerSede } from "@/server/db/recensioni";
 import {
   AutomazioneRegola,
   descriviCondizione,
@@ -31,6 +33,7 @@ import {
   saveGraphAction,
   saveMailboxAction,
   saveTranslatorAction,
+  salvaMappingSedeAction,
   testFreshdeskAction,
   testGraphAction,
   testTranslatorAction,
@@ -48,6 +51,7 @@ const SEZIONI = [
   { id: "modo", voce: "Modalità operativa", gruppo: "Funzionamento" },
   { id: "regole", voce: "Regole e flussi", gruppo: "Funzionamento" },
   { id: "parametri", voce: "Parametri", gruppo: "Funzionamento" },
+  { id: "mapping", voce: "Mapping sedi", gruppo: "Funzionamento" },
   { id: "etichette", voce: "Etichette", gruppo: "Funzionamento" },
   { id: "email", voce: "Email — Microsoft 365", gruppo: "Integrazioni" },
   { id: "freshdesk", voce: "Freshdesk", gruppo: "Integrazioni" },
@@ -77,7 +81,7 @@ export default async function ImpostazioniPage({
   await richiediAdmin(); // solo admin: rimanda alla home chi non lo è
   const sp = await searchParams;
   const settings = await loadSettings();
-  const [graph, translator, freshdesk, google, mailbox, googleStatus, automation, regole] =
+  const [graph, translator, freshdesk, google, mailbox, googleStatus, automation, regole, sedi] =
     await Promise.all([
       resolveGraph(settings),
       resolveTranslator(settings),
@@ -87,7 +91,9 @@ export default async function ImpostazioniPage({
       getGoogleReviewsStatus(),
       resolveAutomation(settings),
       caricaRegole(),
+      leggiSedi(),
     ]);
+  const sediMappate = sedi.filter((s) => s.googleReviewsUrl).length;
 
   const simulazione = settings.modo !== "reale";
   const graphOk = isSet(graph.tenantId) && isSet(graph.clientId) && isSet(graph.clientSecret);
@@ -98,6 +104,15 @@ export default async function ImpostazioniPage({
   const richiesta = SEZIONI.find((s) => s.id === sp.s)?.id;
   const sezione: IdSezione =
     richiesta ?? (sp.test ? (SEZIONE_DEL_TEST[sp.test] ?? "modo") : "modo");
+
+  // Mapping: il conteggio recensioni per sede è un'aggregazione più pesante, la
+  // si legge solo quando si apre davvero il pannello. Le sedi più attive in cima.
+  const conteggi = sezione === "mapping" ? await conteggioRecensioniPerSede() : null;
+  const sediMap = conteggi
+    ? sedi
+        .map((s) => ({ ...s, conteggio: conteggi.perSede.get(s.chiave)?.conteggio ?? 0 }))
+        .sort((a, b) => b.conteggio - a.conteggio || a.nome.localeCompare(b.nome))
+    : [];
 
   const esito = sp.test ? { quale: sp.test, ok: sp.ok === "1", msg: sp.msg ?? "" } : null;
   const Esito = ({ per }: { per: string }) =>
@@ -112,6 +127,7 @@ export default async function ImpostazioniPage({
   const statoVoce = (id: IdSezione) => {
     if (id === "modo") return simulazione ? "simulazione" : "REALE";
     if (id === "regole") return `${attive}/${regole.length}`;
+    if (id === "mapping") return `${sediMappate}/${sedi.length}`;
     if (id === "etichette") return String(settings.labels.length);
     if (id === "email") return graphOk ? "ok" : "!";
     if (id === "freshdesk") return freshdeskOk ? "ok" : "!";
@@ -358,6 +374,88 @@ export default async function ImpostazioniPage({
                 </button>
               </form>
             </section>
+          )}
+
+          {sezione === "mapping" && (
+            <>
+              <section className="card">
+                <div className="sec-head">
+                  <h2>Mapping delle attività commerciali</h2>
+                  <span className="conn-badge conn-ok">
+                    {sediMappate}/{sedi.length} mappate
+                  </span>
+                </div>
+                <p className="hint">
+                  Ogni «sede» qui sotto è ricavata dall&apos;oggetto delle email delle recensioni
+                  (es. <em>Orio al Serio Milano-Bergamo</em>). Incolla accanto il link della sua{" "}
+                  <strong>attività su Google</strong> — la pagina di gestione recensioni di quella
+                  sede — così il robot potrà andare dritto lì invece di cercare fra i gruppi. Le sedi
+                  più attive sono in cima.
+                </p>
+                {conteggi && conteggi.nonRiconosciute > 0 && (
+                  <p className="notice">
+                    {conteggi.nonRiconosciute} recensioni hanno una sede non riconosciuta
+                    dall&apos;oggetto: non compaiono qui finché l&apos;oggetto non le identifica.
+                  </p>
+                )}
+                <p className="hint">
+                  Per compilarle tutte in una volta (CSV, place_id) c&apos;è la pagina completa{" "}
+                  <Link href="/sedi">Sedi</Link>.
+                </p>
+              </section>
+
+              <section className="card">
+                {sediMap.length === 0 ? (
+                  <p className="hint">
+                    Nessuna sede ancora: compaiono man mano che arrivano le recensioni.
+                  </p>
+                ) : (
+                  <div className="sedi-lista">
+                    {sediMap.map((s) => (
+                      <form key={s.chiave} action={salvaMappingSedeAction} className="sede-riga">
+                        <input type="hidden" name="chiave" value={s.chiave} />
+                        <div className="sede-testa">
+                          <span className="sede-nome">{s.nome}</span>
+                          <span className="conn-badge conn-ok">
+                            {s.conteggio} {s.conteggio === 1 ? "recensione" : "recensioni"}
+                          </span>
+                          <span
+                            className={`conn-badge ${s.googleReviewsUrl ? "conn-ok" : "conn-ko"}`}
+                          >
+                            {s.googleReviewsUrl ? "mappata" : "da mappare"}
+                          </span>
+                        </div>
+                        <div className="filters-row">
+                          <label className="field grow">
+                            <span>Attività Google — link gestione recensioni</span>
+                            <input
+                              name="googleReviewsUrl"
+                              defaultValue={s.googleReviewsUrl}
+                              placeholder="https://business.google.com/reviews/…"
+                            />
+                          </label>
+                          <div className="filters-actions">
+                            <button type="submit" className="btn-mini">
+                              Salva
+                            </button>
+                            {s.googleReviewsUrl && (
+                              <a
+                                className="btn-mini"
+                                href={s.googleReviewsUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                              >
+                                Apri ↗
+                              </a>
+                            )}
+                          </div>
+                        </div>
+                      </form>
+                    ))}
+                  </div>
+                )}
+              </section>
+            </>
           )}
 
           {sezione === "email" && (

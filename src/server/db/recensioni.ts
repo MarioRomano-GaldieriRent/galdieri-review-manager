@@ -356,3 +356,33 @@ export async function ripristinaRecensione(chiave: string): Promise<void> {
     ],
   );
 }
+
+// ------------------------------------------------------------------ mapping
+
+export type ConteggioSede = { conteggio: number; ultimaIl: string | null };
+
+/**
+ * Quante recensioni sono arrivate per ogni sede (chiave della sede → conteggio +
+ * data dell'ultima). È la base del «Mapping»: dice quali sedi compaiono davvero
+ * nelle email e quanto sono attive, per mapparle una a una all'attività Google.
+ * Le recensioni con sede NON riconosciuta (sentinella "") sono contate a parte.
+ */
+export async function conteggioRecensioniPerSede(): Promise<{
+  perSede: Map<string, ConteggioSede>;
+  nonRiconosciute: number;
+}> {
+  const rec = await coll("recensioni");
+  const righe = (await rec
+    .aggregate([
+      { $group: { _id: "$sede.chiave", n: { $sum: 1 }, ultima: { $max: "$ricevutaIl" } } },
+    ])
+    .toArray()) as { _id: string; n: number; ultima: Date | null }[];
+
+  const perSede = new Map<string, ConteggioSede>();
+  let nonRiconosciute = 0;
+  for (const r of righe) {
+    if (!r._id) nonRiconosciute += r.n;
+    else perSede.set(r._id, { conteggio: r.n, ultimaIl: r.ultima ? r.ultima.toISOString() : null });
+  }
+  return { perSede, nonRiconosciute };
+}
