@@ -27,6 +27,7 @@ import { BottoneRispondi } from "./BottoneRispondi";
 import {
   chiaviArchiviate,
   elencoArchiviate,
+  recensioniDaApprovare,
   type RecensioneArchiviata,
 } from "@/server/db/recensioni";
 import { VediMail } from "./VediMail";
@@ -223,16 +224,22 @@ export default async function HomePage({
     ]);
     graphOk = graphConf;
 
-    let recensioni: Recensione[] = [];
+    // INGEST leggero: da Graph si scarica solo una finestra piccola (le ~100
+    // email più recenti), giusto per portare nell'archivio i NUOVI arrivi — non
+    // più 200 email a ogni caricamento. La cache breve resta: solo «Aggiorna» e
+    // l'auto-refresh (fresh=1) rifanno l'ingest davvero.
     if (graphOk && label) {
       try {
-        // Cache breve del carico pesante: i click e i ritorni sulla scheda sono
-        // istantanei; solo «Aggiorna» e l'auto-refresh (fresh=1) ricaricano davvero.
-        recensioni = (await caricaRecensioni(label, { forza: sp.fresh === "1" })).recensioni;
+        await caricaRecensioni(label, { top: 100, forza: sp.fresh === "1" });
       } catch (e) {
         erroreGraph = e instanceof Error ? e.message : "Errore sconosciuto";
       }
     }
+    // La LISTA viene dall'ARCHIVIO Mongo (query indicizzata, veloce), non dalla
+    // finestra della posta: ha TUTTO l'arretrato recente e non perde ciò che è
+    // scivolato oltre la finestra (era il caso di Arthur). Funziona anche se
+    // Graph è momentaneamente giù.
+    const recensioni: Recensione[] = await recensioniDaApprovare();
 
     // Lista UNICA: le recensioni ancora da pubblicare su Google. Sparisce solo
     // ciò che è già stato pubblicato (stato pubblicata/verificata); quelle
@@ -432,7 +439,8 @@ export default async function HomePage({
           {!graphOk && (
             <section className="card">
               <p className="form-error">
-                Microsoft Graph non è configurato: senza posta non ci sono recensioni da mostrare.
+                Microsoft Graph non è configurato: la lista qui sotto viene dall&apos;archivio, ma
+                senza posta non arrivano nuove recensioni.
               </p>
             </section>
           )}

@@ -316,6 +316,28 @@ export async function leggiArchivio(limite = 200): Promise<RecensioneArchiviata[
   return righe.map(componi);
 }
 
+/**
+ * Le recensioni candidate per «Da approvare», prese DALL'ARCHIVIO (non dalla
+ * finestra della posta): non archiviate, senza risposta nel thread, e recenti
+ * (ultimi `giorni` giorni — quelle più vecchie ancora "aperte" sono quasi sempre
+ * già gestite fuori e farebbero solo rumore). Ordinate dalla più recente. Gli
+ * altri filtri (pubblicate da noi, regola attiva, ticket Freshdesk risolto) li
+ * mette la home. È il cuore dell'ottimizzazione: la lista non dipende più dal
+ * riscaricare 200 email, e non perde ciò che è scivolato oltre la finestra.
+ */
+export async function recensioniDaApprovare(
+  opts: { giorni?: number; limite?: number } = {},
+): Promise<RecensioneArchiviata[]> {
+  const giorni = opts.giorni ?? 30;
+  const dal = new Date(Date.now() - giorni * 24 * 60 * 60 * 1000);
+  const righe = await (await coll<DocRec>("recensioni"))
+    .find({ archiviata: false, haRisposta: false, ricevutaIl: { $gte: dal } })
+    .sort({ ricevutaIl: -1 })
+    .limit(opts.limite ?? 500)
+    .toArray();
+  return righe.map(componi);
+}
+
 export async function archiviaRecensione(chiave: string, motivo: string): Promise<void> {
   await (await coll("recensioni")).updateOne(
     { _id: chiave, archiviataIl: null },

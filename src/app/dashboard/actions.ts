@@ -7,17 +7,17 @@ import { testoPerRecensione } from "@/server/automation/connectors";
 import { caricaRegole, regolaPer, EMAIL_TICKETING } from "@/server/automation/rules";
 import { eliminaEsecuzione, registraEsecuzione } from "@/server/automation/runs";
 import type { Esecuzione, Regola } from "@/server/automation/types";
-import { caricaRecensioni, haTesto, testoRecensione, type Recensione } from "@/server/reviews/load";
+import { haTesto, testoRecensione, type Recensione } from "@/server/reviews/load";
 import {
   approvaPerPubblicazione,
   leggiPubblicazione,
   segnaPubblicata,
 } from "@/server/db/pubblicazioni";
 import { chiudiFreshdeskPer } from "@/server/pubblicazione";
-import { archiviaRecensione, ripristinaRecensione } from "@/server/db/recensioni";
+import { archiviaRecensione, leggiRecensione, ripristinaRecensione } from "@/server/db/recensioni";
 import { normalizzaSede } from "@/server/db/seed";
 import { nomeGoogleDiSede } from "@/server/db/sedi";
-import { loadSettings, modoOperativo } from "@/server/settings";
+import { modoOperativo } from "@/server/settings";
 import { richiediOperatore } from "@/server/auth/sessione";
 import { impostaMostraTutte } from "@/server/auth/utenti";
 import { cercaTicketPerRecensione, STATO } from "@/server/integrations/freshdesk";
@@ -45,26 +45,18 @@ function indietro(fd: FormData, extra: Record<string, string> = {}): never {
 
 async function trovaRecensione(fd: FormData): Promise<Recensione> {
   const chiave = str(fd, "chiave");
-  const settings = await loadSettings();
-  const label = settings.labels.find((l) => l.id === str(fd, "label")) ?? settings.labels[0];
-  if (!chiave || !label) indietro(fd);
-
-  const { recensioni } = await caricaRecensioni(label);
-  const r = recensioni.find((x) => x.chiave === chiave);
+  if (!chiave) indietro(fd);
+  // Dall'ARCHIVIO Mongo (non più riscaricando le email): così si trova anche una
+  // recensione dell'arretrato, non solo quelle nella finestra della posta.
+  const r = await leggiRecensione(chiave);
   if (!r) indietro(fd, { errore: "recensione-non-trovata" });
   return r;
 }
 
 /** Come sopra, ma per le azioni che RITORNANO un valore (non redirigono). */
-async function trovaRecensionePerChiave(
-  chiave: string,
-  labelId: string,
-): Promise<Recensione | null> {
-  const settings = await loadSettings();
-  const label = settings.labels.find((l) => l.id === labelId) ?? settings.labels[0];
-  if (!chiave || !label) return null;
-  const { recensioni } = await caricaRecensioni(label);
-  return recensioni.find((x) => x.chiave === chiave) ?? null;
+async function trovaRecensionePerChiave(chiave: string): Promise<Recensione | null> {
+  if (!chiave) return null;
+  return (await leggiRecensione(chiave)) ?? null;
 }
 
 /**
@@ -202,7 +194,7 @@ export async function cercaSuGoogleAction(
     };
   }
 
-  const r = await trovaRecensionePerChiave(chiave, labelId);
+  const r = await trovaRecensionePerChiave(chiave);
   if (!r) {
     return {
       ok: false,

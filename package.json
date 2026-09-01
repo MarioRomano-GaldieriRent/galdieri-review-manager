@@ -26,6 +26,7 @@
     "diag:campi": "tsx --tsconfig tsconfig.json scripts/diag-ticket-campi.ts",
     "diag:valori": "tsx --tsconfig tsconfig.json scripts/diag-campi-valori.ts",
     "diag:stato": "tsx --tsconfig tsconfig.json scripts/diag-stato.ts",
+    "diag:daapprovare": "tsx --tsconfig tsconfig.json scripts/diag-daapprovare.ts",
     "crea-utente": "tsx --tsconfig tsconfig.json scripts/crea-utente.ts",
     "robot:sessione": "tsx --tsconfig tsconfig.json scripts/robot-cattura-sessione.ts",
     "robot:recensioni": "tsx --tsconfig tsconfig.json scripts/robot-apri-recensioni.ts",
