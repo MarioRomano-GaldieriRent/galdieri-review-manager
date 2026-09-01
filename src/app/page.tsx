@@ -466,7 +466,7 @@ export default async function HomePage({
                           )}
                         </div>
                         <div className="dash-meta">
-                          {dataConGiorno(new Date(r.ricevutaIl))}
+                          {dataConGiorno(new Date(r.ricevutaIl))} · {oraFmt.format(new Date(r.ricevutaIl))}
                           {r.sede ? ` · ${r.sede}` : ""}
                         </div>
                       </div>
@@ -676,7 +676,7 @@ export default async function HomePage({
                     <Stelle n={r.stelle} />
                   </div>
                   <div className="dash-meta">
-                    {dataConGiorno(new Date(r.ricevutaIl))}
+                    {dataConGiorno(new Date(r.ricevutaIl))} · {oraFmt.format(new Date(r.ricevutaIl))}
                     {r.sede ? ` · ${r.sede}` : ""}
                   </div>
                   {testoRecensione(r) && <p className="review-comment">{testoRecensione(r)}</p>}
