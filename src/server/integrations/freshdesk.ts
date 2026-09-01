@@ -181,6 +181,35 @@ function soloTesto(html: string): string {
     .toLowerCase();
 }
 
+// Entità HTML degli accenti più comuni (Freshdesk a volte le lascia nel corpo).
+const ENTITA_ACCENTI: Record<string, string> = {
+  eacute: "é", egrave: "è", ecirc: "ê", euml: "ë",
+  aacute: "á", agrave: "à", acirc: "â", auml: "ä", aring: "å",
+  iacute: "í", igrave: "ì", icirc: "î", iuml: "ï",
+  oacute: "ó", ograve: "ò", ocirc: "ô", ouml: "ö",
+  uacute: "ú", ugrave: "ù", ucirc: "û", uuml: "ü",
+  ntilde: "ñ", ccedil: "ç",
+};
+
+/**
+ * Normalizza un testo PER CONFRONTO dei nomi: decodifica le entità HTML
+ * (numeriche e le accentate più comuni) e TOGLIE gli accenti (NFD + rimozione
+ * dei segni diacritici). Serve perché il nome del recensore arriva accentato
+ * («Lavallée») mentre nel corpo del ticket può stare senza accento o come
+ * entità — e un confronto letterale non aggancerebbe il ticket.
+ */
+function perConfronto(s: string): string {
+  return (s || "")
+    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
+    .replace(/&#x([0-9a-f]+);/gi, (_, n) => String.fromCharCode(parseInt(n, 16)))
+    .replace(/&([a-z]+);/gi, (m, nome) => ENTITA_ACCENTI[String(nome).toLowerCase()] ?? m)
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
 /**
  * Cerca il ticket nato da una recensione.
  *
@@ -243,9 +272,14 @@ export async function cercaTicketPerRecensione(
     };
   }
 
-  // Dal più vicino nel tempo; il corpo si legge solo per i primi candidati.
+  // Dal più vicino nel tempo (il ticket di solito nasce subito dopo la
+  // recensione), ma se ne controllano PARECCHI: un ticket può essere creato
+  // anche un giorno dopo (es. Arthur, recensione del 31 → ticket del 1°), e col
+  // vecchio limite di 5 restava fuori. Il nome nel corpo è un forte
+  // disambiguatore, quindi leggerne di più non aggancia il ticket sbagliato — al
+  // più costa qualche GET in più (e il ciclo si ferma al primo match).
   candidati.sort((a, b) => a.distanza - b.distanza);
-  const daControllare = candidati.slice(0, opts.candidatiMax ?? 5);
+  const daControllare = candidati.slice(0, opts.candidatiMax ?? 25);
 
   if (!nome) {
     return {
@@ -254,9 +288,11 @@ export async function cercaTicketPerRecensione(
     };
   }
 
+  const nomeConfr = perConfronto(nomeRecensore);
   for (const { t } of daControllare) {
     const completo = await getTicket(t.id);
-    if (soloTesto(completo.descriptionHtml).includes(nome)) {
+    // Confronto senza accenti/entità: «Lavallée» aggancia anche «Lavallee».
+    if (perConfronto(soloTesto(completo.descriptionHtml)).includes(nomeConfr)) {
       return { ticket: completo, motivo: `nome «${nomeRecensore}» trovato nel corpo` };
     }
   }
@@ -326,6 +362,30 @@ export async function getAgents(): Promise<Map<number, string>> {
   }
   agentCache = { at: Date.now(), byId };
   return byId;
+}
+
+// Id dell'agente dell'API in cache: serve ad assegnare i ticket da risolvere.
+let agenteApiCache: { at: number; id: number | null } | null = null;
+
+/**
+ * L'id dell'agente a cui appartiene la API key (GET /agents/me). Freshdesk non
+ * risolve un ticket NON assegnato: quando manca il responder, la chiusura gli
+ * assegna questo agente. null se non lo si riesce a leggere. Sola lettura.
+ */
+export async function agenteApiId(): Promise<number | null> {
+  if (agenteApiCache && Date.now() - agenteApiCache.at < 300_000) return agenteApiCache.id;
+  let id: number | null = null;
+  try {
+    const res = await fdFetch(`/agents/me`);
+    if (res.ok) {
+      const me = (await res.json()) as { id?: number };
+      id = typeof me.id === "number" ? me.id : null;
+    }
+  } catch {
+    // Non bloccante: senza id la chiusura riproverà senza assegnare.
+  }
+  agenteApiCache = { at: Date.now(), id };
+  return id;
 }
 
 /** Verifica le credenziali leggendo il profilo dell'agente collegato. */

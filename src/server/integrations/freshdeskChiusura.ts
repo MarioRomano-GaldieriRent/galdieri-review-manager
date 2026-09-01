@@ -1,4 +1,4 @@
-import { getTicket } from "./freshdesk";
+import { agenteApiId, getTicket } from "./freshdesk";
 import { resolveFreshdesk, scritturaConsentita } from "@/server/settings";
 
 // Chiusura del ticket quando la risposta è stata pubblicata a mano su Google.
@@ -84,7 +84,16 @@ export async function chiudiTicketPubblicato(
     const tags = [...ticket.tags];
     if (opts.tagSede && !tags.includes(opts.tagSede)) tags.push(opts.tagSede);
 
-    const put = await fdScrittura(urlTicket, "PUT", { status: 4, tags });
+    // Freshdesk RIFIUTA di risolvere un ticket non assegnato a un agente
+    // ("responder_id ... should be a Positive Integer"). Se manca il responder,
+    // gli si assegna l'agente dell'API prima di metterlo Risolto.
+    const corpo: { status: number; tags: string[]; responder_id?: number } = { status: 4, tags };
+    if (ticket.responderId == null) {
+      const agente = await agenteApiId();
+      if (agente) corpo.responder_id = agente;
+    }
+
+    const put = await fdScrittura(urlTicket, "PUT", corpo);
     if (!put.ok) return { stato: "fallita", errore: `PUT ${put.stato}: ${put.testo}` };
 
     const nota = await fdScrittura(`${urlTicket}/notes`, "POST", {

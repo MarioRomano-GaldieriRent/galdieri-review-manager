@@ -21,6 +21,8 @@
     "verifica:db": "tsx --tsconfig tsconfig.json scripts/verifica-db.ts",
     "diag:arthur": "tsx --tsconfig tsconfig.json scripts/diag-arthur.ts",
     "diag:arretrato": "tsx --tsconfig tsconfig.json scripts/diag-arretrato.ts",
+    "diag:ticket": "tsx --tsconfig tsconfig.json scripts/diag-ticket.ts",
+    "chiudi:ticket": "tsx --tsconfig tsconfig.json scripts/chiudi-ticket.ts",
     "crea-utente": "tsx --tsconfig tsconfig.json scripts/crea-utente.ts",
     "robot:sessione": "tsx --tsconfig tsconfig.json scripts/robot-cattura-sessione.ts",
     "robot:recensioni": "tsx --tsconfig tsconfig.json scripts/robot-apri-recensioni.ts",
