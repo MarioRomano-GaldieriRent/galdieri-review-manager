@@ -253,6 +253,92 @@ async function rispondiVicinoA(root: Radice, nomeEl: Locator): Promise<Locator |
   return bestDy < 380 ? best : null; // stessa card: il Rispondi è appena sotto il nome
 }
 
+/**
+ * Il «Rispondi» DELLA CARD del recensore indicato — legato al SUO riquadro, non
+ * un «Rispondi» a caso della lista. Individua l'elemento-nome del recensore, poi
+ * SALE ai suoi antenati finché uno contiene un controllo «Rispondi»: quella è la
+ * sua card, e quel «Rispondi» è il suo. Lo marca con un attributo così Playwright
+ * lo clicca con i suoi controlli (visibilità, scroll…). Robusto anche quando la
+ * lista NON è filtrata e mostra più recensioni insieme (il caso che rispondeva a
+ * uno «quasi a caso»). Ritorna loc=null se il recensore non ha un «Rispondi»
+ * (es. ha già una risposta) o se il nome non si individua.
+ */
+async function rispondiDellaCard(
+  root: Radice,
+  nome: string,
+): Promise<{ loc: Locator | null; dettaglio: string }> {
+  const esito = await root
+    .evaluate((nomeCliente: string) => {
+      const norm = (s: string | null) =>
+        (s || "").replace(/ /g, " ").replace(/\s+/g, " ").trim();
+      // I nomi dei recensori sono link con l'icona "open_in_new": la si toglie.
+      const senzaIcona = (s: string | null) =>
+        norm(s).replace(/open_in_new/gi, "").replace(/\s+/g, " ").trim();
+      const bassa = (s: string | null) => senzaIcona(s).toLowerCase();
+      const target = bassa(nomeCliente);
+      if (!target) return { ok: false, motivo: "nome vuoto", nomi: 0 };
+      const visibile = (el: Element) =>
+        (el as HTMLElement).offsetParent !== null || el.getClientRects().length > 0;
+
+      // Elemento-nome del recensore: testo (senza icona) UGUALE al nome e corto
+      // (il link del nome, non un contenitore che ingloba tutta la recensione).
+      const candidati = Array.from(
+        document.querySelectorAll("a, [role=link], [role=button], span, div, h1, h2, h3"),
+      ).filter(
+        (el) =>
+          visibile(el) &&
+          bassa(el.textContent) === target &&
+          senzaIcona(el.textContent).length <= nomeCliente.trim().length + 3,
+      );
+      if (candidati.length === 0) return { ok: false, motivo: "nome-recensore non individuato", nomi: 0 };
+      candidati.sort((a, b) => (a.textContent || "").length - (b.textContent || "").length);
+      const nomeEl = candidati[0];
+
+      // Un controllo «Rispondi» vero: testo ESATTO «Rispondi» (non «Rispondere a
+      // recensioni», non «Segnala recensione») o aria-label che inizia con esso.
+      const isRispondi = (el: Element) => {
+        if (!el.matches("button, a, [role=button]")) return false;
+        if (!visibile(el)) return false;
+        const t = norm(el.textContent).toLowerCase();
+        const a = norm(el.getAttribute("aria-label")).toLowerCase();
+        return t === "rispondi" || /^rispondi\b/.test(a);
+      };
+
+      let card: Element | null = nomeEl;
+      let rispondi: Element | null = null;
+      for (let i = 0; i < 8 && card; i++, card = card.parentElement) {
+        const trovati = Array.from(card.querySelectorAll("button, a, [role=button]")).filter(isRispondi);
+        if (trovati.length > 0) {
+          rispondi = trovati[0];
+          break;
+        }
+      }
+      if (!rispondi)
+        return {
+          ok: false,
+          motivo: "il recensore non ha «Rispondi» nella sua card (forse ha già risposta)",
+          nomi: candidati.length,
+        };
+
+      document
+        .querySelectorAll("[data-robot-rispondi]")
+        .forEach((e) => e.removeAttribute("data-robot-rispondi"));
+      rispondi.setAttribute("data-robot-rispondi", "1");
+      return { ok: true, motivo: "", nomi: candidati.length };
+    }, nome)
+    .catch((e) => ({
+      ok: false,
+      motivo: "evaluate fallito: " + (e instanceof Error ? e.message : String(e)),
+      nomi: 0,
+    }));
+
+  if (!esito.ok) return { loc: null, dettaglio: esito.motivo };
+  return {
+    loc: root.locator('[data-robot-rispondi="1"]').first(),
+    dettaglio: `«Rispondi» della card di «${nome}» (${esito.nomi} elementi-nome corrispondenti)`,
+  };
+}
+
 /** Scorre il contenitore scrollabile più grande (o la finestra) verso il basso. */
 export async function scrollaGiu(root: Radice, px = 1200): Promise<void> {
   await root
@@ -873,30 +959,28 @@ export async function rispondiAllaRecensione(
     .catch(() => [] as string[]);
   log(`bottoni: ${JSON.stringify([...new Set(bottoni)].slice(0, 30))}`);
 
-  // Il «Rispondi» accanto al nome; se la geometria non lo prende, ripiego sul
-  // primo «Rispondi» in vista — la lista è filtrata sul cliente, quindi è il suo.
-  const reRispondi = /rispondi|reply|risposta/i;
-  let rispondi = await rispondiVicinoA(root, nomeLoc);
-  if (!rispondi) {
-    for (const loc of [
-      root.getByRole("button", { name: reRispondi }),
-      root.getByRole("link", { name: reRispondi }),
-      root.getByText(/^rispondi$/i),
-    ]) {
-      const b = loc.first();
-      if ((await b.count().catch(() => 0)) > 0 && (await b.isVisible().catch(() => false))) {
-        rispondi = b;
-        log("uso il primo «Rispondi» in vista (lista filtrata sul cliente).");
-        break;
-      }
-    }
+  // Il «Rispondi» DELLA CARD di questo recensore, non uno a caso della lista:
+  //   1) per parentela DOM (rispondiDellaCard): risale dal nome alla sua card e
+  //      prende il «Rispondi» che sta lì dentro — robusto anche con più
+  //      recensioni visibili insieme (la lista qui NON è filtrata);
+  //   2) se non ci riesce, ripiego per GEOMETRIA (il «Rispondi» appena sotto il
+  //      nome), comunque legato alla posizione del nome.
+  // NIENTE più «primo Rispondi in vista»: era quello che rispondeva alla
+  // recensione sbagliata quando la lista mostra tanti recensori insieme.
+  const perCard = await rispondiDellaCard(root, nome);
+  let rispondi = perCard.loc;
+  if (rispondi) {
+    log(`aggancio ${perCard.dettaglio}.`);
+  } else {
+    log(`card DOM non agganciata (${perCard.dettaglio}); provo per geometria (Rispondi sotto il nome)…`);
+    rispondi = await rispondiVicinoA(root, nomeLoc);
   }
   if (!rispondi) {
     return {
       scritto: false,
       via: "nessun-rispondi",
       abilitato: false,
-      dettaglio: `Trovato «${nome}» ma nessun «Rispondi» cliccabile. Guarda 8a e la riga «bottoni» qui sopra.`,
+      dettaglio: `Trovato «${nome}» ma non ho saputo collegare con certezza il SUO «Rispondi» (${perCard.dettaglio}). NON ho cliccato niente, per non rispondere alla recensione sbagliata. Guarda 8a e la riga «bottoni».`,
     };
   }
   await rispondi.scrollIntoViewIfNeeded().catch(() => {});
