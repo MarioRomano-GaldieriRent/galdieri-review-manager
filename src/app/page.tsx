@@ -4,6 +4,7 @@ import { caricaRegole, regolaPer } from "@/server/automation/rules";
 import { caricaEsecuzioni } from "@/server/automation/runs";
 import type { Azione, Regola } from "@/server/automation/types";
 import { isGraphConfigured } from "@/server/graph/client";
+import { chiaviRisolteDaFreshdesk } from "@/server/integrations/freshdesk";
 import { caricaRecensioni, haTesto, testoRecensione, type Recensione } from "@/server/reviews/load";
 import {
   chiaviPubblicate,
@@ -247,10 +248,8 @@ export default async function HomePage({
       //  - ciò che è stato ARCHIVIATO a mano (es. impossibile da gestire): va
       //    nella tab «Archiviati», da dove si può ripristinare.
       //
-      // NON si nasconde più per «ticket risolto»: un ticket chiuso su Freshdesk
-      // NON vuol dire che abbiamo risposto alla recensione su Google (poteva
-      // chiuderlo il customer care senza rispondere). Finché la recensione non è
-      // pubblicata da noi, risposta nel thread, o archiviata, resta da lavorare.
+      // NB: qui NON si guarda l'email «ticket risolto» (segnale debole). Lo stato
+      // VERO del ticket su Freshdesk lo si controlla più sotto, con una sweep.
       .filter(
         (r) => !pubblicate.has(r.chiave) && !r.haRisposta && !archiviateChiavi.has(r.chiave),
       )
@@ -259,10 +258,27 @@ export default async function HomePage({
       // Occhio acceso: TUTTE, anche quelle senza regola (regola === null).
       .filter((x) => tutte || x.regola !== null);
 
-    // «Aggiorna» (tasto di pagina) rilegge soltanto la posta e riconta: NON
-    // nasconde più le recensioni col ticket risolto/chiuso su Freshdesk. Un
-    // ticket chiuso non equivale a una risposta pubblicata su Google, quindi
-    // toglierle qui faceva sparire recensioni ancora da lavorare (es. Arthur).
+    // Toglie le recensioni il cui ticket è GIÀ Risolto/Chiuso su Freshdesk:
+    // gestite da fuori, non ci riguardano più. UNA sola sweep condivisa da tutte
+    // (niente fan-out N×). Le recensioni ANCORA da fare hanno il ticket aperto
+    // (es. Arthur), quindi restano. È PRUDENTE (chiaviRisolteDaFreshdesk nasconde
+    // solo se i ticket di quell'oggetto sono TUTTI risolti). Best-effort: se
+    // Freshdesk non risponde, non si nasconde nulla e resta tutto in lista.
+    if (fdOk && daApprovare.length > 0) {
+      try {
+        const risolte = await chiaviRisolteDaFreshdesk(
+          daApprovare.map((x) => ({
+            chiave: x.r.chiave,
+            oggetto: x.r.oggetto,
+            ricevutaIl: x.r.ricevutaIl,
+          })),
+        );
+        daApprovare = daApprovare.filter((x) => !risolte.has(x.r.chiave));
+      } catch {
+        // Freshdesk non raggiungibile: non nascondo nulla.
+      }
+    }
+
     // Con l'occhio acceso: ordine per stelle crescente (1★ … 5★, senza voto in
     // fondo) e, a parità, dalla più recente. Spento resta l'ordine per data.
     if (tutte) {
