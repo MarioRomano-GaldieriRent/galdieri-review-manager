@@ -52,6 +52,7 @@ export async function chiudiFreshdeskPer(
   const esito = await chiudiTicketPubblicato(voce.ticketId, {
     tagSede: tagSede(voce.sedeNome),
     nota,
+    stelle: voce.stelle,
   });
 
   if (esito.stato === "eseguita") {

@@ -23,6 +23,8 @@
     "diag:arretrato": "tsx --tsconfig tsconfig.json scripts/diag-arretrato.ts",
     "diag:ticket": "tsx --tsconfig tsconfig.json scripts/diag-ticket.ts",
     "chiudi:ticket": "tsx --tsconfig tsconfig.json scripts/chiudi-ticket.ts",
+    "diag:campi": "tsx --tsconfig tsconfig.json scripts/diag-ticket-campi.ts",
+    "diag:valori": "tsx --tsconfig tsconfig.json scripts/diag-campi-valori.ts",
     "crea-utente": "tsx --tsconfig tsconfig.json scripts/crea-utente.ts",
     "robot:sessione": "tsx --tsconfig tsconfig.json scripts/robot-cattura-sessione.ts",
     "robot:recensioni": "tsx --tsconfig tsconfig.json scripts/robot-apri-recensioni.ts",
