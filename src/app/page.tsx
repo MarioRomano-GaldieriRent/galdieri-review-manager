@@ -274,10 +274,21 @@ export default async function HomePage({
             nome: x.r.nome,
           })),
         );
+        const prima = daApprovare.length;
         daApprovare = daApprovare.filter((x) => !risolte.has(x.r.chiave));
-      } catch {
-        // Freshdesk non raggiungibile: non nascondo nulla.
+        console.log(
+          `[da-approvare] filtro Freshdesk: nascoste ${prima - daApprovare.length} su ${prima} (ticket risolto/chiuso).`,
+        );
+      } catch (e) {
+        // Freshdesk non raggiungibile: non nascondo nulla, ma lo DICO (prima era
+        // silenzioso: sembrava che il filtro non funzionasse).
+        console.error(
+          "[da-approvare] filtro Freshdesk FALLITO, non nascondo nulla:",
+          e instanceof Error ? e.message : e,
+        );
       }
+    } else {
+      console.log(`[da-approvare] filtro Freshdesk saltato (Freshdesk configurato: ${fdOk}, in coda: ${daApprovare.length}).`);
     }
 
     // Con l'occhio acceso: ordine per stelle crescente (1★ … 5★, senza voto in
