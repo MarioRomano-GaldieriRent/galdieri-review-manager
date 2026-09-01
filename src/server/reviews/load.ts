@@ -126,10 +126,28 @@ function raggruppa(messaggi: MailDetail[], label: Label) {
   );
 }
 
+// Cache in memoria dell'ULTIMO caricamento (per label + finestra). Il carico è
+// pesante — legge fino a 200 email da Graph col corpo, traduce e salva su Mongo —
+// e la home si ricarica di continuo: ogni click, ogni ritorno sulla scheda,
+// l'auto-refresh ogni 3 min. Senza cache ripagava tutto ogni volta. TTL breve: i
+// dati possono avere fino a ~90s, accettabile per una coda. Il tasto «Aggiorna» e
+// l'auto-refresh passano `forza: true` e ricaricano davvero. Vive nel processo
+// del server: si azzera solo a un riavvio.
+type CaricoRecensioni = { recensioni: Recensione[]; analizzate: number };
+const cacheCarico = new Map<string, { at: number; dati: CaricoRecensioni }>();
+const TTL_CARICO_MS = 90_000;
+
 export async function caricaRecensioni(
   label: Label,
-  opts: { top?: number } = {},
+  opts: { top?: number; forza?: boolean } = {},
 ): Promise<{ recensioni: Recensione[]; analizzate: number }> {
+  const top = opts.top ?? 200;
+  const chiaveCache = `${label.id}#${top}`;
+  if (!opts.forza) {
+    const hit = cacheCarico.get(chiaveCache);
+    if (hit && Date.now() - hit.at < TTL_CARICO_MS) return hit.dati;
+  }
+
   const messaggi = await searchMessages({
     subjectContains: label.subjectContains,
     fromContains: label.fromContains,
@@ -138,7 +156,7 @@ export async function caricaRecensioni(
     // scivolate sotto le più nuove — sparivano dalla coda pur non essendo state
     // gestite (es. Arthur, #96). Serve anche alle azioni Play/Rispondi/G, che
     // ritrovano la recensione per chiave rileggendo la stessa finestra.
-    top: opts.top ?? 200,
+    top,
     mailbox: await activeMailbox(),
   });
 
@@ -188,5 +206,7 @@ export async function caricaRecensioni(
     scartati: Math.max(0, conversazioni - interpretati),
   });
 
-  return { recensioni, analizzate: messaggi.length };
+  const dati = { recensioni, analizzate: messaggi.length };
+  cacheCarico.set(chiaveCache, { at: Date.now(), dati });
+  return dati;
 }

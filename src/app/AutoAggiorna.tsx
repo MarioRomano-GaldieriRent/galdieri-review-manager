@@ -39,7 +39,10 @@ export function AutoAggiorna() {
       router.replace(`/?${next.toString()}`, { scroll: false });
     };
     const onVisibile = () => {
-      if (document.visibilityState === "visible") tick();
+      // Ritorno sulla scheda: refresh MORBIDO (router.refresh) — usa la cache
+      // breve del server, quindi è istantaneo e non ripaga Graph/Freshdesk. Il
+      // ricarico fresco vero lo fa il timer ogni 3 minuti (tick → fresh=1).
+      if (document.visibilityState === "visible") router.refresh();
     };
     const id = setInterval(tick, MINUTI * 60 * 1000);
     document.addEventListener("visibilitychange", onVisibile);

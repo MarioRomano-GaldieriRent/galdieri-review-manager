@@ -303,6 +303,26 @@ export async function cercaTicketPerRecensione(
   };
 }
 
+// Elenco dei ticket recenti in cache (60s). La sweep di 6 pagine è la parte più
+// cara del filtro «Da approvare», e la home la ripagava a ogni caricamento: qui
+// la si riusa fra render ravvicinati. Sola lettura; si azzera a un riavvio.
+let cacheTicket: { at: number; pagine: number; tickets: FdTicket[] } | null = null;
+const TTL_TICKET_MS = 60_000;
+
+async function elencoTicketRecenti(pagine: number, forza = false): Promise<FdTicket[]> {
+  if (!forza && cacheTicket && cacheTicket.pagine >= pagine && Date.now() - cacheTicket.at < TTL_TICKET_MS) {
+    return cacheTicket.tickets;
+  }
+  const tutti: FdTicket[] = [];
+  for (let page = 1; page <= pagine; page++) {
+    const { tickets, hasMore } = await listTickets({ page, perPage: 100 });
+    tutti.push(...tickets);
+    if (!hasMore) break;
+  }
+  cacheTicket = { at: Date.now(), pagine, tickets: tutti };
+  return tutti;
+}
+
 /**
  * Delle recensioni date, quali hanno il ticket GIÀ risolto/chiuso su Freshdesk.
  * Usata dalla lista "Da approvare" per togliere ciò che è già stato gestito.
@@ -320,19 +340,12 @@ export async function cercaTicketPerRecensione(
  */
 export async function recensioniConTicketRisolto(
   recensioni: { chiave: string; oggetto: string; ricevutaIl: string; nome: string }[],
-  opts: { pagine?: number; candidatiMax?: number } = {},
+  opts: { pagine?: number; candidatiMax?: number; forza?: boolean } = {},
 ): Promise<Set<string>> {
   const risolte = new Set<string>();
   if (recensioni.length === 0) return risolte;
 
-  const pagine = opts.pagine ?? 6;
-  const tutti: FdTicket[] = [];
-  for (let page = 1; page <= pagine; page++) {
-    const { tickets, hasMore } = await listTickets({ page, perPage: 100 });
-    tutti.push(...tickets);
-    if (!hasMore) break;
-  }
-
+  const tutti = await elencoTicketRecenti(opts.pagine ?? 6, opts.forza);
   const risolto = (t: FdTicket) => t.status === 4 || t.status === 5;
 
   for (const r of recensioni) {

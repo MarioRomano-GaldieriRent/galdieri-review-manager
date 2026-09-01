@@ -159,6 +159,7 @@ export default async function HomePage({
     esitoOk?: string;
     esitoMsg?: string;
     esitoChiave?: string;
+    fresh?: string;
   }>;
 }) {
   const sp = await searchParams;
@@ -225,7 +226,9 @@ export default async function HomePage({
     let recensioni: Recensione[] = [];
     if (graphOk && label) {
       try {
-        recensioni = (await caricaRecensioni(label)).recensioni;
+        // Cache breve del carico pesante: i click e i ritorni sulla scheda sono
+        // istantanei; solo «Aggiorna» e l'auto-refresh (fresh=1) ricaricano davvero.
+        recensioni = (await caricaRecensioni(label, { forza: sp.fresh === "1" })).recensioni;
       } catch (e) {
         erroreGraph = e instanceof Error ? e.message : "Errore sconosciuto";
       }
@@ -273,6 +276,7 @@ export default async function HomePage({
             ricevutaIl: x.r.ricevutaIl,
             nome: x.r.nome,
           })),
+          { forza: sp.fresh === "1" }, // «Aggiorna» rinfresca anche i ticket
         );
         const prima = daApprovare.length;
         daApprovare = daApprovare.filter((x) => !risolte.has(x.r.chiave));
@@ -383,7 +387,7 @@ export default async function HomePage({
         <Link
           href={
             step === "approvare"
-              ? "/"
+              ? "/?fresh=1"
               : step === "ricontrollo"
                 ? "/?step=ricontrollo"
                 : step === "archiviati"
