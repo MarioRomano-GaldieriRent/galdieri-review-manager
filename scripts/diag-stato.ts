@@ -44,7 +44,7 @@ async function main() {
 
   const { coll } = await import("@/server/db/connessione");
   const { chiaviPubblicate } = await import("@/server/db/pubblicazioni");
-  const { cercaTicketPerRecensione, getTicket, STATO, isFreshdeskConfigured, chiaviRisolteDaFreshdesk } =
+  const { cercaTicketPerRecensione, getTicket, STATO, isFreshdeskConfigured, recensioniConTicketRisolto } =
     await import("@/server/integrations/freshdesk");
 
   const rec = await coll("recensioni");
@@ -114,12 +114,12 @@ async function main() {
   }
 
   // Verifica del FILTRO vero della home: quali nasconderebbe la sweep condivisa
-  // (chiaviRisolteDaFreshdesk) usata da «Da approvare».
+  // (recensioniConTicketRisolto) usata da «Da approvare».
   if (fdOk && perSweep.length > 0) {
     console.log("\n" + "═".repeat(70));
-    console.log("Filtro «Da approvare» (chiaviRisolteDaFreshdesk) — chi verrebbe NASCOSTO:");
+    console.log("Filtro «Da approvare» (recensioniConTicketRisolto) — chi verrebbe NASCOSTO:");
     try {
-      const risolte = await chiaviRisolteDaFreshdesk(perSweep);
+      const risolte = await recensioniConTicketRisolto(perSweep);
       for (const r of perSweep) {
         console.log(`  ${risolte.has(r.chiave) ? "NASCOSTA ✓" : "resta in lista"} — ${r.nome}`);
       }

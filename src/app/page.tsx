@@ -4,7 +4,7 @@ import { caricaRegole, regolaPer } from "@/server/automation/rules";
 import { caricaEsecuzioni } from "@/server/automation/runs";
 import type { Azione, Regola } from "@/server/automation/types";
 import { isGraphConfigured } from "@/server/graph/client";
-import { chiaviRisolteDaFreshdesk } from "@/server/integrations/freshdesk";
+import { recensioniConTicketRisolto } from "@/server/integrations/freshdesk";
 import { caricaRecensioni, haTesto, testoRecensione, type Recensione } from "@/server/reviews/load";
 import {
   chiaviPubblicate,
@@ -259,18 +259,19 @@ export default async function HomePage({
       .filter((x) => tutte || x.regola !== null);
 
     // Toglie le recensioni il cui ticket è GIÀ Risolto/Chiuso su Freshdesk:
-    // gestite da fuori, non ci riguardano più. UNA sola sweep condivisa da tutte
-    // (niente fan-out N×). Le recensioni ANCORA da fare hanno il ticket aperto
-    // (es. Arthur), quindi restano. È PRUDENTE (chiaviRisolteDaFreshdesk nasconde
-    // solo se i ticket di quell'oggetto sono TUTTI risolti). Best-effort: se
-    // Freshdesk non risponde, non si nasconde nulla e resta tutto in lista.
+    // gestite da fuori, non ci riguardano più. UNA sola sweep condivisa (niente
+    // fan-out N×); controlla il ticket SPECIFICO della recensione per nome, così
+    // nasconde anche in sedi attive con altri ticket aperti (es. Bari). Le
+    // recensioni ANCORA da fare hanno il ticket aperto (es. Arthur) e restano.
+    // Best-effort: se Freshdesk non risponde, non si nasconde nulla.
     if (fdOk && daApprovare.length > 0) {
       try {
-        const risolte = await chiaviRisolteDaFreshdesk(
+        const risolte = await recensioniConTicketRisolto(
           daApprovare.map((x) => ({
             chiave: x.r.chiave,
             oggetto: x.r.oggetto,
             ricevutaIl: x.r.ricevutaIl,
+            nome: x.r.nome,
           })),
         );
         daApprovare = daApprovare.filter((x) => !risolte.has(x.r.chiave));

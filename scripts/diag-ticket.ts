@@ -99,7 +99,8 @@ async function main() {
   }
 
   const nomePiatto = piatto(doc.nomeCliente);
-  const parole = ["arthur", "lavall"];
+  // Parole del nome (≥3 lettere) per fiutare il ticket giusto nel corpo.
+  const parole = nomePiatto.split(" ").filter((w) => w.length >= 3);
   let trovato: { id: number; status: number; corpo: string } | null = null;
 
   for (const c of candidati.sort(
@@ -120,8 +121,8 @@ async function main() {
   if (trovato) {
     const c = trovato.corpo;
     console.log(`\n  [corpo #${trovato.id}] contiene «${nomePiatto}» (nome intero)? ${c.includes(nomePiatto)}`);
-    console.log(`  contiene «lavallee»? ${c.includes("lavallee")} · «arthur»? ${c.includes("arthur")}`);
-    const i = c.indexOf("arthur") >= 0 ? c.indexOf("arthur") : c.indexOf("lavall");
+    const primaParola = parole.find((p) => c.includes(p));
+    const i = primaParola ? c.indexOf(primaParola) : -1;
     if (i >= 0) console.log(`  intorno: …${c.slice(Math.max(0, i - 40), i + 60)}…`);
   }
 

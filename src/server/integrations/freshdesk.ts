@@ -305,22 +305,26 @@ export async function cercaTicketPerRecensione(
 
 /**
  * Delle recensioni date, quali hanno il ticket GIÀ risolto/chiuso su Freshdesk.
+ * Usata dalla lista "Da approvare" per togliere ciò che è già stato gestito.
  *
- * Pensata per il refresh della lista "Da approvare": scarica la lista dei ticket
- * UNA volta sola e la riusa per TUTTE le recensioni (niente fan-out N×6 come
- * chiamare cercaTicketPerRecensione in loop). Ed è PRUDENTE: segna "risolto"
- * solo se, fra i ticket con quell'oggetto nati dopo l'email, sono TUTTI risolti
- * (4) o chiusi (5). Così non toglie mai per sbaglio una recensione ancora da
- * lavorare (nel dubbio, la tiene). Sola lettura.
+ * UNA sola sweep condivisa dei ticket (niente fan-out N×6). Per ogni recensione:
+ *  - fra i ticket con quell'oggetto nati dopo l'email, se sono TUTTI risolti/
+ *    chiusi → risolta (gratis, senza leggere i corpi);
+ *  - se qualcuno è ancora APERTO, non si arrende: trova il ticket SPECIFICO
+ *    della recensione leggendone il corpo (match per nome, senza accenti) e
+ *    guarda LO STATO DI QUELLO. Così una recensione risolta sparisce anche se la
+ *    stessa sede ha altri ticket aperti (es. Bari, molto attiva). I corpi si
+ *    leggono SOLO quando serve, dal ticket più vicino nel tempo, fermandosi al
+ *    primo che contiene il nome. Senza nome (o nessun match) resta prudente e la
+ *    tiene. Sola lettura.
  */
-export async function chiaviRisolteDaFreshdesk(
-  recensioni: { chiave: string; oggetto: string; ricevutaIl: string }[],
-  opts: { pagine?: number } = {},
+export async function recensioniConTicketRisolto(
+  recensioni: { chiave: string; oggetto: string; ricevutaIl: string; nome: string }[],
+  opts: { pagine?: number; candidatiMax?: number } = {},
 ): Promise<Set<string>> {
   const risolte = new Set<string>();
   if (recensioni.length === 0) return risolte;
 
-  // Una sweep condivisa: la stessa lista che serviva a ogni recensione.
   const pagine = opts.pagine ?? 6;
   const tutti: FdTicket[] = [];
   for (let page = 1; page <= pagine; page++) {
@@ -329,17 +333,39 @@ export async function chiaviRisolteDaFreshdesk(
     if (!hasMore) break;
   }
 
+  const risolto = (t: FdTicket) => t.status === 4 || t.status === 5;
+
   for (const r of recensioni) {
     const atteso = normalizzaOggetto(r.oggetto);
     if (!atteso) continue;
     const soglia = new Date(r.ricevutaIl).getTime() - 5 * 60 * 1000;
     const candidati = tutti.filter(
-      (t) =>
-        normalizzaOggetto(t.subject) === atteso &&
-        new Date(t.createdAt).getTime() >= soglia,
+      (t) => normalizzaOggetto(t.subject) === atteso && new Date(t.createdAt).getTime() >= soglia,
     );
-    if (candidati.length > 0 && candidati.every((t) => t.status === 4 || t.status === 5)) {
+    if (candidati.length === 0) continue;
+
+    // Casella tutta risolta: gratis, nessun corpo da leggere.
+    if (candidati.every(risolto)) {
       risolte.add(r.chiave);
+      continue;
+    }
+
+    // Qualcuno aperto: trova il ticket SPECIFICO della recensione (per nome) e
+    // guarda lo stato di QUELLO. I corpi non stanno nella lista: si leggono uno a
+    // uno, dal più vicino nel tempo, fermandosi al primo che contiene il nome.
+    const nomeConfr = perConfronto(r.nome || "");
+    if (!nomeConfr) continue; // senza nome non disambiguo: prudente, la tengo
+    const perTempo = [...candidati].sort(
+      (a, b) =>
+        Math.abs(new Date(a.createdAt).getTime() - soglia) -
+        Math.abs(new Date(b.createdAt).getTime() - soglia),
+    );
+    for (const t of perTempo.slice(0, opts.candidatiMax ?? 25)) {
+      const completo = await getTicket(t.id);
+      if (perConfronto(soloTesto(completo.descriptionHtml)).includes(nomeConfr)) {
+        if (risolto(completo)) risolte.add(r.chiave);
+        break; // trovato il suo ticket: lo stato di quello è la risposta
+      }
     }
   }
   return risolte;
