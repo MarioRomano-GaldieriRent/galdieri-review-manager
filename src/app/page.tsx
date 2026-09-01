@@ -4,7 +4,6 @@ import { caricaRegole, regolaPer } from "@/server/automation/rules";
 import { caricaEsecuzioni } from "@/server/automation/runs";
 import type { Azione, Regola } from "@/server/automation/types";
 import { isGraphConfigured } from "@/server/graph/client";
-import { chiaviRisolteDaFreshdesk } from "@/server/integrations/freshdesk";
 import { caricaRecensioni, haTesto, testoRecensione, type Recensione } from "@/server/reviews/load";
 import {
   chiaviPubblicate,
@@ -159,7 +158,6 @@ export default async function HomePage({
     esitoOk?: string;
     esitoMsg?: string;
     esitoChiave?: string;
-    fresh?: string;
   }>;
 }) {
   const sp = await searchParams;
@@ -247,41 +245,24 @@ export default async function HomePage({
       //  - ciò a cui ha GIÀ RISPOSTO l'operatore a mano (haRisposta): gestita
       //    fuori dal nostro flusso, e non finisce nemmeno nello Storico;
       //  - ciò che è stato ARCHIVIATO a mano (es. impossibile da gestire): va
-      //    nella tab «Archiviati», da dove si può ripristinare;
-      //  - ciò il cui ticket risulta GIÀ RISOLTO da fuori (email «ticket
-      //    risolto» nel thread): l'ha chiuso qualcun altro, NON il nostro
-      //    sistema — quello che gestiamo noi è già uscito come "pubblicata",
-      //    quindi ciò che resta con questo segnale non ci riguarda più.
+      //    nella tab «Archiviati», da dove si può ripristinare.
+      //
+      // NON si nasconde più per «ticket risolto»: un ticket chiuso su Freshdesk
+      // NON vuol dire che abbiamo risposto alla recensione su Google (poteva
+      // chiuderlo il customer care senza rispondere). Finché la recensione non è
+      // pubblicata da noi, risposta nel thread, o archiviata, resta da lavorare.
       .filter(
-        (r) =>
-          !pubblicate.has(r.chiave) &&
-          !r.haRisposta &&
-          !archiviateChiavi.has(r.chiave) &&
-          !r.risolto,
+        (r) => !pubblicate.has(r.chiave) && !r.haRisposta && !archiviateChiavi.has(r.chiave),
       )
       .map((r) => ({ r, regola: regolaPer(regole, r.stelle, haTesto(r)) }))
       // Occhio spento: solo le recensioni coperte da una regola ATTIVA (default).
       // Occhio acceso: TUTTE, anche quelle senza regola (regola === null).
       .filter((x) => tutte || x.regola !== null);
 
-    // «Aggiorna» (tasto di pagina): verifica su Freshdesk e toglie le recensioni
-    // il cui ticket è stato risolto/chiuso da qualcun altro — così se qualcuno
-    // fuori lavora un ticket, il conteggio scende (4→3). UNA sola lettura della
-    // lista ticket, condivisa da tutte le recensioni (niente fan-out N×).
-    if (sp.fresh === "1") {
-      try {
-        const risolte = await chiaviRisolteDaFreshdesk(
-          daApprovare.map((x) => ({
-            chiave: x.r.chiave,
-            oggetto: x.r.oggetto,
-            ricevutaIl: x.r.ricevutaIl,
-          })),
-        );
-        daApprovare = daApprovare.filter((x) => !risolte.has(x.r.chiave));
-      } catch {
-        // Freshdesk non raggiungibile: non nascondo nulla, resta tutto in lista.
-      }
-    }
+    // «Aggiorna» (tasto di pagina) rilegge soltanto la posta e riconta: NON
+    // nasconde più le recensioni col ticket risolto/chiuso su Freshdesk. Un
+    // ticket chiuso non equivale a una risposta pubblicata su Google, quindi
+    // toglierle qui faceva sparire recensioni ancora da lavorare (es. Arthur).
     // Con l'occhio acceso: ordine per stelle crescente (1★ … 5★, senza voto in
     // fondo) e, a parità, dalla più recente. Spento resta l'ordine per data.
     if (tutte) {
@@ -374,7 +355,7 @@ export default async function HomePage({
         <Link
           href={
             step === "approvare"
-              ? "/?fresh=1"
+              ? "/"
               : step === "ricontrollo"
                 ? "/?step=ricontrollo"
                 : step === "archiviati"

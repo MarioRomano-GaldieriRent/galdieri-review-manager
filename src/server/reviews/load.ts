@@ -133,7 +133,12 @@ export async function caricaRecensioni(
   const messaggi = await searchMessages({
     subjectContains: label.subjectContains,
     fromContains: label.fromContains,
-    top: opts.top ?? 50,
+    // Finestra della posta: le 200 email-recensione più recenti (il massimo che
+    // searchMessages carica). A 50 le recensioni non risposte "vecchie" — quelle
+    // scivolate sotto le più nuove — sparivano dalla coda pur non essendo state
+    // gestite (es. Arthur, #96). Serve anche alle azioni Play/Rispondi/G, che
+    // ritrovano la recensione per chiave rileggendo la stessa finestra.
+    top: opts.top ?? 200,
     mailbox: await activeMailbox(),
   });
 

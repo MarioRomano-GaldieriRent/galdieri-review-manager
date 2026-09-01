@@ -19,6 +19,8 @@
     "travaso": "tsx --tsconfig tsconfig.json scripts/travaso-sqlite.ts",
     "db:schema": "tsx --tsconfig tsconfig.json scripts/applica-schema.ts",
     "verifica:db": "tsx --tsconfig tsconfig.json scripts/verifica-db.ts",
+    "diag:arthur": "tsx --tsconfig tsconfig.json scripts/diag-arthur.ts",
+    "diag:arretrato": "tsx --tsconfig tsconfig.json scripts/diag-arretrato.ts",
     "crea-utente": "tsx --tsconfig tsconfig.json scripts/crea-utente.ts",
     "robot:sessione": "tsx --tsconfig tsconfig.json scripts/robot-cattura-sessione.ts",
     "robot:recensioni": "tsx --tsconfig tsconfig.json scripts/robot-apri-recensioni.ts",
