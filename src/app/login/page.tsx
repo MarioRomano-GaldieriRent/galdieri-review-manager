@@ -1,6 +1,7 @@
 import { operatoreCorrente } from "@/server/auth/sessione";
 import { redirect } from "next/navigation";
 import { accediAction } from "./actions";
+import { BottoneEntra } from "./BottoneEntra";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Accesso — GaldieriReviews" };
@@ -57,9 +58,7 @@ export default async function LoginPage({
             <span>Password</span>
             <input name="password" type="password" autoComplete="current-password" required />
           </label>
-          <button type="submit" className="btn-primary login-invia">
-            Entra
-          </button>
+          <BottoneEntra />
         </form>
       </section>
     </main>

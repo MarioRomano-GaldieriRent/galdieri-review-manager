@@ -563,15 +563,15 @@ export default async function HomePage({
                     // (apre il ticket); la risposta tornerà qui quando la rimanda.
                     <>
                       <p className="notice dash-senza-regola">
-                        Recensione negativa: la gestisce Cherubina. Inoltrala per aprire la
-                        lavorazione — la risposta tornerà qui quando lei la rimanda.
+                        Recensione negativa: inoltrala al customer care per aprire la
+                        lavorazione — la risposta tornerà qui quando arriva.
                       </p>
                       <div className="dash-azioni">
                         <form action={avviaEscalationAction} style={{ display: "contents" }}>
                           <input type="hidden" name="chiave" value={r.chiave} />
                           <input type="hidden" name="label" value={label?.id ?? ""} />
                           <button type="submit" className="btn-primary">
-                            Inoltra a Cherubina
+                            Inoltra al customer care
                           </button>
                         </form>
                         <VediMail id={r.messaggioId} className="btn-mini" />
