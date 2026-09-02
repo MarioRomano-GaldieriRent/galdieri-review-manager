@@ -321,8 +321,12 @@ export default async function HomePage({
           `[da-approvare] filtro Freshdesk: nascoste ${prima - daApprovare.length} su ${prima} (risolte o già inoltrate).`,
         );
       } catch (e) {
-        console.error(
-          "[da-approvare] filtro Freshdesk FALLITO, non nascondo nulla:",
+        // Best-effort: Freshdesk non raggiungibile o a rate-limit (429). NON è un
+        // errore bloccante — le negative già RISOLTE sono comunque nascoste (dal
+        // segnale d'archivio, sopra); qui al più restano visibili le inoltrate ma
+        // ancora aperte. console.warn (non error) per non far scattare l'overlay.
+        console.warn(
+          "[da-approvare] filtro Freshdesk saltato (best-effort):",
           e instanceof Error ? e.message : e,
         );
       }

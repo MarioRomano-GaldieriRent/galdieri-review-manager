@@ -35,10 +35,25 @@ async function fdFetch(pathAndQuery: string): Promise<Response> {
   const cfg = await resolveFreshdesk();
   if (!cfg.domain || !cfg.apiKey) throw new Error("Freshdesk non configurato.");
   const auth = `Basic ${Buffer.from(`${cfg.apiKey}:X`).toString("base64")}`;
-  return fetch(`https://${cleanDomain(cfg.domain)}/api/v2${pathAndQuery}`, {
+  const url = `https://${cleanDomain(cfg.domain)}/api/v2${pathAndQuery}`;
+  const opts = {
     headers: { Authorization: auth, "Content-Type": "application/json" },
-    cache: "no-store",
-  });
+    cache: "no-store" as const,
+  };
+
+  let res = await fetch(url, opts);
+  // 429 = troppe richieste. Freshdesk manda «Retry-After» (secondi). Riprovo UNA
+  // sola volta e SOLO se l'attesa è breve, per non bloccare il render: se serve
+  // più di 3s lascio decidere al chiamante (le sweep sono best-effort e non
+  // nascondono nulla se Freshdesk non risponde).
+  if (res.status === 429) {
+    const ra = Number(res.headers.get("retry-after") ?? "0");
+    if (ra > 0 && ra <= 3) {
+      await new Promise((ok) => setTimeout(ok, ra * 1000 + 200));
+      res = await fetch(url, opts);
+    }
+  }
+  return res;
 }
 
 export async function ticketUrl(id: number): Promise<string> {
@@ -436,7 +451,9 @@ export async function recensioniConTicket(
           Math.abs(new Date(b.createdAt).getTime() - rif),
       );
 
-    for (const t of candidati.slice(0, opts.candidatiMax ?? 25)) {
+    // Poche letture per recensione: le sedi attive hanno ~6-8 ticket con lo
+    // stesso oggetto; oltre si rischia solo di appesantire le chiamate (429).
+    for (const t of candidati.slice(0, opts.candidatiMax ?? 8)) {
       const completo = await getTicket(t.id, opts.forza);
       if (perConfronto(soloTesto(completo.descriptionHtml)).includes(nomeConfr)) {
         agganciate.add(r.chiave); // il suo ticket esiste: è già stata inoltrata
