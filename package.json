@@ -29,6 +29,8 @@
     "diag:daapprovare": "tsx --tsconfig tsconfig.json scripts/diag-daapprovare.ts",
     "diag:regole": "tsx --tsconfig tsconfig.json scripts/diag-regole.ts",
     "scrivi:regola12": "tsx --tsconfig tsconfig.json scripts/scrivi-regola-1-2.ts",
+    "diag:ticketid": "tsx --tsconfig tsconfig.json scripts/diag-ticket-id.ts",
+    "diag:agente": "tsx --tsconfig tsconfig.json scripts/diag-agente.ts",
     "crea-utente": "tsx --tsconfig tsconfig.json scripts/crea-utente.ts",
     "robot:sessione": "tsx --tsconfig tsconfig.json scripts/robot-cattura-sessione.ts",
     "robot:recensioni": "tsx --tsconfig tsconfig.json scripts/robot-apri-recensioni.ts",
@@ -41,7 +43,10 @@
     "robot:gruppi": "tsx --tsconfig tsconfig.json scripts/robot-gruppi.ts",
     "robot:diag-gruppo": "tsx --tsconfig tsconfig.json scripts/robot-diag-gruppo.ts",
     "robot:esegui": "tsx --tsconfig tsconfig.json scripts/robot-esegui.ts",
-    "robot:pubblica": "tsx --tsconfig tsconfig.json scripts/robot-pubblica.ts"
+    "robot:pubblica": "tsx --tsconfig tsconfig.json scripts/robot-pubblica.ts",
+    "diag:recticket": "tsx --tsconfig tsconfig.json scripts/diag-recensioni-ticket.ts",
+    "diag:posta": "tsx --tsconfig tsconfig.json scripts/diag-posta.ts",
+    "beta:utente": "tsx --tsconfig tsconfig.json scripts/beta-utente.ts"
   },
   "dependencies": {
     "mongodb": "^7.5.0",

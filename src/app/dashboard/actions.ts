@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { eseguiRegola } from "@/server/automation/engine";
 import { testoPerRecensione } from "@/server/automation/connectors";
-import { caricaRegole, regolaPer, EMAIL_TICKETING } from "@/server/automation/rules";
+import { caricaRegole, conBeta, regolaPer, EMAIL_TICKETING } from "@/server/automation/rules";
 import { eliminaEsecuzione, registraEsecuzione } from "@/server/automation/runs";
 import type { Esecuzione, Regola } from "@/server/automation/types";
 import { haTesto, testoRecensione, type Recensione } from "@/server/reviews/load";
@@ -70,7 +70,9 @@ export async function approvaAction(formData: FormData): Promise<void> {
   const op = await richiediOperatore();
   const recensione = await trovaRecensione(formData);
 
-  const regole = await caricaRegole();
+  // conBeta: le regole in anteprima di questa persona contano come attive solo
+  // per lei (così card e azione concordano su cosa copre la recensione).
+  const regole = conBeta(await caricaRegole(), op.regoleBeta ?? []);
   const regola = regolaPer(regole, recensione.stelle, haTesto(recensione));
   if (!regola) indietro(formData, { errore: "nessuna-regola" });
 
@@ -162,6 +164,32 @@ export async function inoltraAction(formData: FormData): Promise<void> {
   indietro(formData, { run: esecuzione.id });
 }
 
+/**
+ * Fase 1 delle recensioni NEGATIVE (1-2★): esegue la regola FINO ALL'ATTESA —
+ * inoltro a Cherubina (CC customer.care, che apre il ticket), aggancio, classifica,
+ * tag e assegnazione — poi si ferma. Niente Google, niente coda di pubblicazione:
+ * la risposta arriverà da Cherubina e si pubblicherà in un secondo momento.
+ */
+export async function avviaEscalationAction(formData: FormData): Promise<void> {
+  const op = await richiediOperatore();
+  const recensione = await trovaRecensione(formData);
+
+  const regole = conBeta(await caricaRegole(), op.regoleBeta ?? []);
+  const regola = regolaPer(regole, recensione.stelle, haTesto(recensione));
+  if (!regola) indietro(formData, { errore: "nessuna-regola" });
+
+  // Solo i nodi FINO all'attesa inclusa (la Fase 1). Senza un nodo di attesa si
+  // eseguono tutti (regola senza flusso di ritorno).
+  const iAttesa = regola.azioni.findIndex((a) => a.tipo === "sistema.attendiRisposta");
+  const fase1 = iAttesa >= 0 ? { ...regola, azioni: regola.azioni.slice(0, iAttesa + 1) } : regola;
+
+  const esecuzione = await eseguiRegola(fase1, recensione);
+  await registraEsecuzione(esecuzione);
+
+  revalidatePath("/");
+  indietro(formData, { run: esecuzione.id });
+}
+
 // --- Bottoni della card: Play, Test Google, Aggiorna ticket ----------------
 // Tutti MANUALI: partono solo al click. Il robot Google è "usa e getta" (apre
 // il browser, fa la cosa, si chiude) e serve Chrome chiuso in quel momento.
@@ -226,7 +254,7 @@ export async function playAction(formData: FormData): Promise<void> {
   const op = await richiediOperatore();
   const recensione = await trovaRecensione(formData);
 
-  const regole = await caricaRegole();
+  const regole = conBeta(await caricaRegole(), op.regoleBeta ?? []);
   const regola = regolaPer(regole, recensione.stelle, haTesto(recensione));
   if (!regola) indietro(formData, { errore: "nessuna-regola" });
 
@@ -237,13 +265,26 @@ export async function playAction(formData: FormData): Promise<void> {
 
   const modo = await modoOperativo();
 
+  // Il ripiego «Grazie.» vale SOLO per le recensioni positive (≥4★, il caso
+  // «5★ senza commento»). Su una negativa senza testo NON si pubblica nulla:
+  // la risposta la fornisce Cherubina e va scritta nel box.
+  const positiva = (recensione.stelle ?? 0) >= 4;
+  const testoPubblicazione = testo || (positiva ? "Grazie." : "");
+  if (!testoPubblicazione.trim()) {
+    indietro(formData, esitoQuery(recensione.chiave, {
+      ok: false,
+      stato: "vuoto",
+      messaggio: "Scrivi prima la risposta nel box: su una recensione negativa non si pubblica un «Grazie.» automatico.",
+    }));
+  }
+
   // GOOGLE PER PRIMO (regola «5 stelle senza foto»): la pubblicazione su Google
   // è il passo che conta ed è il più fragile. Se il robot NON pubblica, non ha
   // senso fare il resto (email, ticket): il robot è il "cancello" iniziale.
   const e = await lanciaRobot({
     azione: modo === "reale" ? "pubblica" : "test",
     nome: recensione.nome,
-    testo: testo || "Grazie.",
+    testo: testoPubblicazione,
     nomeGoogle: await nomeGoogleDiSede(recensione.sede),
   });
 

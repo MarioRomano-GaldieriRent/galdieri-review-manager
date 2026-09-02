@@ -11,6 +11,8 @@ import type { Azione, Regola, TipoAzione } from "./types";
 export const AGENTE_MARKETING = "80108775423";
 export const AGENTE_ESCALATION = "80128977810";
 export const TIPO_TICKET_GMB = "Recensioni clienti GMB";
+/** Id della regola delle recensioni negative (1 e 2 stelle). */
+export const REGOLA_ESCALATION_12 = "1-2-stelle";
 export const EMAIL_ESCALATION = "cherubina.panico@galdierirent.it";
 /** Casella che genera i ticket: va sempre in copia, altrimenti niente ticket. */
 export const EMAIL_TICKETING = "customer.care@galdierirent.it";
@@ -185,6 +187,18 @@ export async function caricaRegole(): Promise<Regola[]> {
 
 export async function salvaRegole(regole: Regola[], origine: Origine = "interfaccia"): Promise<void> {
   await scriviRegole(regole, origine);
+}
+
+/**
+ * Le regole con quelle indicate ACCESE solo per questo contesto (anteprima
+ * per-utente): la regola resta spenta globalmente — Stefania non la vede — ma
+ * per chi ha `regoleBeta` che la contiene risulta attiva, così può provarla.
+ * Non tocca il database: è una copia per la singola richiesta.
+ */
+export function conBeta(regole: Regola[], regoleBeta: string[] = []): Regola[] {
+  if (regoleBeta.length === 0) return regole;
+  const beta = new Set(regoleBeta);
+  return regole.map((r) => (beta.has(r.id) && !r.attiva ? { ...r, attiva: true } : r));
 }
 
 /** Prima regola attiva che copre la recensione, oppure null. */

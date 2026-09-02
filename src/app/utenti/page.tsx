@@ -1,7 +1,13 @@
 import Link from "next/link";
 import { elencoUtenti } from "@/server/auth/utenti";
+import { REGOLA_ESCALATION_12 } from "@/server/automation/rules";
 import { richiediAdmin } from "@/server/auth/sessione";
-import { cambiaPasswordAction, creaUtenteAction, impostaAttivoAction } from "./actions";
+import {
+  cambiaPasswordAction,
+  creaUtenteAction,
+  impostaAttivoAction,
+  impostaRegolaBetaAction,
+} from "./actions";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Utenti — GaldieriReviews" };
@@ -78,12 +84,14 @@ export default async function UtentiPage({
                 <th>Username</th>
                 <th>Ruolo</th>
                 <th>Stato</th>
+                <th>Anteprima 1-2★</th>
                 <th>Azioni</th>
               </tr>
             </thead>
             <tbody>
               {utenti.map((u) => {
                 const sono = u._id === admin._id;
+                const haBeta12 = (u.regoleBeta ?? []).includes(REGOLA_ESCALATION_12);
                 return (
                   <tr key={u._id} className={u.attivo ? "" : "utente-off"}>
                     <td>
@@ -98,6 +106,16 @@ export default async function UtentiPage({
                       ) : (
                         <span className="flag flag-red">disattivato</span>
                       )}
+                    </td>
+                    <td>
+                      <form action={impostaRegolaBetaAction}>
+                        <input type="hidden" name="id" value={u._id} />
+                        <input type="hidden" name="regola" value={REGOLA_ESCALATION_12} />
+                        <input type="hidden" name="attiva" value={haBeta12 ? "0" : "1"} />
+                        <button type="submit" className="btn-mini">
+                          {haBeta12 ? "🟢 ON — disattiva" : "OFF — attiva"}
+                        </button>
+                      </form>
                     </td>
                     <td className="utenti-azioni">
                       {!sono && (

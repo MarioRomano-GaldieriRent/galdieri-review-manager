@@ -225,6 +225,9 @@ export const COLLEZIONI: DefColl[] = [
           // fra un accesso e l'altro. L'occhio della home: true = mostro TUTTE
           // le recensioni, false/assente = solo quelle con una regola attiva.
           mostraTutte: boolo,
+          // Regole viste in ANTEPRIMA solo da questa persona (rollout graduale):
+          // id delle regole che, pur spente per tutti, per lei risultano attive.
+          regoleBeta: { bsonType: "array", items: { bsonType: "string" } },
         },
       },
     },

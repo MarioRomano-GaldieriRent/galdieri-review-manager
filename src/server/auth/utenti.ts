@@ -28,6 +28,10 @@ export interface OperatoreDoc {
   // profili creati prima il campo non c'è, quindi si legge come "assente =
   // false" (default: solo le recensioni con una regola attiva).
   mostraTutte?: boolean;
+  // Regole viste in ANTEPRIMA solo da questa persona: id delle regole che, pur
+  // spente per tutti, per lei risultano attive (rollout graduale). Assente =
+  // nessuna anteprima. Vedi conBeta() in automation/rules.ts.
+  regoleBeta?: string[];
 }
 
 interface CredenzialeDoc {
@@ -208,6 +212,31 @@ export async function impostaAttivo(
  */
 export async function impostaMostraTutte(operatoreId: number, mostraTutte: boolean): Promise<void> {
   await (await operatori()).updateOne({ _id: operatoreId }, { $set: { mostraTutte } });
+}
+
+/**
+ * Accende/spegne l'ANTEPRIMA di una regola per una persona (rollout graduale).
+ * Aggiunge o toglie l'id dalla lista `regoleBeta` in modo atomico ($addToSet /
+ * $pull), così due modifiche concorrenti non si sovrascrivono. Tracciato in
+ * attività: è un cambio di cosa una persona può vedere/fare.
+ */
+export async function impostaRegolaBeta(
+  operatoreId: number,
+  regolaId: string,
+  attiva: boolean,
+  da = OPERATORE_SISTEMA,
+): Promise<void> {
+  const c = await coll<OperatoreDoc>("operatori");
+  await c.updateOne(
+    { _id: operatoreId },
+    attiva ? { $addToSet: { regoleBeta: regolaId } } : { $pull: { regoleBeta: regolaId } },
+  );
+  await registraAttivita(attiva ? "utente.beta_on" : "utente.beta_off", {
+    operatoreId: da,
+    oggettoTipo: "operatore",
+    oggettoId: String(operatoreId),
+    dettaglio: regolaId,
+  });
 }
 
 /** Cambia la password di un utente (usato dalla gestione e dal cambio proprio). */

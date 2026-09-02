@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { testoPerRecensione } from "@/server/automation/connectors";
-import { caricaRegole, regolaPer } from "@/server/automation/rules";
+import { caricaRegole, conBeta, regolaPer } from "@/server/automation/rules";
 import { caricaEsecuzioni } from "@/server/automation/runs";
 import type { Azione, Regola } from "@/server/automation/types";
 import { isGraphConfigured } from "@/server/graph/client";
@@ -21,6 +21,7 @@ import {
   archiviaAction,
   ripristinaAction,
   mostraTutteAction,
+  avviaEscalationAction,
 } from "./dashboard/actions";
 import { BottoneGoogle } from "./BottoneGoogle";
 import { BottoneRispondi } from "./BottoneRispondi";
@@ -172,6 +173,9 @@ export default async function HomePage({
   // Il layout ha già fatto il gate di sessione, qui l'operatore c'è sempre.
   const operatore = await operatoreCorrente();
   const tutte = operatore?.mostraTutte === true;
+  // Regole in anteprima solo per questa persona (rollout graduale): restano
+  // spente per tutti gli altri. Vedi conBeta().
+  const regoleBeta = operatore?.regoleBeta ?? [];
   const step: Passo =
     sp.step === "pubblicare"
       ? "pubblicare"
@@ -217,11 +221,13 @@ export default async function HomePage({
   let archiviate: RecensioneArchiviata[] = [];
 
   if (step === "approvare") {
-    const [regole, esecuzioni, graphConf] = await Promise.all([
+    const [regoleBase, esecuzioni, graphConf] = await Promise.all([
       caricaRegole(),
       caricaEsecuzioni(),
       isGraphConfigured(),
     ]);
+    // Per questa persona le sue regole in anteprima contano come attive.
+    const regole = conBeta(regoleBase, regoleBeta);
     graphOk = graphConf;
 
     // INGEST leggero: da Graph si scarica solo una finestra piccola (le ~100
@@ -459,7 +465,12 @@ export default async function HomePage({
           ) : (
             daApprovare.map(({ r, regola }) => {
               const nodo = regola ? nodoRisposta(regola) : null;
-              const suggerito = nodo ? testoPerRecensione(nodo, r) : null;
+              const proposta = nodo ? testoPerRecensione(nodo, r) : null;
+              // Risposta "pronta" solo se il nodo propone davvero un testo. Le
+              // 1-2★ hanno un google.rispondi VUOTO (il testo lo darà Cherubina):
+              // NON è ancora una risposta da pubblicare, così non compare il box
+              // «Rispondi» né parte un «Grazie.» su una negativa.
+              const suggerito = proposta && proposta.testo.trim() ? proposta : null;
               const testo = testoRecensione(r);
               const mostraOriginale = Boolean(
                 r.originale && !r.giaItaliano && r.originale !== testo,
@@ -546,6 +557,27 @@ export default async function HomePage({
                         <BottoneArchivia chiave={r.chiave} />
                       </div>
                     </form>
+                  ) : regola ? (
+                    // Recensione NEGATIVA coperta dalla regola escalation (1-2★):
+                    // nessuna risposta automatica. Fase 1 = inoltro a Cherubina
+                    // (apre il ticket); la risposta tornerà qui quando la rimanda.
+                    <>
+                      <p className="notice dash-senza-regola">
+                        Recensione negativa: la gestisce Cherubina. Inoltrala per aprire la
+                        lavorazione — la risposta tornerà qui quando lei la rimanda.
+                      </p>
+                      <div className="dash-azioni">
+                        <form action={avviaEscalationAction} style={{ display: "contents" }}>
+                          <input type="hidden" name="chiave" value={r.chiave} />
+                          <input type="hidden" name="label" value={label?.id ?? ""} />
+                          <button type="submit" className="btn-primary">
+                            Inoltra a Cherubina
+                          </button>
+                        </form>
+                        <VediMail id={r.messaggioId} className="btn-mini" />
+                        <BottoneArchivia chiave={r.chiave} />
+                      </div>
+                    </>
                   ) : tutte ? (
                     // Con l'occhio acceso: recensione SENZA regola di risposta
                     // (o senza regola). Box VUOTO da compilare e SOLO azioni

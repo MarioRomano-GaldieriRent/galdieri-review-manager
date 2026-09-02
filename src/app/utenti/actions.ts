@@ -2,7 +2,13 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { cambiaPassword, creaUtente, impostaAttivo, type Ruolo } from "@/server/auth/utenti";
+import {
+  cambiaPassword,
+  creaUtente,
+  impostaAttivo,
+  impostaRegolaBeta,
+  type Ruolo,
+} from "@/server/auth/utenti";
 import { richiediAdmin } from "@/server/auth/sessione";
 
 // Gestione utenti: solo admin. Ogni azione ricontrolla il ruolo (le server
@@ -45,6 +51,20 @@ export async function impostaAttivoAction(formData: FormData): Promise<void> {
   }
   revalidatePath("/utenti");
   torna({ ok: attivo ? "Utente riattivato." : "Utente disattivato." });
+}
+
+export async function impostaRegolaBetaAction(formData: FormData): Promise<void> {
+  const admin = await richiediAdmin();
+  const id = Number(str(formData, "id"));
+  const regola = str(formData, "regola");
+  const attiva = str(formData, "attiva") === "1";
+  try {
+    await impostaRegolaBeta(id, regola, attiva, admin._id);
+  } catch (e) {
+    torna({ e: e instanceof Error ? e.message : "Operazione non riuscita" });
+  }
+  revalidatePath("/utenti");
+  torna({ ok: attiva ? "Anteprima 1-2★ attivata." : "Anteprima 1-2★ disattivata." });
 }
 
 export async function cambiaPasswordAction(formData: FormData): Promise<void> {
