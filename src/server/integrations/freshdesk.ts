@@ -119,11 +119,22 @@ export async function searchTicketsByStatus(
   return { tickets: (data.results ?? []).map(toTicket), total: data.total ?? 0 };
 }
 
-export async function getTicket(id: number): Promise<FdTicket> {
+// Cache breve dei singoli ticket letti col corpo: le due sweep (risolti / già
+// inoltrati) e i ricaricamenti ravvicinati rileggono spesso gli stessi ticket.
+// TTL corto per non servire a lungo uno stato vecchio dopo una chiusura;
+// «Aggiorna» (forza) la salta comunque.
+const cacheGetTicket = new Map<number, { at: number; ticket: FdTicket }>();
+const TTL_GET_TICKET_MS = 60_000;
+
+export async function getTicket(id: number, forza = false): Promise<FdTicket> {
+  const hit = cacheGetTicket.get(id);
+  if (!forza && hit && Date.now() - hit.at < TTL_GET_TICKET_MS) return hit.ticket;
   const res = await fdFetch(`/tickets/${id}?include=requester`);
   if (res.status === 404) throw new Error("Ticket non trovato.");
   if (!res.ok) throw new Error(`Freshdesk ${res.status}: ticket non disponibile.`);
-  return toTicket((await res.json()) as RawTicket);
+  const ticket = toTicket((await res.json()) as RawTicket);
+  cacheGetTicket.set(id, { at: Date.now(), ticket });
+  return ticket;
 }
 
 export type FdConversation = {
@@ -374,7 +385,7 @@ export async function recensioniConTicketRisolto(
         Math.abs(new Date(b.createdAt).getTime() - soglia),
     );
     for (const t of perTempo.slice(0, opts.candidatiMax ?? 25)) {
-      const completo = await getTicket(t.id);
+      const completo = await getTicket(t.id, opts.forza);
       if (perConfronto(soloTesto(completo.descriptionHtml)).includes(nomeConfr)) {
         if (risolto(completo)) risolte.add(r.chiave);
         break; // trovato il suo ticket: lo stato di quello è la risposta
@@ -386,14 +397,17 @@ export async function recensioniConTicketRisolto(
 
 /**
  * Delle recensioni date, quali hanno GIÀ un ticket su Freshdesk (qualsiasi
- * stato). Per le recensioni negative (1-2★) un ticket esiste solo se sono state
- * inoltrate al customer care: quindi «ha un ticket» = «già inoltrata», e la
- * lista "Da approvare" può smettere di riproporne l'inoltro.
+ * stato). Per le negative (1-2★) un ticket esiste solo se sono state inoltrate al
+ * customer care: quindi «ha un ticket» = «già inoltrata», e "Da approvare" può
+ * smettere di riproporne l'inoltro.
  *
- * Stessa sweep condivisa e stesso match per nome di recensioniConTicketRisolto,
- * ma qui NON conta lo stato: basta trovare il ticket specifico della recensione.
- * Senza nome (o nessun match) resta prudente e NON la considera agganciata, così
- * non si nasconde per errore una recensione non ancora inoltrata. Sola lettura.
+ * A differenza di recensioniConTicketRisolto qui NON conta lo stato E NON conta
+ * il tempo: la mail della recensione può essere un INOLTRO TARDIVO, col ticket
+ * nato giorni PRIMA (es. Paula López, mail «Re: I: …» del 31/08, ticket del 26).
+ * Quindi si guardano tutti i ticket con lo stesso oggetto (sede) nella finestra,
+ * i più vicini nel tempo per primi, e a decidere è il NOME nel corpo. Senza nome
+ * (o nessun match) resta prudente e NON la considera agganciata, così non si
+ * nasconde per errore una non ancora inoltrata. Sola lettura.
  */
 export async function recensioniConTicket(
   recensioni: { chiave: string; oggetto: string; ricevutaIl: string; nome: string }[],
@@ -407,22 +421,23 @@ export async function recensioniConTicket(
   for (const r of recensioni) {
     const atteso = normalizzaOggetto(r.oggetto);
     if (!atteso) continue;
-    const soglia = new Date(r.ricevutaIl).getTime() - 5 * 60 * 1000;
-    const candidati = tutti.filter(
-      (t) => normalizzaOggetto(t.subject) === atteso && new Date(t.createdAt).getTime() >= soglia,
-    );
-    if (candidati.length === 0) continue;
 
     const nomeConfr = perConfronto(r.nome || "");
     if (!nomeConfr) continue; // senza nome non disambiguo: prudente, la tengo
 
-    const perTempo = [...candidati].sort(
-      (a, b) =>
-        Math.abs(new Date(a.createdAt).getTime() - soglia) -
-        Math.abs(new Date(b.createdAt).getTime() - soglia),
-    );
-    for (const t of perTempo.slice(0, opts.candidatiMax ?? 25)) {
-      const completo = await getTicket(t.id);
+    // Tutti i ticket della stessa sede, a QUALSIASI ora; i più vicini nel tempo
+    // alla recensione per primi (efficienza). Il match giusto lo fa il nome.
+    const rif = new Date(r.ricevutaIl).getTime();
+    const candidati = tutti
+      .filter((t) => normalizzaOggetto(t.subject) === atteso)
+      .sort(
+        (a, b) =>
+          Math.abs(new Date(a.createdAt).getTime() - rif) -
+          Math.abs(new Date(b.createdAt).getTime() - rif),
+      );
+
+    for (const t of candidati.slice(0, opts.candidatiMax ?? 25)) {
+      const completo = await getTicket(t.id, opts.forza);
       if (perConfronto(soloTesto(completo.descriptionHtml)).includes(nomeConfr)) {
         agganciate.add(r.chiave); // il suo ticket esiste: è già stata inoltrata
         break;

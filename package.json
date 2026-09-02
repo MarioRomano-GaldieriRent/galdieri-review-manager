@@ -46,7 +46,9 @@
     "robot:pubblica": "tsx --tsconfig tsconfig.json scripts/robot-pubblica.ts",
     "diag:recticket": "tsx --tsconfig tsconfig.json scripts/diag-recensioni-ticket.ts",
     "diag:posta": "tsx --tsconfig tsconfig.json scripts/diag-posta.ts",
-    "beta:utente": "tsx --tsconfig tsconfig.json scripts/beta-utente.ts"
+    "beta:utente": "tsx --tsconfig tsconfig.json scripts/beta-utente.ts",
+    "diag:corpi": "tsx --tsconfig tsconfig.json scripts/diag-corpi.ts",
+    "diag:recensione": "tsx --tsconfig tsconfig.json scripts/diag-recensione.ts"
   },
   "dependencies": {
     "mongodb": "^7.5.0",

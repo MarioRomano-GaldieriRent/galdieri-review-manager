@@ -82,16 +82,30 @@ async function main() {
 
   // Scorro i ticket recenti e tengo quelli con lo stesso oggetto nati dopo la recensione.
   const candidati: { id: number; status: number; createdAt: string; updatedAt: string }[] = [];
+  const primaDellaSoglia: { id: number; status: number; createdAt: string }[] = [];
+  let esaminati = 0;
   for (let page = 1; page <= 6; page++) {
     const { tickets, hasMore } = await listTickets({ page, perPage: 100 });
+    esaminati += tickets.length;
     for (const t of tickets) {
       if (normOgg(t.subject) !== atteso) continue;
-      if (new Date(t.createdAt).getTime() < soglia) continue;
+      if (new Date(t.createdAt).getTime() < soglia) {
+        primaDellaSoglia.push({ id: t.id, status: t.status, createdAt: t.createdAt });
+        continue;
+      }
       candidati.push({ id: t.id, status: t.status, createdAt: t.createdAt, updatedAt: t.updatedAt });
     }
     if (!hasMore) break;
   }
 
+  if (primaDellaSoglia.length > 0) {
+    console.log(`⚠ Ticket con lo STESSO oggetto ma creati PRIMA della recensione (${primaDellaSoglia.length}):`);
+    for (const t of primaDellaSoglia) {
+      console.log(`    #${t.id}  ${STATO[t.status] ?? t.status}  creato ${t.createdAt} (la recensione è ${new Date(doc.ricevutaIl).toISOString()})`);
+    }
+    console.log("");
+  }
+  console.log(`(finestra: ${esaminati} ticket recenti esaminati)`);
   console.log(`Ticket con oggetto «${doc.oggetto}» creati dopo la recensione: ${candidati.length}\n`);
   if (candidati.length === 0) {
     console.log("→ Nessun ticket collegato a questa recensione. Dal nostro lato NON è stato chiuso da noi.");

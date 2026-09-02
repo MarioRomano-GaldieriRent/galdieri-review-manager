@@ -65,6 +65,14 @@ async function main() {
     .filter((x) => x.regola !== null);
   console.log(`Dopo «non pubblicate» + regola attiva: ${lista.length}`);
 
+  // Negative il cui thread dice già «Ticket Risolto»: gestite, via subito.
+  const primaRis = lista.length;
+  lista = lista.filter(
+    (x) => !(x.regola!.azioni.some((a) => a.tipo === "email.inoltra") && x.r.risolto),
+  );
+  if (primaRis !== lista.length)
+    console.log(`Dopo «negative già risolte (thread)»: ${lista.length} (nascoste ${primaRis - lista.length})`);
+
   if (await isFreshdeskConfigured()) {
     const risolte = await recensioniConTicketRisolto(
       lista.map((x) => ({ chiave: x.r.chiave, oggetto: x.r.oggetto, ricevutaIl: x.r.ricevutaIl, nome: x.r.nome })),

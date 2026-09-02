@@ -274,31 +274,53 @@ export default async function HomePage({
       // Occhio acceso: TUTTE, anche quelle senza regola (regola === null).
       .filter((x) => tutte || x.regola !== null);
 
-    // Toglie le recensioni il cui ticket è GIÀ Risolto/Chiuso su Freshdesk:
-    // gestite da fuori, non ci riguardano più. UNA sola sweep condivisa (niente
-    // fan-out N×); controlla il ticket SPECIFICO della recensione per nome, così
-    // nasconde anche in sedi attive con altri ticket aperti (es. Bari). Le
-    // recensioni ANCORA da fare hanno il ticket aperto (es. Arthur) e restano.
+    // Le NEGATIVE il cui thread di posta contiene già «Ticket Risolto» sono state
+    // gestite dal customer care: via subito, dal solo segnale dell'archivio, SENZA
+    // interrogare Freshdesk. Cattura anche i casi che la sweep NON aggancia —
+    // recensione vecchia / inoltro tardivo, es. Paula López (ticket fuori finestra).
+    const conInoltro = (x: (typeof daApprovare)[number]) =>
+      Boolean(x.regola?.azioni.some((a) => a.tipo === "email.inoltra"));
+    {
+      const prima = daApprovare.length;
+      daApprovare = daApprovare.filter((x) => !(conInoltro(x) && x.r.risolto));
+      if (prima !== daApprovare.length)
+        console.log(
+          `[da-approvare] negative già risolte (thread «ticket risolto»): nascoste ${prima - daApprovare.length}.`,
+        );
+    }
+
+    // Freshdesk toglie dalla lista ciò che è già gestito, con DUE criteri diversi
+    // (UNA sola sweep condivisa dei ticket, niente fan-out N×):
+    //  - «resto» (positive/scoperte): sparisce se il suo ticket è RISOLTO/CHIUSO
+    //    (gestita da fuori). Match del ticket SPECIFICO per nome, così nasconde
+    //    anche in sedi attive con altri ticket aperti (es. Bari).
+    //  - «negative» (regola con inoltro): sparisce se un ticket ESISTE già, a
+    //    QUALSIASI stato e a QUALSIASI ora — «ha un ticket» = «già inoltrata». Il
+    //    tempo non conta: la mail può essere un inoltro tardivo. Quelle SENZA
+    //    ticket (e non ancora risolte) restano, da inoltrare.
     // Best-effort: se Freshdesk non risponde, non si nasconde nulla.
     if (fdOk && daApprovare.length > 0) {
+      const perFd = (x: (typeof daApprovare)[number]) => ({
+        chiave: x.r.chiave,
+        oggetto: x.r.oggetto,
+        ricevutaIl: x.r.ricevutaIl,
+        nome: x.r.nome,
+      });
+      const negativi = daApprovare.filter(conInoltro).map(perFd);
+      const resto = daApprovare.filter((x) => !conInoltro(x)).map(perFd);
       try {
-        const risolte = await recensioniConTicketRisolto(
-          daApprovare.map((x) => ({
-            chiave: x.r.chiave,
-            oggetto: x.r.oggetto,
-            ricevutaIl: x.r.ricevutaIl,
-            nome: x.r.nome,
-          })),
-          { forza: sp.fresh === "1" }, // «Aggiorna» rinfresca anche i ticket
-        );
+        const forza = sp.fresh === "1"; // «Aggiorna» rinfresca anche i ticket
+        const nascoste = new Set<string>();
+        if (resto.length > 0)
+          for (const c of await recensioniConTicketRisolto(resto, { forza })) nascoste.add(c);
+        if (negativi.length > 0)
+          for (const c of await recensioniConTicket(negativi, { forza })) nascoste.add(c);
         const prima = daApprovare.length;
-        daApprovare = daApprovare.filter((x) => !risolte.has(x.r.chiave));
+        daApprovare = daApprovare.filter((x) => !nascoste.has(x.r.chiave));
         console.log(
-          `[da-approvare] filtro Freshdesk: nascoste ${prima - daApprovare.length} su ${prima} (ticket risolto/chiuso).`,
+          `[da-approvare] filtro Freshdesk: nascoste ${prima - daApprovare.length} su ${prima} (risolte o già inoltrate).`,
         );
       } catch (e) {
-        // Freshdesk non raggiungibile: non nascondo nulla, ma lo DICO (prima era
-        // silenzioso: sembrava che il filtro non funzionasse).
         console.error(
           "[da-approvare] filtro Freshdesk FALLITO, non nascondo nulla:",
           e instanceof Error ? e.message : e,
@@ -306,39 +328,6 @@ export default async function HomePage({
       }
     } else {
       console.log(`[da-approvare] filtro Freshdesk saltato (Freshdesk configurato: ${fdOk}, in coda: ${daApprovare.length}).`);
-    }
-
-    // Le NEGATIVE GIÀ INOLTRATE non si ripropongono: una recensione con regola
-    // d'inoltro (email.inoltra) il cui ticket ESISTE già è in mano al customer
-    // care, in attesa della risposta — inoltrarla di nuovo non ha senso. Quelle
-    // SENZA ticket restano, da inoltrare. Riusa la sweep in cache; best-effort.
-    const daInoltrare = daApprovare.filter((x) =>
-      x.regola?.azioni.some((a) => a.tipo === "email.inoltra"),
-    );
-    if (fdOk && daInoltrare.length > 0) {
-      try {
-        const inoltrate = await recensioniConTicket(
-          daInoltrare.map((x) => ({
-            chiave: x.r.chiave,
-            oggetto: x.r.oggetto,
-            ricevutaIl: x.r.ricevutaIl,
-            nome: x.r.nome,
-          })),
-          { forza: sp.fresh === "1" },
-        );
-        if (inoltrate.size > 0) {
-          const prima = daApprovare.length;
-          daApprovare = daApprovare.filter((x) => !inoltrate.has(x.r.chiave));
-          console.log(
-            `[da-approvare] negative già inoltrate nascoste: ${prima - daApprovare.length} (ticket già aperto).`,
-          );
-        }
-      } catch (e) {
-        console.error(
-          "[da-approvare] controllo inoltri FALLITO, non nascondo nulla:",
-          e instanceof Error ? e.message : e,
-        );
-      }
     }
 
     // Con l'occhio acceso: ordine per stelle crescente (1★ … 5★, senza voto in
