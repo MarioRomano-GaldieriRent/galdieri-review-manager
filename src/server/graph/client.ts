@@ -398,26 +398,51 @@ export async function forwardMessage(
 ): Promise<void> {
   const { fetchGraph } = await ctx(mailbox);
 
-  // Il CC non è un dettaglio: negli inoltri delle recensioni negative è la
-  // copia a customer.care che fa nascere il ticket su Freshdesk. Senza, il
-  // messaggio arriverebbe al collega ma non verrebbe tracciato.
-  const corpo: Record<string, unknown> = {
-    comment: commento,
+  // Il CC NON è un dettaglio: negli inoltri delle recensioni negative è la copia
+  // a customer.care che fa NASCERE il ticket su Freshdesk. Senza, il messaggio
+  // arriva al collega ma non viene tracciato — ed è ciò che succedeva.
+  //
+  // ⚠️ L'azione Graph POST /forward IGNORA il CC (accetta solo comment +
+  // toRecipients): un `ccRecipients` nel corpo viene scartato in silenzio, così
+  // l'inoltro partiva SENZA copia e il ticket non si creava (verificato sulla
+  // Posta inviata: gli inoltri del software erano «FW:…» con CC vuoto, quelli
+  // manuali «I:…» con CC pieno). Per includere davvero il CC si fa in tre passi:
+  //   1) createForward  → crea una BOZZA di inoltro (col commento);
+  //   2) PATCH la bozza → imposta destinatari E copia conoscenza;
+  //   3) send la bozza  → la invia.
+  const crea = await fetchGraph(`/messages/${encodeURIComponent(id)}/createForward`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ comment: commento }),
+  });
+  if (!crea.ok) {
+    const j = (await crea.json().catch(() => ({}))) as { error?: { message?: string } };
+    throw new Error(`Graph ${crea.status}: ${j.error?.message ?? "createForward non riuscito"}`);
+  }
+  const bozza = (await crea.json()) as { id?: string };
+  const draftId = bozza.id;
+  if (!draftId) throw new Error("Graph: bozza di inoltro senza id.");
+
+  const patchBody: Record<string, unknown> = {
     toRecipients: destinatari.map((address) => ({ emailAddress: { address } })),
   };
   if (copiaConoscenza.length > 0) {
-    corpo.ccRecipients = copiaConoscenza.map((address) => ({ emailAddress: { address } }));
+    patchBody.ccRecipients = copiaConoscenza.map((address) => ({ emailAddress: { address } }));
+  }
+  const patch = await fetchGraph(`/messages/${encodeURIComponent(draftId)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patchBody),
+  });
+  if (!patch.ok) {
+    const j = (await patch.json().catch(() => ({}))) as { error?: { message?: string } };
+    throw new Error(`Graph ${patch.status}: ${j.error?.message ?? "destinatari/CC non impostati"}`);
   }
 
-  const res = await fetchGraph(`/messages/${encodeURIComponent(id)}/forward`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(corpo),
-  });
-
-  if (!res.ok) {
-    const json = (await res.json().catch(() => ({}))) as { error?: { message?: string } };
-    throw new Error(`Graph ${res.status}: ${json.error?.message ?? "inoltro non riuscito"}`);
+  const inv = await fetchGraph(`/messages/${encodeURIComponent(draftId)}/send`, { method: "POST" });
+  if (!inv.ok) {
+    const j = (await inv.json().catch(() => ({}))) as { error?: { message?: string } };
+    throw new Error(`Graph ${inv.status}: ${j.error?.message ?? "invio inoltro non riuscito"}`);
   }
 }
 

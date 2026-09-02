@@ -341,7 +341,9 @@ async function inoltraEmail(a: Azione, ctx: Contesto): Promise<RisultatoNodo> {
 
   const chiamata = {
     metodo: "POST",
-    url: `https://graph.microsoft.com/v1.0/users/${mailbox}/messages/${ctx.recensione.messaggioId}/forward`,
+    // Inoltro con CC: bozza (createForward) → PATCH destinatari/CC → send. L'azione
+    // /forward diretta scarterebbe il CC (e senza CC non nasce il ticket).
+    url: `https://graph.microsoft.com/v1.0/users/${mailbox}/messages/${ctx.recensione.messaggioId}/createForward → PATCH → send`,
     corpo: JSON.stringify(corpo, null, 2),
   };
 
