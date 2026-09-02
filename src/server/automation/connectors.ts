@@ -97,20 +97,33 @@ async function trovaTicket(ctx: Contesto): Promise<RisultatoNodo> {
     ticket: null,
     motivo: "",
   };
+  let erroreFd: string | null = null;
   for (let i = 0; i < tentativi; i++) {
     if (i > 0) await new Promise((ok) => setTimeout(ok, 5000));
-    esito = await cercaTicketPerRecensione(
-      ctx.recensione.oggetto,
-      ctx.recensione.ricevutaIl,
-      ctx.recensione.nome,
-    );
+    try {
+      esito = await cercaTicketPerRecensione(
+        ctx.recensione.oggetto,
+        ctx.recensione.ricevutaIl,
+        ctx.recensione.nome,
+        { forza: attendiCreazione }, // reale: cerca il ticket appena creato, fresco
+      );
+    } catch (e) {
+      // Errore Freshdesk (tipico: 429 rate-limit): NON deve far fallire l'intera
+      // escalation. La mail è GIÀ stata inoltrata (il passo che conta): fermare
+      // qui il flusso lo fa sembrare rotto. Interrompo i tentativi e proseguo —
+      // i nodi Freshdesk successivi si salteranno da soli (ticket null) e la
+      // classificazione avverrà più tardi (alla chiusura o a un nuovo giro).
+      erroreFd = e instanceof Error ? e.message : "errore Freshdesk";
+      break;
+    }
     if (esito.ticket) break;
   }
 
   if (!esito.ticket) {
     const attesa = attendiCreazione ? ` dopo ${(tentativi - 1) * 5} secondi di attesa` : "";
+    const perche = erroreFd ? `Freshdesk non raggiungibile (${erroreFd})` : `${esito.motivo}${attesa}`;
     return {
-      messaggio: `Nessun ticket agganciato${attesa}: ${esito.motivo}. I nodi Freshdesk verranno saltati — meglio fermarsi che lavorare il ticket di un altro cliente.`,
+      messaggio: `Nessun ticket agganciato: ${perche}. L'inoltro è comunque partito; i nodi Freshdesk si saltano e la classificazione avverrà più tardi.`,
       chiamata: null,
       eseguita: false,
       ticket: null,

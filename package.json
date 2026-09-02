@@ -48,7 +48,8 @@
     "diag:posta": "tsx --tsconfig tsconfig.json scripts/diag-posta.ts",
     "beta:utente": "tsx --tsconfig tsconfig.json scripts/beta-utente.ts",
     "diag:corpi": "tsx --tsconfig tsconfig.json scripts/diag-corpi.ts",
-    "diag:recensione": "tsx --tsconfig tsconfig.json scripts/diag-recensione.ts"
+    "diag:recensione": "tsx --tsconfig tsconfig.json scripts/diag-recensione.ts",
+    "diag:ultimi": "tsx --tsconfig tsconfig.json scripts/diag-ultimi.ts"
   },
   "dependencies": {
     "mongodb": "^7.5.0",
