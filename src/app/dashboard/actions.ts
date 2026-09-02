@@ -335,7 +335,11 @@ export async function aggiornaTicketAction(formData: FormData): Promise<void> {
   let ok = false;
   let messaggio: string;
   try {
-    const { ticket, motivo } = await cercaTicketPerRecensione(r.oggetto, r.ricevutaIl, r.nome);
+    // forza: è un refresh esplicito on-click, deve mostrare lo stato FRESCO
+    // del ticket (non quello in cache fino a 60s).
+    const { ticket, motivo } = await cercaTicketPerRecensione(r.oggetto, r.ricevutaIl, r.nome, {
+      forza: true,
+    });
     if (!ticket) {
       messaggio = `Nessun ticket agganciato: ${motivo}`;
     } else {

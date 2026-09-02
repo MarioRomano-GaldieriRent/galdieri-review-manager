@@ -57,7 +57,8 @@ export default async function TicketDetail({ params }: { params: Promise<{ id: s
     // ticket, ma nemmeno essere scambiato per "nessun messaggio".
     let convErrore: string | null = null;
     const [ticket, esitoConv, agents, url] = await Promise.all([
-      getTicket(numero),
+      getTicket(numero, true), // vista di verifica: stato/tag FRESCHI, non da cache
+
       getConversations(numero).catch((e: unknown) => {
         convErrore = e instanceof Error ? e.message : "errore sconosciuto";
         return [];

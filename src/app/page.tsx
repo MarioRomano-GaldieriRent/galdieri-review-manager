@@ -4,7 +4,11 @@ import { caricaRegole, conBeta, regolaPer } from "@/server/automation/rules";
 import { caricaEsecuzioni } from "@/server/automation/runs";
 import type { Azione, Regola } from "@/server/automation/types";
 import { isGraphConfigured } from "@/server/graph/client";
-import { recensioniConTicket, recensioniConTicketRisolto } from "@/server/integrations/freshdesk";
+import {
+  elencoTicketRecenti,
+  recensioniConTicket,
+  recensioniConTicketRisolto,
+} from "@/server/integrations/freshdesk";
 import { caricaRecensioni, haTesto, testoRecensione, type Recensione } from "@/server/reviews/load";
 import {
   chiaviPubblicate,
@@ -310,11 +314,14 @@ export default async function HomePage({
       const resto = daApprovare.filter((x) => !conInoltro(x)).map(perFd);
       try {
         const forza = sp.fresh === "1"; // «Aggiorna» rinfresca anche i ticket
+        // Lista ticket scaricata UNA volta e CONDIVISA fra le due sweep: con
+        // forza la cache non le farebbe riusare (sarebbero 12 GET invece di 6).
+        const tickets = await elencoTicketRecenti(6, forza);
         const nascoste = new Set<string>();
         if (resto.length > 0)
-          for (const c of await recensioniConTicketRisolto(resto, { forza })) nascoste.add(c);
+          for (const c of await recensioniConTicketRisolto(resto, { forza, tickets })) nascoste.add(c);
         if (negativi.length > 0)
-          for (const c of await recensioniConTicket(negativi, { forza })) nascoste.add(c);
+          for (const c of await recensioniConTicket(negativi, { forza, tickets })) nascoste.add(c);
         const prima = daApprovare.length;
         daApprovare = daApprovare.filter((x) => !nascoste.has(x.r.chiave));
         console.log(

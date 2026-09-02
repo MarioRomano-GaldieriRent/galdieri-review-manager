@@ -31,6 +31,25 @@ function cleanDomain(domain: string): string {
   return domain.replace(/^https?:\/\//, "").replace(/\/+$/, "");
 }
 
+/**
+ * Esegue una fetch verso Freshdesk riprovando UNA sola volta sul 429 (rate
+ * limit), e SOLO se l'attesa richiesta (header «Retry-After») è breve (≤3s), per
+ * non bloccare il render. Vale sia per le letture (fdFetch) sia per le scritture
+ * (chiusura ticket, nodi automazione), che così non falliscono per un 429
+ * transitorio. Se serve più di 3s la si lascia fallire: i chiamanti degradano.
+ */
+export async function conRetry429(doFetch: () => Promise<Response>): Promise<Response> {
+  let res = await doFetch();
+  if (res.status === 429) {
+    const ra = Number(res.headers.get("retry-after") ?? "0");
+    if (ra > 0 && ra <= 3) {
+      await new Promise((ok) => setTimeout(ok, ra * 1000 + 200));
+      res = await doFetch();
+    }
+  }
+  return res;
+}
+
 async function fdFetch(pathAndQuery: string): Promise<Response> {
   const cfg = await resolveFreshdesk();
   if (!cfg.domain || !cfg.apiKey) throw new Error("Freshdesk non configurato.");
@@ -40,20 +59,26 @@ async function fdFetch(pathAndQuery: string): Promise<Response> {
     headers: { Authorization: auth, "Content-Type": "application/json" },
     cache: "no-store" as const,
   };
+  return conRetry429(() => fetch(url, opts));
+}
 
-  let res = await fetch(url, opts);
-  // 429 = troppe richieste. Freshdesk manda «Retry-After» (secondi). Riprovo UNA
-  // sola volta e SOLO se l'attesa è breve, per non bloccare il render: se serve
-  // più di 3s lascio decidere al chiamante (le sweep sono best-effort e non
-  // nascondono nulla se Freshdesk non risponde).
-  if (res.status === 429) {
-    const ra = Number(res.headers.get("retry-after") ?? "0");
-    if (ra > 0 && ra <= 3) {
-      await new Promise((ok) => setTimeout(ok, ra * 1000 + 200));
-      res = await fetch(url, opts);
-    }
-  }
-  return res;
+/**
+ * Il nome del recensore compare nel corpo del ticket come PAROLA INTERA?
+ * `includes()` di sottostringa dava falsi agganci: un nome corto/comune (Ana,
+ * Rosa, Lia) è sottostringa di parole normali nel commento di un ALTRO cliente
+ * («settimana» contiene «ana», «generosa» contiene «rosa»), col rischio di
+ * nascondere per errore una negativa MAI inoltrata. Qui si richiede il confine
+ * di parola sul testo normalizzato, e per i nomi troppo corti (<3) non ci si
+ * fida. `corpo` e `nome` sono già passati da perConfronto (minuscolo, senza
+ * accenti, spazi compressi).
+ */
+function nomeNelCorpo(corpoConfr: string, nomeConfr: string): boolean {
+  if (nomeConfr.length < 3) return false;
+  const esc = nomeConfr.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  // Confine = inizio/fine oppure QUALSIASI carattere non alfanumerico (spazio,
+  // «:», «,», …): nel corpo il nome arriva come «nome:filip antic», dove prima
+  // c'è il due punti, non uno spazio — con solo \s il match sfuggiva.
+  return new RegExp(`(^|[^a-z0-9])${esc}([^a-z0-9]|$)`).test(corpoConfr);
 }
 
 export async function ticketUrl(id: number): Promise<string> {
@@ -258,7 +283,7 @@ export async function cercaTicketPerRecensione(
   oggetto: string,
   ricevutaIl: string,
   nomeRecensore: string,
-  opts: { pagine?: number; candidatiMax?: number } = {},
+  opts: { pagine?: number; candidatiMax?: number; forza?: boolean } = {},
 ): Promise<{ ticket: FdTicket | null; motivo: string }> {
   const atteso = normalizzaOggetto(oggetto);
   if (!atteso) return { ticket: null, motivo: "oggetto vuoto" };
@@ -316,9 +341,10 @@ export async function cercaTicketPerRecensione(
 
   const nomeConfr = perConfronto(nomeRecensore);
   for (const { t } of daControllare) {
-    const completo = await getTicket(t.id);
-    // Confronto senza accenti/entità: «Lavallée» aggancia anche «Lavallee».
-    if (perConfronto(soloTesto(completo.descriptionHtml)).includes(nomeConfr)) {
+    const completo = await getTicket(t.id, opts.forza);
+    // Confronto senza accenti/entità e a confine di parola: «Lavallée» aggancia
+    // anche «Lavallee», ma un nome corto non aggancia una parola qualsiasi.
+    if (nomeNelCorpo(perConfronto(soloTesto(completo.descriptionHtml)), nomeConfr)) {
       return { ticket: completo, motivo: `nome «${nomeRecensore}» trovato nel corpo` };
     }
   }
@@ -335,7 +361,7 @@ export async function cercaTicketPerRecensione(
 let cacheTicket: { at: number; pagine: number; tickets: FdTicket[] } | null = null;
 const TTL_TICKET_MS = 60_000;
 
-async function elencoTicketRecenti(pagine: number, forza = false): Promise<FdTicket[]> {
+export async function elencoTicketRecenti(pagine: number, forza = false): Promise<FdTicket[]> {
   if (!forza && cacheTicket && cacheTicket.pagine >= pagine && Date.now() - cacheTicket.at < TTL_TICKET_MS) {
     return cacheTicket.tickets;
   }
@@ -366,12 +392,14 @@ async function elencoTicketRecenti(pagine: number, forza = false): Promise<FdTic
  */
 export async function recensioniConTicketRisolto(
   recensioni: { chiave: string; oggetto: string; ricevutaIl: string; nome: string }[],
-  opts: { pagine?: number; candidatiMax?: number; forza?: boolean } = {},
+  opts: { pagine?: number; candidatiMax?: number; forza?: boolean; tickets?: FdTicket[] } = {},
 ): Promise<Set<string>> {
   const risolte = new Set<string>();
   if (recensioni.length === 0) return risolte;
 
-  const tutti = await elencoTicketRecenti(opts.pagine ?? 6, opts.forza);
+  // La lista può essere condivisa dal chiamante (scaricata UNA volta per le due
+  // sweep); altrimenti la si prende dalla cache/da Freshdesk.
+  const tutti = opts.tickets ?? (await elencoTicketRecenti(opts.pagine ?? 6, opts.forza));
   const risolto = (t: FdTicket) => t.status === 4 || t.status === 5;
 
   for (const r of recensioni) {
@@ -389,9 +417,15 @@ export async function recensioniConTicketRisolto(
       continue;
     }
 
-    // Qualcuno aperto: trova il ticket SPECIFICO della recensione (per nome) e
-    // guarda lo stato di QUELLO. I corpi non stanno nella lista: si leggono uno a
-    // uno, dal più vicino nel tempo, fermandosi al primo che contiene il nome.
+    // Se NESSUN candidato è risolto, questa recensione non può essere «già
+    // gestita» tramite loro: inutile leggere i corpi. Taglia il caso pesante
+    // delle 5★ ancora da pubblicare in una sede con soli ticket negativi aperti
+    // (nome mai presente in quei corpi → letture a vuoto).
+    if (!candidati.some(risolto)) continue;
+
+    // Qualcuno risolto e qualcuno aperto: trova il ticket SPECIFICO della
+    // recensione (per nome) e guarda lo stato di QUELLO. I corpi non stanno nella
+    // lista: si leggono uno a uno, dal più vicino nel tempo, al primo match.
     const nomeConfr = perConfronto(r.nome || "");
     if (!nomeConfr) continue; // senza nome non disambiguo: prudente, la tengo
     const perTempo = [...candidati].sort(
@@ -401,7 +435,7 @@ export async function recensioniConTicketRisolto(
     );
     for (const t of perTempo.slice(0, opts.candidatiMax ?? 25)) {
       const completo = await getTicket(t.id, opts.forza);
-      if (perConfronto(soloTesto(completo.descriptionHtml)).includes(nomeConfr)) {
+      if (nomeNelCorpo(perConfronto(soloTesto(completo.descriptionHtml)), nomeConfr)) {
         if (risolto(completo)) risolte.add(r.chiave);
         break; // trovato il suo ticket: lo stato di quello è la risposta
       }
@@ -426,12 +460,12 @@ export async function recensioniConTicketRisolto(
  */
 export async function recensioniConTicket(
   recensioni: { chiave: string; oggetto: string; ricevutaIl: string; nome: string }[],
-  opts: { pagine?: number; candidatiMax?: number; forza?: boolean } = {},
+  opts: { pagine?: number; candidatiMax?: number; forza?: boolean; tickets?: FdTicket[] } = {},
 ): Promise<Set<string>> {
   const agganciate = new Set<string>();
   if (recensioni.length === 0) return agganciate;
 
-  const tutti = await elencoTicketRecenti(opts.pagine ?? 6, opts.forza);
+  const tutti = opts.tickets ?? (await elencoTicketRecenti(opts.pagine ?? 6, opts.forza));
 
   for (const r of recensioni) {
     const atteso = normalizzaOggetto(r.oggetto);
@@ -451,11 +485,13 @@ export async function recensioniConTicket(
           Math.abs(new Date(b.createdAt).getTime() - rif),
       );
 
-    // Poche letture per recensione: le sedi attive hanno ~6-8 ticket con lo
-    // stesso oggetto; oltre si rischia solo di appesantire le chiamate (429).
-    for (const t of candidati.slice(0, opts.candidatiMax ?? 8)) {
+    // Fino a 25 come le altre funzioni: qui il ticket dell'INOLTRO TARDIVO è
+    // lontano nel tempo (finisce in fondo all'ordinamento), quindi un cap basso
+    // lo tagliava fuori (falso «da inoltrare» → doppione). Il ciclo si ferma al
+    // primo match: il costo pieno si paga solo se il ticket NON c'è.
+    for (const t of candidati.slice(0, opts.candidatiMax ?? 25)) {
       const completo = await getTicket(t.id, opts.forza);
-      if (perConfronto(soloTesto(completo.descriptionHtml)).includes(nomeConfr)) {
+      if (nomeNelCorpo(perConfronto(soloTesto(completo.descriptionHtml)), nomeConfr)) {
         agganciate.add(r.chiave); // il suo ticket esiste: è già stata inoltrata
         break;
       }

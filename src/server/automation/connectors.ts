@@ -1,5 +1,10 @@
 import { forwardMessage, replyToMessage } from "@/server/graph/client";
-import { cercaTicketPerRecensione, STATO, type FdTicket } from "@/server/integrations/freshdesk";
+import {
+  cercaTicketPerRecensione,
+  conRetry429,
+  STATO,
+  type FdTicket,
+} from "@/server/integrations/freshdesk";
 import { rispondiARecensione } from "@/server/integrations/googleReviews";
 import {
   activeMailbox,
@@ -164,12 +169,15 @@ async function aggiornaTicket(
   }
 
   const auth = `Basic ${Buffer.from(`${cfg.apiKey}:X`).toString("base64")}`;
-  const res = await fetch(chiamata.url, {
-    method: "PUT",
-    headers: { Authorization: auth, "Content-Type": "application/json" },
-    body: JSON.stringify(campi),
-    cache: "no-store",
-  });
+  // conRetry429: un 429 breve non deve abortire il nodo (e con esso il flusso).
+  const res = await conRetry429(() =>
+    fetch(chiamata.url, {
+      method: "PUT",
+      headers: { Authorization: auth, "Content-Type": "application/json" },
+      body: JSON.stringify(campi),
+      cache: "no-store",
+    }),
+  );
   if (!res.ok) {
     throw new Error(`Freshdesk ${res.status}: ${(await res.text()).slice(0, 200)}`);
   }

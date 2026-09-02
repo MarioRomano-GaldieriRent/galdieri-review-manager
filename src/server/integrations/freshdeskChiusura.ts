@@ -1,4 +1,4 @@
-import { agenteApiId, getTicket } from "./freshdesk";
+import { agenteApiId, conRetry429, getTicket } from "./freshdesk";
 import { resolveFreshdesk, scritturaConsentita } from "@/server/settings";
 
 // Chiusura del ticket quando la risposta è stata pubblicata a mano su Google.
@@ -43,12 +43,16 @@ async function fdScrittura(
   const cfg = await resolveFreshdesk();
   if (!cfg.domain || !cfg.apiKey) throw new Error("Freshdesk non configurato.");
   const auth = `Basic ${Buffer.from(`${cfg.apiKey}:X`).toString("base64")}`;
-  const res = await fetch(`https://${pulisciDominio(cfg.domain)}/api/v2${path}`, {
-    method: metodo,
-    headers: { Authorization: auth, "Content-Type": "application/json" },
-    body: JSON.stringify(corpo),
-    cache: "no-store",
-  });
+  const url = `https://${pulisciDominio(cfg.domain)}/api/v2${path}`;
+  // conRetry429: un 429 breve non deve far fallire la chiusura del ticket.
+  const res = await conRetry429(() =>
+    fetch(url, {
+      method: metodo,
+      headers: { Authorization: auth, "Content-Type": "application/json" },
+      body: JSON.stringify(corpo),
+      cache: "no-store",
+    }),
+  );
   return { ok: res.ok, stato: res.status, testo: res.ok ? "" : (await res.text()).slice(0, 200) };
 }
 
@@ -143,7 +147,10 @@ export async function chiudiTicketPubblicato(
   }
 
   try {
-    const ticket = await getTicket(ticketId);
+    // forza=true: una scrittura deve partire dallo stato FRESCO del ticket (tag
+    // e agente correnti). Dalla cache si rischia di ripristinare tag ormai
+    // cambiati (Freshdesk sostituisce l'intero array) o riassegnare il responder.
+    const ticket = await getTicket(ticketId, true);
     const corpo = await corpoConClassificazione(ticket, opts.tagSede, opts.stelle, 4);
 
     const put = await fdScrittura(urlTicket, "PUT", corpo);
@@ -181,7 +188,10 @@ export async function applicaClassificazioneRecensione(
     };
   }
   try {
-    const ticket = await getTicket(ticketId);
+    // forza=true: una scrittura deve partire dallo stato FRESCO del ticket (tag
+    // e agente correnti). Dalla cache si rischia di ripristinare tag ormai
+    // cambiati (Freshdesk sostituisce l'intero array) o riassegnare il responder.
+    const ticket = await getTicket(ticketId, true);
     const corpo = await corpoConClassificazione(ticket, opts.tagSede, opts.stelle);
     const put = await fdScrittura(urlTicket, "PUT", corpo);
     if (!put.ok) return { stato: "fallita", errore: `PUT ${put.stato}: ${put.testo}` };
