@@ -384,6 +384,54 @@ export async function recensioniConTicketRisolto(
   return risolte;
 }
 
+/**
+ * Delle recensioni date, quali hanno GIÀ un ticket su Freshdesk (qualsiasi
+ * stato). Per le recensioni negative (1-2★) un ticket esiste solo se sono state
+ * inoltrate al customer care: quindi «ha un ticket» = «già inoltrata», e la
+ * lista "Da approvare" può smettere di riproporne l'inoltro.
+ *
+ * Stessa sweep condivisa e stesso match per nome di recensioniConTicketRisolto,
+ * ma qui NON conta lo stato: basta trovare il ticket specifico della recensione.
+ * Senza nome (o nessun match) resta prudente e NON la considera agganciata, così
+ * non si nasconde per errore una recensione non ancora inoltrata. Sola lettura.
+ */
+export async function recensioniConTicket(
+  recensioni: { chiave: string; oggetto: string; ricevutaIl: string; nome: string }[],
+  opts: { pagine?: number; candidatiMax?: number; forza?: boolean } = {},
+): Promise<Set<string>> {
+  const agganciate = new Set<string>();
+  if (recensioni.length === 0) return agganciate;
+
+  const tutti = await elencoTicketRecenti(opts.pagine ?? 6, opts.forza);
+
+  for (const r of recensioni) {
+    const atteso = normalizzaOggetto(r.oggetto);
+    if (!atteso) continue;
+    const soglia = new Date(r.ricevutaIl).getTime() - 5 * 60 * 1000;
+    const candidati = tutti.filter(
+      (t) => normalizzaOggetto(t.subject) === atteso && new Date(t.createdAt).getTime() >= soglia,
+    );
+    if (candidati.length === 0) continue;
+
+    const nomeConfr = perConfronto(r.nome || "");
+    if (!nomeConfr) continue; // senza nome non disambiguo: prudente, la tengo
+
+    const perTempo = [...candidati].sort(
+      (a, b) =>
+        Math.abs(new Date(a.createdAt).getTime() - soglia) -
+        Math.abs(new Date(b.createdAt).getTime() - soglia),
+    );
+    for (const t of perTempo.slice(0, opts.candidatiMax ?? 25)) {
+      const completo = await getTicket(t.id);
+      if (perConfronto(soloTesto(completo.descriptionHtml)).includes(nomeConfr)) {
+        agganciate.add(r.chiave); // il suo ticket esiste: è già stata inoltrata
+        break;
+      }
+    }
+  }
+  return agganciate;
+}
+
 // Elenco agenti in cache: serve solo a mostrare un nome al posto di un id.
 let agentCache: { at: number; byId: Map<number, string> } | null = null;
 

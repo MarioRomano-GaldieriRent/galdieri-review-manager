@@ -1,9 +1,10 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-// Replica il flusso di «Da approvare» PESCANDO DAL DB (il nuovo percorso), per
-// vedere cosa mostrerebbe la home senza doverla aprire. SOLA LETTURA.
-//   npm run diag:daapprovare
+// Replica il flusso di «Da approvare» PESCANDO DAL DB, come lo vedrebbe un
+// utente (con le sue regole in anteprima). SOLA LETTURA.
+//   npm run diag:daapprovare               → occhio spento, nessuna anteprima
+//   npm run diag:daapprovare -- mario      → come lo vede «mario» (con le sue beta)
 
 function loadEnv() {
   const txt = readFileSync(path.join(process.cwd(), ".env"), "utf8");
@@ -29,19 +30,35 @@ globalThis.fetch = (async (input: Parameters<typeof fetch>[0], init?: RequestIni
 async function main() {
   const { recensioniDaApprovare } = await import("@/server/db/recensioni");
   const { chiaviPubblicate } = await import("@/server/db/pubblicazioni");
-  const { recensioniConTicketRisolto, isFreshdeskConfigured } = await import(
+  const { recensioniConTicket, recensioniConTicketRisolto, isFreshdeskConfigured } = await import(
     "@/server/integrations/freshdesk"
   );
-  const { caricaRegole, regolaPer } = await import("@/server/automation/rules");
+  const { caricaRegole, conBeta, regolaPer } = await import("@/server/automation/rules");
   const { haTesto } = await import("@/server/reviews/load");
 
+  // Utente (facoltativo): applica le sue regole in anteprima.
+  let regoleBeta: string[] = [];
+  const identif = process.argv[2];
+  if (identif) {
+    const { elencoUtenti } = await import("@/server/auth/utenti");
+    const q = identif.toLowerCase();
+    const u = (await elencoUtenti()).find(
+      (x) => x.chiave.toLowerCase() === q || (x.email ?? "").toLowerCase() === q,
+    );
+    if (!u) {
+      console.error(`Nessun utente «${identif}».`);
+      process.exit(1);
+    }
+    regoleBeta = u.regoleBeta ?? [];
+    console.log(`Vista di ${u.chiave} · anteprime: ${regoleBeta.join(", ") || "—"}\n`);
+  }
+
   const cand = await recensioniDaApprovare();
-  console.log(`Candidate dall'archivio (non archiviate, non risposte, ultimi 30 gg): ${cand.length}`);
+  console.log(`Candidate dall'archivio (ultimi 30 gg): ${cand.length}`);
 
   const pubblicate = await chiaviPubblicate().catch(() => new Set<string>());
-  const regole = await caricaRegole();
+  const regole = conBeta(await caricaRegole(), regoleBeta);
 
-  // Occhio SPENTO (default): solo quelle coperte da una regola attiva.
   let lista = cand
     .filter((r) => !pubblicate.has(r.chiave))
     .map((r) => ({ r, regola: regolaPer(regole, r.stelle, haTesto(r)) }))
@@ -50,15 +67,21 @@ async function main() {
 
   if (await isFreshdeskConfigured()) {
     const risolte = await recensioniConTicketRisolto(
-      lista.map((x) => ({
-        chiave: x.r.chiave,
-        oggetto: x.r.oggetto,
-        ricevutaIl: x.r.ricevutaIl,
-        nome: x.r.nome,
-      })),
+      lista.map((x) => ({ chiave: x.r.chiave, oggetto: x.r.oggetto, ricevutaIl: x.r.ricevutaIl, nome: x.r.nome })),
     );
     lista = lista.filter((x) => !risolte.has(x.r.chiave));
-    console.log(`Dopo il filtro ticket Freshdesk risolto: ${lista.length}\n`);
+    console.log(`Dopo il filtro ticket Freshdesk risolto: ${lista.length}`);
+
+    // Negative già inoltrate (regola con inoltro + ticket già aperto).
+    const daInoltrare = lista.filter((x) => x.regola!.azioni.some((a) => a.tipo === "email.inoltra"));
+    if (daInoltrare.length > 0) {
+      const inoltrate = await recensioniConTicket(
+        daInoltrare.map((x) => ({ chiave: x.r.chiave, oggetto: x.r.oggetto, ricevutaIl: x.r.ricevutaIl, nome: x.r.nome })),
+      );
+      lista = lista.filter((x) => !inoltrate.has(x.r.chiave));
+      console.log(`Dopo «negative già inoltrate»: ${lista.length} (nascoste ${inoltrate.size})`);
+    }
+    console.log("");
   }
 
   console.log("→ «Da approvare» mostrerebbe:");

@@ -4,7 +4,7 @@ import { caricaRegole, conBeta, regolaPer } from "@/server/automation/rules";
 import { caricaEsecuzioni } from "@/server/automation/runs";
 import type { Azione, Regola } from "@/server/automation/types";
 import { isGraphConfigured } from "@/server/graph/client";
-import { recensioniConTicketRisolto } from "@/server/integrations/freshdesk";
+import { recensioniConTicket, recensioniConTicketRisolto } from "@/server/integrations/freshdesk";
 import { caricaRecensioni, haTesto, testoRecensione, type Recensione } from "@/server/reviews/load";
 import {
   chiaviPubblicate,
@@ -306,6 +306,39 @@ export default async function HomePage({
       }
     } else {
       console.log(`[da-approvare] filtro Freshdesk saltato (Freshdesk configurato: ${fdOk}, in coda: ${daApprovare.length}).`);
+    }
+
+    // Le NEGATIVE GIÀ INOLTRATE non si ripropongono: una recensione con regola
+    // d'inoltro (email.inoltra) il cui ticket ESISTE già è in mano al customer
+    // care, in attesa della risposta — inoltrarla di nuovo non ha senso. Quelle
+    // SENZA ticket restano, da inoltrare. Riusa la sweep in cache; best-effort.
+    const daInoltrare = daApprovare.filter((x) =>
+      x.regola?.azioni.some((a) => a.tipo === "email.inoltra"),
+    );
+    if (fdOk && daInoltrare.length > 0) {
+      try {
+        const inoltrate = await recensioniConTicket(
+          daInoltrare.map((x) => ({
+            chiave: x.r.chiave,
+            oggetto: x.r.oggetto,
+            ricevutaIl: x.r.ricevutaIl,
+            nome: x.r.nome,
+          })),
+          { forza: sp.fresh === "1" },
+        );
+        if (inoltrate.size > 0) {
+          const prima = daApprovare.length;
+          daApprovare = daApprovare.filter((x) => !inoltrate.has(x.r.chiave));
+          console.log(
+            `[da-approvare] negative già inoltrate nascoste: ${prima - daApprovare.length} (ticket già aperto).`,
+          );
+        }
+      } catch (e) {
+        console.error(
+          "[da-approvare] controllo inoltri FALLITO, non nascondo nulla:",
+          e instanceof Error ? e.message : e,
+        );
+      }
     }
 
     // Con l'occhio acceso: ordine per stelle crescente (1★ … 5★, senza voto in
