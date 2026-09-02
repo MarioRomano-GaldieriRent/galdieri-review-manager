@@ -15,6 +15,7 @@ import {
 } from "@/server/db/pubblicazioni";
 import { chiudiFreshdeskPer } from "@/server/pubblicazione";
 import { archiviaRecensione, leggiRecensione, ripristinaRecensione } from "@/server/db/recensioni";
+import { registraInoltro, segnaChiusa } from "@/server/db/escalation";
 import { normalizzaSede } from "@/server/db/seed";
 import { nomeGoogleDiSede } from "@/server/db/sedi";
 import { modoOperativo } from "@/server/settings";
@@ -186,6 +187,16 @@ export async function avviaEscalationAction(formData: FormData): Promise<void> {
   const esecuzione = await eseguiRegola(fase1, recensione);
   await registraEsecuzione(esecuzione);
 
+  // Registra l'escalation: la recensione passa in «In attesa» finché il customer
+  // care non rimanda la risposta. Il ticket, se il nodo l'ha agganciato, si legge
+  // dal suo messaggio (#id) senza rileggere Freshdesk.
+  const nodoTicket = esecuzione.nodi.find((n) => n.tipo === "freshdesk.trovaTicket");
+  const mTicket = nodoTicket?.messaggio.match(/#(\d+)/);
+  await registraInoltro(recensione, {
+    ticketId: mTicket ? Number(mTicket[1]) : null,
+    operatoreId: op._id,
+  });
+
   revalidatePath("/");
   indietro(formData, { run: esecuzione.id });
 }
@@ -319,6 +330,9 @@ export async function playAction(formData: FormData): Promise<void> {
       const voce = await leggiPubblicazione(recensione.chiave);
       if (voce) await chiudiFreshdeskPer(voce, op.nome);
     }
+    // Se era una negativa «pronta» (risposta del customer care pubblicata ora),
+    // esce dal ciclo escalation. No-op se non c'era una voce in attesa.
+    await segnaChiusa(recensione.chiave);
   }
 
   revalidatePath("/");

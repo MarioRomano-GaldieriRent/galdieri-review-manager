@@ -50,7 +50,10 @@
     "diag:corpi": "tsx --tsconfig tsconfig.json scripts/diag-corpi.ts",
     "diag:recensione": "tsx --tsconfig tsconfig.json scripts/diag-recensione.ts",
     "diag:ultimi": "tsx --tsconfig tsconfig.json scripts/diag-ultimi.ts",
-    "diag:inviata": "tsx --tsconfig tsconfig.json scripts/diag-inviata.ts"
+    "diag:inviata": "tsx --tsconfig tsconfig.json scripts/diag-inviata.ts",
+    "diag:mailcorpo": "tsx --tsconfig tsconfig.json scripts/diag-mail-corpo.ts",
+    "diag:risposta": "tsx --tsconfig tsconfig.json scripts/diag-risposta.ts",
+    "esc": "tsx --tsconfig tsconfig.json scripts/esc.ts"
   },
   "dependencies": {
     "mongodb": "^7.5.0",

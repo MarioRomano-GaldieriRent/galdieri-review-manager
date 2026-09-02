@@ -17,6 +17,8 @@ import {
   type VocePubblicazione,
 } from "@/server/db/pubblicazioni";
 import { ritentaChiusureInSospeso } from "@/server/pubblicazione";
+import { elencoInAttesa, elencoPronte, type Escalation } from "@/server/db/escalation";
+import { aggiornaAttese } from "@/server/reviews/rispostaCustomerCare";
 import { isFreshdeskConfigured } from "@/server/integrations/freshdesk";
 import { loadSettings } from "@/server/settings";
 import { operatoreCorrente } from "@/server/auth/sessione";
@@ -138,7 +140,7 @@ function IconaOcchioBarrato() {
   );
 }
 
-type Passo = "approvare" | "pubblicare" | "ricontrollo" | "archiviati";
+type Passo = "approvare" | "attesa" | "pubblicare" | "ricontrollo" | "archiviati";
 
 /** Al momento si mostrano solo le recensioni a 5 stelle senza commento. */
 function soloCinqueSenzaCommento(v: VocePubblicazione): boolean {
@@ -187,7 +189,9 @@ export default async function HomePage({
         ? "ricontrollo"
         : sp.step === "archiviati"
           ? "archiviati"
-          : "approvare";
+          : sp.step === "attesa"
+            ? "attesa"
+            : "approvare";
 
   const settings = await loadSettings();
   const simulazione = settings.modo !== "reale";
@@ -219,10 +223,12 @@ export default async function HomePage({
   const label = settings.labels[0] ?? null;
   let graphOk = true;
   let erroreGraph: string | null = null;
-  let daApprovare: { r: Recensione; regola: Regola | null }[] = [];
+  let daApprovare: { r: Recensione; regola: Regola | null; rispostaPronta?: string | null }[] = [];
   let nApprovare: number | null = null;
   let runAperta: ReturnType<typeof trovaRun> = undefined;
   let archiviate: RecensioneArchiviata[] = [];
+  let inAttesa: Escalation[] = [];
+  let nAttesa: number | null = null;
 
   if (step === "approvare") {
     const [regoleBase, esecuzioni, graphConf] = await Promise.all([
@@ -278,6 +284,29 @@ export default async function HomePage({
       // Occhio acceso: TUTTE, anche quelle senza regola (regola === null).
       .filter((x) => tutte || x.regola !== null);
 
+    // ESCALATION «In attesa»: cerca le risposte del customer care arrivate (le
+    // voci passano da «attesa» a «pronta»), poi separa. Le ATTESE (inoltrate,
+    // nessuna risposta) ESCONO dalla lista → vanno nel tab «In attesa». Le PRONTE
+    // (risposta arrivata) RESTANO, precompilate col testo, e SALTANO i filtri
+    // Freshdesk (devono comparire per essere pubblicate). Tutto best-effort.
+    let prontaMap = new Map<string, string | null>();
+    if (graphOk) {
+      try {
+        await aggiornaAttese();
+      } catch (e) {
+        console.warn("[attese] recupero risposte saltato:", e instanceof Error ? e.message : e);
+      }
+    }
+    try {
+      const [attese, pronte] = await Promise.all([elencoInAttesa(), elencoPronte()]);
+      nAttesa = attese.length;
+      const attesaSet = new Set(attese.map((e) => e.chiave));
+      prontaMap = new Map(pronte.map((p) => [p.chiave, p.rispostaTesto]));
+      daApprovare = daApprovare.filter((x) => !attesaSet.has(x.r.chiave));
+    } catch (e) {
+      console.warn("[attese] lettura saltata:", e instanceof Error ? e.message : e);
+    }
+
     // Le NEGATIVE il cui thread di posta contiene già «Ticket Risolto» sono state
     // gestite dal customer care: via subito, dal solo segnale dell'archivio, SENZA
     // interrogare Freshdesk. Cattura anche i casi che la sweep NON aggancia —
@@ -286,7 +315,10 @@ export default async function HomePage({
       Boolean(x.regola?.azioni.some((a) => a.tipo === "email.inoltra"));
     {
       const prima = daApprovare.length;
-      daApprovare = daApprovare.filter((x) => !(conInoltro(x) && x.r.risolto));
+      // Le PRONTE non si toccano (devono comparire precompilate).
+      daApprovare = daApprovare.filter(
+        (x) => prontaMap.has(x.r.chiave) || !(conInoltro(x) && x.r.risolto),
+      );
       if (prima !== daApprovare.length)
         console.log(
           `[da-approvare] negative già risolte (thread «ticket risolto»): nascoste ${prima - daApprovare.length}.`,
@@ -310,7 +342,10 @@ export default async function HomePage({
         ricevutaIl: x.r.ricevutaIl,
         nome: x.r.nome,
       });
-      const negativi = daApprovare.filter(conInoltro).map(perFd);
+      // Le PRONTE (con risposta) saltano la sweep: devono restare in lista.
+      const negativi = daApprovare
+        .filter((x) => conInoltro(x) && !prontaMap.has(x.r.chiave))
+        .map(perFd);
       const resto = daApprovare.filter((x) => !conInoltro(x)).map(perFd);
       try {
         const forza = sp.fresh === "1"; // «Aggiorna» rinfresca anche i ticket
@@ -341,6 +376,14 @@ export default async function HomePage({
       console.log(`[da-approvare] filtro Freshdesk saltato (Freshdesk configurato: ${fdOk}, in coda: ${daApprovare.length}).`);
     }
 
+    // Precompila le PRONTE col testo recuperato dal customer care: nella card
+    // comparirà il box già pieno, pronto da pubblicare su Google.
+    if (prontaMap.size > 0) {
+      daApprovare = daApprovare.map((x) =>
+        prontaMap.has(x.r.chiave) ? { ...x, rispostaPronta: prontaMap.get(x.r.chiave) } : x,
+      );
+    }
+
     // Con l'occhio acceso: ordine per stelle crescente (1★ … 5★, senza voto in
     // fondo) e, a parità, dalla più recente. Spento resta l'ordine per data.
     if (tutte) {
@@ -358,6 +401,18 @@ export default async function HomePage({
 
   if (step === "archiviati") {
     archiviate = await elencoArchiviate();
+  }
+
+  if (step === "attesa") {
+    // Cerca prima le risposte arrivate (attesa → pronta), poi elenca ciò che
+    // resta in attesa. Best-effort sul recupero.
+    try {
+      await aggiornaAttese();
+    } catch (e) {
+      console.warn("[attese] recupero risposte saltato:", e instanceof Error ? e.message : e);
+    }
+    inAttesa = await elencoInAttesa();
+    nAttesa = inAttesa.length;
   }
 
   return (
@@ -417,6 +472,14 @@ export default async function HomePage({
           {nApprovare !== null && <span className="chip-count">{nApprovare}</span>}
         </Link>
         <Link
+          href="/?step=attesa"
+          className={`pub-tab${step === "attesa" ? " is-active" : ""}`}
+          title="Recensioni negative inoltrate al customer care, in attesa della risposta"
+        >
+          In attesa
+          {nAttesa !== null && nAttesa > 0 && <span className="chip-count">{nAttesa}</span>}
+        </Link>
+        <Link
           href="/?step=ricontrollo"
           className={`pub-tab${step === "ricontrollo" ? " is-active" : ""}`}
           title="Cronologia delle risposte pubblicate dal nostro sito"
@@ -434,11 +497,13 @@ export default async function HomePage({
           href={
             step === "approvare"
               ? "/?fresh=1"
-              : step === "ricontrollo"
-                ? "/?step=ricontrollo"
-                : step === "archiviati"
-                  ? "/?step=archiviati"
-                  : `/?step=pubblicare${sedeSel ? `&sede=${encodeURIComponent(sedeSel)}` : ""}`
+              : step === "attesa"
+                ? "/?step=attesa"
+                : step === "ricontrollo"
+                  ? "/?step=ricontrollo"
+                  : step === "archiviati"
+                    ? "/?step=archiviati"
+                    : `/?step=pubblicare${sedeSel ? `&sede=${encodeURIComponent(sedeSel)}` : ""}`
           }
           className="pub-aggiorna"
           title={`Ultimo aggiornamento: ${aggiornatoAlle}`}
@@ -496,14 +561,19 @@ export default async function HomePage({
                 : "Nessuna recensione da approvare (nessuna coperta dalle regole attive)."}
             </section>
           ) : (
-            daApprovare.map(({ r, regola }) => {
+            daApprovare.map(({ r, regola, rispostaPronta }) => {
               const nodo = regola ? nodoRisposta(regola) : null;
               const proposta = nodo ? testoPerRecensione(nodo, r) : null;
-              // Risposta "pronta" solo se il nodo propone davvero un testo. Le
-              // 1-2★ hanno un google.rispondi VUOTO (il testo lo darà Cherubina):
-              // NON è ancora una risposta da pubblicare, così non compare il box
-              // «Rispondi» né parte un «Grazie.» su una negativa.
-              const suggerito = proposta && proposta.testo.trim() ? proposta : null;
+              // Se il customer care ha già rimandato la risposta (voce «pronta»),
+              // il box è PRECOMPILATO con quel testo. Altrimenti: risposta "pronta"
+              // solo se il nodo propone davvero un testo — le 1-2★ hanno un
+              // google.rispondi VUOTO finché non arriva la risposta, così non
+              // compare il box né parte un «Grazie.» su una negativa.
+              const suggerito = rispostaPronta
+                ? { testo: rispostaPronta, lingua: proposta?.lingua ?? ("it" as const) }
+                : proposta && proposta.testo.trim()
+                  ? proposta
+                  : null;
               const testo = testoRecensione(r);
               const mostraOriginale = Boolean(
                 r.originale && !r.giaItaliano && r.originale !== testo,
@@ -562,9 +632,15 @@ export default async function HomePage({
                   )}
 
                   {suggerito ? (
-                    // Recensione coperta da una regola CON risposta (oggi solo
-                    // «5★ senza commento»): box precompilato + flusso completo.
+                    // Box precompilato + flusso completo. Per le negative è la
+                    // RISPOSTA del customer care (voce «pronta»); per le 5★ senza
+                    // commento è il ringraziamento della regola.
                     <form action={playAction} className="dash-proposta">
+                      {rispostaPronta && (
+                        <p className="notice flag-green-box">
+                          ✓ Risposta rimandata dal customer care — controlla e pubblicala su Google.
+                        </p>
+                      )}
                       <input type="hidden" name="chiave" value={r.chiave} />
                       <input type="hidden" name="label" value={label?.id ?? ""} />
                       <input type="hidden" name="azioneId" value={nodo!.id} />
@@ -649,6 +725,59 @@ export default async function HomePage({
                 </article>
               );
             })
+          )}
+        </section>
+      )}
+
+      {/* ===================================================== In attesa === */}
+      {step === "attesa" && (
+        <section className="dash-centro">
+          <AutoAggiorna />
+          {inAttesa.length === 0 ? (
+            <section className="card dash-vuoto">
+              Nessuna recensione in attesa. Le negative inoltrate al customer care restano qui finché
+              non arriva la risposta, poi tornano da sole in «Da approvare» precompilate.
+            </section>
+          ) : (
+            inAttesa.map((e) => (
+              <article key={e.chiave} className="card dash-card">
+                <header className="dash-card-testa">
+                  <div className="dash-autore">
+                    <span className="dash-iniziale" aria-hidden="true">
+                      {(e.nomeCliente || "?").trim().charAt(0).toUpperCase()}
+                    </span>
+                    <div>
+                      <div className="dash-autore-riga">
+                        <span className="review-name">{e.nomeCliente || "senza nome"}</span>
+                      </div>
+                      <div className="dash-meta">
+                        {dataConGiorno(new Date(e.ricevutaIl))} · {oraFmt.format(new Date(e.ricevutaIl))}
+                        {e.sedeNome ? ` · ${e.sedeNome}` : ""}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="dash-scheda">
+                    <Stelle n={e.stelle} />
+                  </div>
+                </header>
+
+                {e.originale && <p className="review-comment">{e.originale}</p>}
+
+                <p className="notice">
+                  ⏳ Inoltrata al customer care il {dataConGiorno(new Date(e.inoltrataIl))} · in attesa
+                  della risposta.
+                  {e.ticketId ? (
+                    <>
+                      {" · ticket "}
+                      <Link href={`/ticket/${e.ticketId}`}>#{e.ticketId}</Link>
+                    </>
+                  ) : null}
+                </p>
+                <div className="dash-azioni">
+                  <VediMail id={e.messaggioId} className="btn-mini" />
+                </div>
+              </article>
+            ))
           )}
         </section>
       )}
