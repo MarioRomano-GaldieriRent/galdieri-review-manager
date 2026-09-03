@@ -37,7 +37,9 @@ function prefissoAzione(subject: string): string {
 }
 
 async function main() {
-  const maxSent = Number(process.argv[2]) || 250;
+  const mesi = Number(process.argv[2]) || 6;
+  const dal = new Date(Date.now() - mesi * 30 * 24 * 60 * 60 * 1000);
+  const MAX_PAGINE = 80; // rete di sicurezza (~8000 email)
   const { coll } = await import("@/server/db/connessione");
   const { resolveGraph, activeMailbox } = await import("@/server/settings");
 
@@ -78,21 +80,30 @@ async function main() {
     `${dominio}/users/${encodeURIComponent(mbx)}/mailFolders/SentItems/messages` +
     `?$top=100&$orderby=sentDateTime desc&$select=subject,sentDateTime,toRecipients,ccRecipients,bodyPreview`;
 
-  type Voce = { subject: string; to: Rec[]; cc: Rec[]; preview: string };
+  type Voce = { subject: string; to: Rec[]; cc: Rec[]; preview: string; quando: string };
   const inviate: Voce[] = [];
-  for (let p = 0; url && inviate.length < maxSent; p++) {
+  let raggiuntoTaglio = false;
+  for (let p = 0; url && p < MAX_PAGINE && !raggiuntoTaglio; p++) {
     const r: Response = await fetch(url, { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" });
     const j = (await r.json()) as {
-      value?: { subject?: string; toRecipients?: Rec[]; ccRecipients?: Rec[]; bodyPreview?: string }[];
+      value?: { subject?: string; toRecipients?: Rec[]; ccRecipients?: Rec[]; bodyPreview?: string; sentDateTime?: string }[];
       "@odata.nextLink"?: string;
     };
-    for (const m of j.value ?? [])
-      inviate.push({ subject: m.subject ?? "", to: m.toRecipients ?? [], cc: m.ccRecipients ?? [], preview: (m.bodyPreview ?? "").replace(/\s+/g, " ").trim() });
+    for (const m of j.value ?? []) {
+      const quando = m.sentDateTime ?? "";
+      if (quando && new Date(quando) < dal) {
+        raggiuntoTaglio = true;
+        break;
+      }
+      inviate.push({ subject: m.subject ?? "", to: m.toRecipients ?? [], cc: m.ccRecipients ?? [], preview: (m.bodyPreview ?? "").replace(/\s+/g, " ").trim(), quando });
+    }
     url = j["@odata.nextLink"] ?? null;
   }
 
   const recensione = inviate.filter((v) => /recension/i.test(v.subject));
-  console.log(`\n============ POSTA INVIATA: ${inviate.length} scorse, ${recensione.length} sulle recensioni ============`);
+  const periodo = inviate.length > 0 ? `${inviate[inviate.length - 1].quando.slice(0, 10)} → ${inviate[0].quando.slice(0, 10)}` : "—";
+  console.log(`\n============ POSTA INVIATA ultimi ${mesi} mesi (${periodo}) ============`);
+  console.log(`${inviate.length} email inviate scorse, ${recensione.length} sulle recensioni${raggiuntoTaglio ? "" : " (⚠ raggiunto il limite pagine, forse non copre tutti i 6 mesi)"}`);
 
   // Testo effettivo (prima della citazione «From:/________»).
   const corpoUtile = (p: string) =>
