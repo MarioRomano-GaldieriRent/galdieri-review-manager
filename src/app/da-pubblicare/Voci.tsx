@@ -27,6 +27,31 @@ export function EsitoFreshdesk({ v }: { v: VocePubblicazione }) {
   if (v.freshdeskEsito === "ok") return <span className="flag flag-green">ticket chiuso</span>;
   if (v.freshdeskEsito === "noniniziato")
     return <span className="flag flag-gray">ticket non toccato (simulazione)</span>;
+
+  // Risoluzione PROGRAMMATA (non un errore): il ticket è appena stato aperto e
+  // verrà portato a Risolto tra un po', così Freshdesk fa in tempo a mandare le
+  // sue mail. La distingue da un retry dopo errore il fatto che i tentativi = 0.
+  if (v.freshdeskEsito === "inattesa" && v.freshdeskTentativi === 0) {
+    const tra = v.freshdeskProssimoTentativoIl
+      ? Math.max(
+          0,
+          Math.round((new Date(v.freshdeskProssimoTentativoIl).getTime() - Date.now()) / 60000),
+        )
+      : null;
+    const quando = tra == null ? "programmata" : tra > 0 ? `tra ~${tra} min` : "imminente";
+    return (
+      <span className="pub-fd-ko">
+        <span className="flag flag-amber">ticket: risoluzione {quando}</span>
+        <form action={riprovaFreshdeskAction}>
+          <input type="hidden" name="chiave" value={v.chiave} />
+          <button type="submit" className="btn-mini">
+            Risolvi ora
+          </button>
+        </form>
+      </span>
+    );
+  }
+
   const testo =
     v.freshdeskEsito === "inattesa"
       ? `chiusura ticket in retry (tentativo ${v.freshdeskTentativi})`
@@ -186,7 +211,11 @@ export function VoceStorico({ v, numero }: { v: VocePubblicazione; numero: numbe
           )}
           {v.ticketId != null && <span className="flag flag-gray">ticket #{v.ticketId}</span>}
           {v.freshdeskEsito === "ok" && <span className="flag flag-green">ticket chiuso</span>}
-          {(v.freshdeskEsito === "inattesa" || v.freshdeskEsito === "fallito") && (
+          {v.freshdeskEsito === "inattesa" && v.freshdeskTentativi === 0 && (
+            <span className="flag flag-amber">risoluzione programmata</span>
+          )}
+          {((v.freshdeskEsito === "inattesa" && v.freshdeskTentativi > 0) ||
+            v.freshdeskEsito === "fallito") && (
             <span className="flag flag-red">ticket non chiuso</span>
           )}
           {v.ripubblicazioni > 0 && (

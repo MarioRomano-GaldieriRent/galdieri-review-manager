@@ -49,6 +49,8 @@ export type VocePubblicazione = {
   freshdeskEsito: EsitoFreshdesk;
   freshdeskTentativi: number;
   freshdeskErrore: string;
+  /** Quando è programmata la (prossima) risoluzione del ticket. */
+  freshdeskProssimoTentativoIl: string | null;
   photoChecked: boolean;
   approvataIl: string;
   pubblicataIl: string | null;
@@ -72,6 +74,7 @@ type DocPub = {
   freshdeskEsito: EsitoFreshdesk;
   freshdeskTentativi: number;
   freshdeskErrore: string;
+  freshdeskProssimoTentativoIl: Date | null;
   photoChecked: boolean;
   approvataIl: Date;
   pubblicataIl: Date | null;
@@ -100,6 +103,9 @@ function componi(d: DocPub): VocePubblicazione {
     freshdeskEsito: d.freshdeskEsito,
     freshdeskTentativi: d.freshdeskTentativi,
     freshdeskErrore: d.freshdeskErrore,
+    freshdeskProssimoTentativoIl: d.freshdeskProssimoTentativoIl
+      ? d.freshdeskProssimoTentativoIl.toISOString()
+      : null,
     photoChecked: d.photoChecked,
     approvataIl: d.approvataIl.toISOString(),
     pubblicataIl: d.pubblicataIl ? d.pubblicataIl.toISOString() : null,

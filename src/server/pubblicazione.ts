@@ -21,6 +21,33 @@ import { tagSede } from "@/server/automation/sedi";
 /** Dopo tre tentativi falliti non si ritenta più da soli: resta il pulsante manuale. */
 export const MAX_TENTATIVI_FRESHDESK = 3;
 
+/**
+ * Ritardo tra APERTURA e RISOLUZIONE del ticket, sui casi positivi (5★/4★) dove
+ * l'apertura e la chiusura avverrebbero nella stessa richiesta, a pochi secondi.
+ * Risolvere così in fretta rischia di non dare a Freshdesk il tempo di far
+ * partire le sue comunicazioni via email: si programma la risoluzione a +N min e
+ * la esegue la passata ritentaChiusureInSospeso() a un ricarico successivo della
+ * home (di fatto: sessione chiusa e riaperta). Le NEGATIVE non passano di qui —
+ * il loro ticket è già aperto da giorni quando si pubblica la risposta.
+ */
+export const RITARDO_RISOLUZIONE_MIN = 15;
+
+/**
+ * Programma (non esegue) la risoluzione del ticket a +ritardo minuti: mette la
+ * pubblicazione in coda «in attesa» con tentativi=0. La distingue da un retry
+ * dopo errore proprio il fatto che i tentativi siano ancora 0. La sweep
+ * ritentaChiusureInSospeso() la prenderà quando prossimoTentativoIl è passato.
+ */
+export async function programmaChiusuraFreshdesk(
+  chiave: string,
+  ritardoMinuti: number = RITARDO_RISOLUZIONE_MIN,
+): Promise<void> {
+  await segnaEsitoFreshdesk(chiave, "inattesa", {
+    tentativi: 0,
+    prossimoTentativoIl: new Date(Date.now() + ritardoMinuti * 60 * 1000),
+  });
+}
+
 /** Attesa prima del prossimo tentativo: 2, 4, 8 minuti. */
 function prossimoTentativo(tentativi: number): Date {
   const minuti = Math.min(2 ** tentativi, 30);

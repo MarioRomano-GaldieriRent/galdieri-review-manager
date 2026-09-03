@@ -13,7 +13,7 @@ import {
   leggiPubblicazione,
   segnaPubblicata,
 } from "@/server/db/pubblicazioni";
-import { chiudiFreshdeskPer } from "@/server/pubblicazione";
+import { chiudiFreshdeskPer, programmaChiusuraFreshdesk } from "@/server/pubblicazione";
 import { archiviaRecensione, leggiRecensione, ripristinaRecensione } from "@/server/db/recensioni";
 import { registraInoltro, segnaChiusa } from "@/server/db/escalation";
 import { normalizzaSede } from "@/server/db/seed";
@@ -328,7 +328,19 @@ export async function playAction(formData: FormData): Promise<void> {
     const passata = await segnaPubblicata(recensione.chiave, op._id, false);
     if (passata) {
       const voce = await leggiPubblicazione(recensione.chiave);
-      if (voce) await chiudiFreshdeskPer(voce, op.nome);
+      if (voce) {
+        // POSITIVE (5★/4★): il ticket è stato aperto pochi secondi fa da questa
+        // stessa pubblicazione. Non lo risolviamo subito — Freshdesk non farebbe
+        // in tempo a mandare le sue mail: PROGRAMMIAMO la risoluzione a +15 min,
+        // che la sweep alla home eseguirà a un ricarico successivo. Senza ticket
+        // agganciato non c'è nulla da rimandare: si chiude subito (segnala il KO).
+        if (positiva && voce.ticketId != null) {
+          await programmaChiusuraFreshdesk(recensione.chiave);
+        } else {
+          // NEGATIVE «pronte»: il ticket è aperto da giorni, si risolve adesso.
+          await chiudiFreshdeskPer(voce, op.nome);
+        }
+      }
     }
     // Se era una negativa «pronta» (risposta del customer care pubblicata ora),
     // esce dal ciclo escalation. No-op se non c'era una voce in attesa.
