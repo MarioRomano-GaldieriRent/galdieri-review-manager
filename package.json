@@ -53,7 +53,8 @@
     "diag:inviata": "tsx --tsconfig tsconfig.json scripts/diag-inviata.ts",
     "diag:mailcorpo": "tsx --tsconfig tsconfig.json scripts/diag-mail-corpo.ts",
     "diag:risposta": "tsx --tsconfig tsconfig.json scripts/diag-risposta.ts",
-    "esc": "tsx --tsconfig tsconfig.json scripts/esc.ts"
+    "esc": "tsx --tsconfig tsconfig.json scripts/esc.ts",
+    "analizza:casella": "tsx --tsconfig tsconfig.json scripts/analizza-casella.ts"
   },
   "dependencies": {
     "mongodb": "^7.5.0",
