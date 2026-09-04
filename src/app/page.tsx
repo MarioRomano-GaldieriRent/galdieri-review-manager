@@ -276,9 +276,7 @@ export default async function HomePage({
       //
       // NB: qui NON si guarda l'email «ticket risolto» (segnale debole). Lo stato
       // VERO del ticket su Freshdesk lo si controlla più sotto, con una sweep.
-      .filter(
-        (r) => !pubblicate.has(r.chiave) && !r.haRisposta && !archiviateChiavi.has(r.chiave),
-      )
+      .filter((r) => !pubblicate.has(r.chiave) && !r.haRisposta && !archiviateChiavi.has(r.chiave))
       .map((r) => ({ r, regola: regolaPer(regole, r.stelle, haTesto(r)) }))
       // Occhio spento: solo le recensioni coperte da una regola ATTIVA (default).
       // Occhio acceso: TUTTE, anche quelle senza regola (regola === null).
@@ -354,7 +352,8 @@ export default async function HomePage({
         const tickets = await elencoTicketRecenti(6, forza);
         const nascoste = new Set<string>();
         if (resto.length > 0)
-          for (const c of await recensioniConTicketRisolto(resto, { forza, tickets })) nascoste.add(c);
+          for (const c of await recensioniConTicketRisolto(resto, { forza, tickets }))
+            nascoste.add(c);
         if (negativi.length > 0)
           for (const c of await recensioniConTicket(negativi, { forza, tickets })) nascoste.add(c);
         const prima = daApprovare.length;
@@ -373,7 +372,9 @@ export default async function HomePage({
         );
       }
     } else {
-      console.log(`[da-approvare] filtro Freshdesk saltato (Freshdesk configurato: ${fdOk}, in coda: ${daApprovare.length}).`);
+      console.log(
+        `[da-approvare] filtro Freshdesk saltato (Freshdesk configurato: ${fdOk}, in coda: ${daApprovare.length}).`,
+      );
     }
 
     // Precompila le PRONTE col testo recuperato dal customer care: nella card
@@ -463,36 +464,38 @@ export default async function HomePage({
 
       {/* -------------------------------------------------------------- tab */}
       <nav className="pub-tabs" aria-label="Fasi della pubblicazione">
-        <Link
-          href="/"
-          className={`pub-tab${step === "approvare" ? " is-active" : ""}`}
-          title="Recensioni coperte dalle regole attive, in attesa di una tua decisione"
-        >
-          Da approvare
-          {nApprovare !== null && <span className="chip-count">{nApprovare}</span>}
-        </Link>
-        <Link
-          href="/?step=attesa"
-          className={`pub-tab${step === "attesa" ? " is-active" : ""}`}
-          title="Recensioni negative inoltrate al customer care, in attesa della risposta"
-        >
-          In attesa
-          {nAttesa !== null && nAttesa > 0 && <span className="chip-count">{nAttesa}</span>}
-        </Link>
-        <Link
-          href="/?step=ricontrollo"
-          className={`pub-tab${step === "ricontrollo" ? " is-active" : ""}`}
-          title="Cronologia delle risposte pubblicate dal nostro sito"
-        >
-          Storico
-        </Link>
-        <Link
-          href="/?step=archiviati"
-          className={`pub-tab${step === "archiviati" ? " is-active" : ""}`}
-          title="Recensioni messe da parte (es. impossibili da gestire)"
-        >
-          Archiviati
-        </Link>
+        <div className="pub-tabs-scroll">
+          <Link
+            href="/"
+            className={`pub-tab${step === "approvare" ? " is-active" : ""}`}
+            title="Recensioni coperte dalle regole attive, in attesa di una tua decisione"
+          >
+            Da approvare
+            {nApprovare !== null && <span className="chip-count">{nApprovare}</span>}
+          </Link>
+          <Link
+            href="/?step=attesa"
+            className={`pub-tab${step === "attesa" ? " is-active" : ""}`}
+            title="Recensioni negative inoltrate al customer care, in attesa della risposta"
+          >
+            In attesa
+            {nAttesa !== null && nAttesa > 0 && <span className="chip-count">{nAttesa}</span>}
+          </Link>
+          <Link
+            href="/?step=ricontrollo"
+            className={`pub-tab${step === "ricontrollo" ? " is-active" : ""}`}
+            title="Cronologia delle risposte pubblicate dal nostro sito"
+          >
+            Storico
+          </Link>
+          <Link
+            href="/?step=archiviati"
+            className={`pub-tab${step === "archiviati" ? " is-active" : ""}`}
+            title="Recensioni messe da parte (es. impossibili da gestire)"
+          >
+            Archiviati
+          </Link>
+        </div>
         <Link
           href={
             step === "approvare"
@@ -603,7 +606,8 @@ export default async function HomePage({
                           )}
                         </div>
                         <div className="dash-meta">
-                          {dataConGiorno(new Date(r.ricevutaIl))} · {oraFmt.format(new Date(r.ricevutaIl))}
+                          {dataConGiorno(new Date(r.ricevutaIl))} ·{" "}
+                          {oraFmt.format(new Date(r.ricevutaIl))}
                           {r.sede ? ` · ${r.sede}` : ""}
                         </div>
                       </div>
@@ -672,8 +676,8 @@ export default async function HomePage({
                     // (apre il ticket); la risposta tornerà qui quando la rimanda.
                     <>
                       <p className="notice dash-senza-regola">
-                        Recensione negativa: inoltrala al customer care per aprire la
-                        lavorazione — la risposta tornerà qui quando arriva.
+                        Recensione negativa: inoltrala al customer care per aprire la lavorazione —
+                        la risposta tornerà qui quando arriva.
                       </p>
                       <div className="dash-azioni">
                         <form action={avviaEscalationAction} style={{ display: "contents" }}>
@@ -721,7 +725,6 @@ export default async function HomePage({
                       </div>
                     </>
                   )}
-
                 </article>
               );
             })
@@ -735,8 +738,8 @@ export default async function HomePage({
           <AutoAggiorna />
           {inAttesa.length === 0 ? (
             <section className="card dash-vuoto">
-              Nessuna recensione in attesa. Le negative inoltrate al customer care restano qui finché
-              non arriva la risposta, poi tornano da sole in «Da approvare» precompilate.
+              Nessuna recensione in attesa. Le negative inoltrate al customer care restano qui
+              finché non arriva la risposta, poi tornano da sole in «Da approvare» precompilate.
             </section>
           ) : (
             inAttesa.map((e) => (
@@ -751,7 +754,8 @@ export default async function HomePage({
                         <span className="review-name">{e.nomeCliente || "senza nome"}</span>
                       </div>
                       <div className="dash-meta">
-                        {dataConGiorno(new Date(e.ricevutaIl))} · {oraFmt.format(new Date(e.ricevutaIl))}
+                        {dataConGiorno(new Date(e.ricevutaIl))} ·{" "}
+                        {oraFmt.format(new Date(e.ricevutaIl))}
                         {e.sedeNome ? ` · ${e.sedeNome}` : ""}
                       </div>
                     </div>
@@ -764,8 +768,8 @@ export default async function HomePage({
                 {e.originale && <p className="review-comment">{e.originale}</p>}
 
                 <p className="notice">
-                  ⏳ Inoltrata al customer care il {dataConGiorno(new Date(e.inoltrataIl))} · in attesa
-                  della risposta.
+                  ⏳ Inoltrata al customer care il {dataConGiorno(new Date(e.inoltrataIl))} · in
+                  attesa della risposta.
                   {e.ticketId ? (
                     <>
                       {" · ticket "}
@@ -893,7 +897,8 @@ export default async function HomePage({
                     <Stelle n={r.stelle} />
                   </div>
                   <div className="dash-meta">
-                    {dataConGiorno(new Date(r.ricevutaIl))} · {oraFmt.format(new Date(r.ricevutaIl))}
+                    {dataConGiorno(new Date(r.ricevutaIl))} ·{" "}
+                    {oraFmt.format(new Date(r.ricevutaIl))}
                     {r.sede ? ` · ${r.sede}` : ""}
                   </div>
                   {testoRecensione(r) && <p className="review-comment">{testoRecensione(r)}</p>}

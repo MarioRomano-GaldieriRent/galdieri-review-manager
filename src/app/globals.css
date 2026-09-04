@@ -96,16 +96,8 @@ body {
   background: var(--bg);
   color: var(--text);
   font-family:
-    -apple-system,
-    BlinkMacSystemFont,
-    "SF Pro Text",
-    "SF Pro Display",
-    "Segoe UI",
-    Roboto,
-    system-ui,
-    "Helvetica Neue",
-    Arial,
-    sans-serif;
+    -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Segoe UI", Roboto,
+    system-ui, "Helvetica Neue", Arial, sans-serif;
   min-height: 100vh;
   line-height: 1.5;
   letter-spacing: -0.011em;
@@ -3272,4 +3264,196 @@ main.pipeline .pub-tabs {
 .sede-salvata {
   padding: 2px 10px;
   font-size: 0.8rem;
+}
+
+/* ===========================================================================
+   MOBILE — smartphone (≤ 640px)                               (audit 2026-09-04)
+   Un unico blocco per la resa su telefono. Il DESKTOP non cambia: tutte le
+   regole vivono qui dentro (più la sola riga .pub-tabs-scroll qui sotto, che a
+   desktop è trasparente al layout). Principio: il contenuto largo (tabelle,
+   diagrammi, righe di badge) scorre DENTRO il proprio box, non spinge la pagina.
+   =========================================================================== */
+
+/* Wrapper dei soli tab della home: display:contents ⇒ a desktop non esiste per
+   il layout (barra identica a prima); a mobile (sotto) diventa la pista scorrevole. */
+.pub-tabs-scroll {
+  display: contents;
+}
+
+@media (max-width: 640px) {
+  /* --- Paracadute anti-overflow di PAGINA. clip (non hidden): non crea uno
+         scroll container e non rompe la .app-header sticky. --- */
+  body {
+    overflow-x: clip;
+  }
+
+  /* --- Più larghezza utile: margini/padding più stretti sul telefono.
+         (login escluso: main.login-schermo e .login-box restano intatti). --- */
+  main:not(.login-schermo) {
+    padding: 24px 16px 64px;
+  }
+  .card:not(.login-box) {
+    padding: 16px;
+  }
+
+  /* --- Tap target ≥ 40px sulle icone tonde (header + barra tab). --- */
+  .theme-toggle {
+    width: 40px;
+    height: 40px;
+  }
+  .pub-aggiorna,
+  .pub-occhio {
+    min-width: 40px;
+    min-height: 40px;
+    margin-bottom: 0;
+  }
+  .btn-mini {
+    min-height: 40px;
+  }
+
+  /* --- Barra tab della home: i 4 tab scorrono in orizzontale, le icone
+         Aggiorna/occhio restano ancorate a destra (basta "Archiviati" orfano). --- */
+  .pub-tabs {
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: 4px;
+  }
+  .pub-tabs-scroll {
+    display: flex;
+    flex: 1 1 auto;
+    min-width: 0; /* indispensabile: senza, lo scroll non si attiva */
+    gap: 4px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .pub-tabs-scroll::-webkit-scrollbar {
+    display: none;
+  }
+  .pub-tab {
+    flex: 0 0 auto;
+    padding: 10px 12px;
+    margin-bottom: 0;
+  }
+  .pub-aggiorna,
+  .pub-occhio-form {
+    flex: 0 0 auto;
+  }
+  .pub-aggiorna {
+    margin-left: 0;
+  }
+
+  /* --- Automazioni: la card recensione non allarga più la griglia (era la
+         pastiglia sede `nowrap` a spingere la pagina a 473px). --- */
+  .review-card {
+    min-width: 0;
+  }
+  .review-head {
+    flex-wrap: wrap;
+    gap: 8px 12px;
+  }
+  .review-head-main {
+    flex: 1 1 100%;
+  }
+  .review-head .stars-badge {
+    flex: 0 0 auto;
+  }
+  .review-place {
+    white-space: normal;
+  }
+  .review-name,
+  .review-comment {
+    overflow-wrap: anywhere;
+  }
+  .review-foot .btn-mini {
+    padding: 8px 12px;
+  }
+
+  /* --- Tabelle: scorrono PULITE dentro i wrapper esistenti (overflow-x:auto),
+         invece di essere schiacciate e mozzate a destra. --- */
+  .utenti-tabella {
+    min-width: 680px;
+  }
+  .utenti-tabella th,
+  .utenti-tabella td {
+    white-space: nowrap;
+  }
+  .data-table-compatta {
+    min-width: 460px;
+  }
+  .data-table-compatta th,
+  .data-table-compatta td {
+    white-space: nowrap;
+  }
+  .table-wrap,
+  .utenti-tabella-wrap {
+    max-width: 100%;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* --- Impostazioni: colonna singola blindata (minmax 0, così un contenuto
+         largo non spinge la pagina) e nav di sezione che scorre. --- */
+  .pannello-corpo {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .pannello-menu,
+  .pannello-contenuto {
+    min-width: 0;
+  }
+  .pannello-menu {
+    scrollbar-width: thin;
+    -webkit-overflow-scrolling: touch;
+  }
+  .menu-voce {
+    min-height: 40px;
+  }
+
+  /* --- Modali / email / thread / paginazione. --- */
+  .modal-overlay {
+    padding: 10px;
+  }
+  .modal-chiudi {
+    min-width: 40px;
+    min-height: 40px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+    padding: 8px;
+    font-size: 1.25rem;
+  }
+  .modal-testa {
+    padding: 12px 14px;
+  }
+  .modal-meta {
+    padding: 10px 14px;
+  }
+  .thread-summary {
+    padding: 12px 14px;
+    gap: 4px 10px;
+    flex-wrap: wrap;
+  }
+  .thread-from {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .thread-preview {
+    flex-basis: 100%;
+    order: 3;
+  }
+  .thread-body {
+    padding: 14px 14px 16px;
+  }
+  .mail-meta-row {
+    gap: 4px 10px;
+  }
+  .mail-meta-row span:not(.mail-meta-label) {
+    overflow-wrap: anywhere;
+  }
+  .pagination {
+    flex-wrap: wrap;
+    gap: 10px;
+  }
 }
