@@ -133,6 +133,101 @@ function analizza(nome: string, voci: Voce[]) {
   }
 }
 
+/** Come apre la risposta: appellativo usato. */
+function apertura(r: string, italiano: boolean): string {
+  const t = r.trim();
+  if (italiano) {
+    if (/^gentile\s+(sig\.?\s*ra\b|signora\b)/i.test(t)) return "Gentile signora <cognome>";
+    if (/^gentile\s+(sig\.?\b|signor[e]?\b)/i.test(t)) return "Gentile signor <cognome>";
+    if (/^gentile\b/i.test(t)) return "Gentile <nome, senza appellativo>";
+    if (/^(buongiorno|buonasera|salve|ciao)\b/i.test(t)) return "saluto (Buongiorno/Salve…)";
+    return "nessun appellativo";
+  }
+  if (/^dear\s+(mrs|ms|miss)\b/i.test(t)) return "Dear Mrs <cognome>";
+  if (/^dear\s+mr\b/i.test(t)) return "Dear Mr <cognome>";
+  if (/^dear\b/i.test(t)) return "Dear <nome, senza appellativo>";
+  if (/^(hello|hi|good morning)\b/i.test(t)) return "saluto (Hello/Hi…)";
+  return "nessun appellativo";
+}
+
+/** Come chiude. */
+function chiusura(r: string): string {
+  const t = r.trim().replace(/\s+/g, " ");
+  if (/a presto[.!]?$/i.test(t)) return "A presto.";
+  if (/see you soon[.!]?$/i.test(t)) return "See you soon.";
+  if (/(cordiali saluti|un cordiale saluto)[.!]?$/i.test(t)) return "Cordiali saluti.";
+  if (/(best regards|kind regards|regards)[.!]?$/i.test(t)) return "Best regards.";
+  if (/(grazie|thank you|thanks)[.!]?$/i.test(t)) return "…grazie / thank you";
+  return "altro";
+}
+
+const percentile = (ordinati: number[], p: number) =>
+  ordinati.length === 0
+    ? 0
+    : ordinati[Math.min(ordinati.length - 1, Math.floor((ordinati.length - 1) * p))];
+
+/** Stile: quanto scrive e come apre/chiude. Serve a tarare il prompt dell'AI. */
+function analizzaStile(nome: string, voci: Voce[], italiano: boolean) {
+  if (voci.length === 0) return;
+  const lung = voci.map((v) => v.risposta.trim().length).sort((a, b) => a - b);
+  const media = Math.round(lung.reduce((s, n) => s + n, 0) / lung.length);
+
+  const fasce = { "≤80": 0, "81-120": 0, "121-160": 0, "161-200": 0, ">200": 0 };
+  for (const l of lung) {
+    if (l <= 80) fasce["≤80"]++;
+    else if (l <= 120) fasce["81-120"]++;
+    else if (l <= 160) fasce["121-160"]++;
+    else if (l <= 200) fasce["161-200"]++;
+    else fasce[">200"]++;
+  }
+
+  const ap = new Map<string, number>();
+  const ch = new Map<string, number>();
+  for (const v of voci) {
+    const a = apertura(v.risposta, italiano);
+    ap.set(a, (ap.get(a) ?? 0) + 1);
+    const c = chiusura(v.risposta);
+    ch.set(c, (ch.get(c) ?? 0) + 1);
+  }
+
+  // Nomi "ambigui": una sola parola (niente cognome) — è il caso in cui l'AI
+  // non sa dedurre il genere. Cosa fa Stefania in quei casi?
+  const ambigui = voci.filter((v) => v.nomeCliente.trim().split(/\s+/).length === 1);
+  const apAmbigui = new Map<string, number>();
+  for (const v of ambigui) {
+    const a = apertura(v.risposta, italiano);
+    apAmbigui.set(a, (apAmbigui.get(a) ?? 0) + 1);
+  }
+
+  console.log(`\n${"=".repeat(78)}`);
+  console.log(`STILE · ${nome}  —  ${voci.length} risposte di Stefania`);
+  console.log("=".repeat(78));
+  console.log(
+    `Lunghezza (caratteri): mediana ${percentile(lung, 0.5)} · media ${media} · ` +
+      `p25 ${percentile(lung, 0.25)} · p75 ${percentile(lung, 0.75)} · p90 ${percentile(lung, 0.9)} · max ${lung[lung.length - 1]}`,
+  );
+  console.log(
+    "  " +
+      Object.entries(fasce)
+        .map(([k, n]) => `${k}: ${pct(n, voci.length)}`)
+        .join("  ·  "),
+  );
+  console.log("Apertura:");
+  for (const [k, n] of [...ap.entries()].sort((a, b) => b[1] - a[1]))
+    console.log(`  ${String(n).padStart(5)}  ${pct(n, voci.length).padStart(4)}  ${k}`);
+  console.log("Chiusura:");
+  for (const [k, n] of [...ch.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5))
+    console.log(`  ${String(n).padStart(5)}  ${pct(n, voci.length).padStart(4)}  ${k}`);
+  console.log(`Nomi di UNA sola parola (genere non deducibile): ${ambigui.length}`);
+  for (const [k, n] of [...apAmbigui.entries()].sort((a, b) => b[1] - a[1]))
+    console.log(`  ${String(n).padStart(5)}  ${pct(n, ambigui.length).padStart(4)}  ${k}`);
+  if (ambigui.length > 0) {
+    console.log("  esempi:");
+    for (const v of ambigui.slice(0, 4))
+      console.log(`     «${v.nomeCliente}» → ${taglia(v.risposta, 90)}`);
+  }
+}
+
 async function main() {
   const { coll } = await import("@/server/db/connessione");
   const c = await coll("memoria_esempi");
@@ -153,6 +248,13 @@ async function main() {
       const voci = soloStefania.filter((v) => v.tipo === tipo && v.lingua === lingua);
       if (voci.length >= 5) analizza(`${tipo} · ${lingua}`, voci);
     }
+  }
+
+  // Stile delle positive con commento: è su queste che l'AI deve tarare
+  // lunghezza, apertura e chiusura.
+  for (const lingua of ["it", "en"]) {
+    const voci = soloStefania.filter((v) => v.tipo === "positiva-con-testo" && v.lingua === lingua);
+    analizzaStile(`positiva-con-testo · ${lingua}`, voci, lingua === "it");
   }
 
   process.exit(0);
