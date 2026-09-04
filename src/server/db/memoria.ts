@@ -330,10 +330,13 @@ export async function esempiPerContesto(opts: {
   tipo?: TipoEsempio;
   lingua?: LinguaEsempio;
   limite: number;
+  /** Chiavi da NON usare come esempio (es. la recensione stessa, in un banco di prova). */
+  escludi?: string[];
 }): Promise<Esempio[]> {
   const q: Document = { eliminata: false, attivo: true };
   if (opts.tipo) q.tipo = opts.tipo;
   if (opts.lingua) q.lingua = opts.lingua;
+  if (opts.escludi?.length) q._id = { $nin: opts.escludi };
   const righe = await (await esempi()).find(q).sort({ inviataIl: -1 }).limit(opts.limite).toArray();
   return righe.map(componiEsempio);
 }

@@ -55,9 +55,12 @@
     "diag:risposta": "tsx --tsconfig tsconfig.json scripts/diag-risposta.ts",
     "esc": "tsx --tsconfig tsconfig.json scripts/esc.ts",
     "analizza:casella": "tsx --tsconfig tsconfig.json scripts/analizza-casella.ts",
-    "memoria:importa": "tsx --tsconfig tsconfig.json scripts/memoria-importa.ts"
+    "memoria:importa": "tsx --tsconfig tsconfig.json scripts/memoria-importa.ts",
+    "memoria:analisi": "tsx --tsconfig tsconfig.json scripts/memoria-analisi.ts",
+    "ai:prova": "tsx --tsconfig tsconfig.json scripts/ai-prova.ts"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.123.0",
     "mongodb": "^7.5.0",
     "next": "^15.1.0",
     "react": "^19.0.0",
