@@ -3266,6 +3266,60 @@ main.pipeline .pub-tabs {
   font-size: 0.8rem;
 }
 
+/* ---------- Proposta scritta dall'AI (box della card) ---------- */
+.ai-testa {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.ai-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-soft);
+}
+
+.ai-badge-carica {
+  color: var(--g-blue-dark);
+}
+
+.ai-badge-ko {
+  color: var(--brand-red);
+}
+
+/* Rotellina del "sto scrivendo la proposta". */
+.ai-spinner {
+  width: 13px;
+  height: 13px;
+  border: 2px solid var(--border);
+  border-top-color: var(--g-blue);
+  border-radius: 50%;
+  animation: ai-gira 0.7s linear infinite;
+}
+
+@keyframes ai-gira {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ai-spinner {
+    animation: none;
+  }
+}
+
+/* Mentre la proposta arriva il box resta visibile ma spento: si capisce che
+   qualcosa sta arrivando, senza che la card "salti". */
+.dash-testo[aria-busy="true"] {
+  opacity: 0.55;
+}
+
 /* ---------- Memoria: contesto (blocchi) + esempi di risposta ---------- */
 .memoria-riepilogo {
   display: flex;

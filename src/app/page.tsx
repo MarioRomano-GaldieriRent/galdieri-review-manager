@@ -38,6 +38,8 @@ import {
   type RecensioneArchiviata,
 } from "@/server/db/recensioni";
 import { VediMail } from "./VediMail";
+import { CampoRispostaAI } from "./CampoRispostaAI";
+import { suggerimentiPer } from "@/server/db/suggerimenti";
 import { AutoAggiorna } from "./AutoAggiorna";
 import { AnteprimaFlusso } from "./AnteprimaFlusso";
 import { PassoAnteprima } from "./_ui/automazioni";
@@ -225,6 +227,8 @@ export default async function HomePage({
   let erroreGraph: string | null = null;
   let daApprovare: { r: Recensione; regola: Regola | null; rispostaPronta?: string | null }[] = [];
   let nApprovare: number | null = null;
+  /** Proposte AI già salvate, per chiave recensione (le mancanti se le chiede la card). */
+  let suggeritiAI = new Map<string, { testo: string }>();
   let runAperta: ReturnType<typeof trovaRun> = undefined;
   let archiviate: RecensioneArchiviata[] = [];
   let inAttesa: Escalation[] = [];
@@ -288,6 +292,7 @@ export default async function HomePage({
     // (risposta arrivata) RESTANO, precompilate col testo, e SALTANO i filtri
     // Freshdesk (devono comparire per essere pubblicate). Tutto best-effort.
     let prontaMap = new Map<string, string | null>();
+    // Riempita più sotto: proposte AI già salvate, per chiave recensione.
     if (graphOk) {
       try {
         await aggiornaAttese();
@@ -396,6 +401,20 @@ export default async function HomePage({
       });
     }
     nApprovare = daApprovare.length;
+
+    // Proposte AI GIÀ generate per le positive con commento: una sola query, e
+    // la card parte col box pieno. Quelle che mancano se le chiede il campo da
+    // solo, a pagina già visibile (vedi CampoRispostaAI).
+    const chiaviAI = daApprovare
+      .filter((x) => (x.r.stelle ?? 0) >= 4 && (x.r.originale || "").trim() && !x.rispostaPronta)
+      .map((x) => x.r.chiave);
+    if (chiaviAI.length > 0) {
+      try {
+        suggeritiAI = await suggerimentiPer(chiaviAI);
+      } catch (e) {
+        console.warn("[ai] lettura suggerimenti non riuscita:", e);
+      }
+    }
 
     runAperta = sp.run ? trovaRun(esecuzioni, sp.run) : undefined;
   }
@@ -581,6 +600,15 @@ export default async function HomePage({
               const mostraOriginale = Boolean(
                 r.originale && !r.giaItaliano && r.originale !== testo,
               );
+              // La proposta la scrive l'AI SOLO sulle positive con commento: le
+              // 5★ senza testo hanno «Grazie.» di default e le negative passano
+              // dal customer care (e lì il box porta la risposta di Cherubina).
+              const conAI =
+                Boolean(suggerito) &&
+                !rispostaPronta &&
+                (r.stelle ?? 0) >= 4 &&
+                Boolean((r.originale || "").trim());
+              const suggerimentoAI = conAI ? suggeritiAI.get(r.chiave) : undefined;
 
               return (
                 <article key={r.chiave} className="card dash-card">
@@ -648,14 +676,28 @@ export default async function HomePage({
                       <input type="hidden" name="chiave" value={r.chiave} />
                       <input type="hidden" name="label" value={label?.id ?? ""} />
                       <input type="hidden" name="azioneId" value={nodo!.id} />
-                      <input type="hidden" name="testoOriginale" value={suggerito.testo} />
-                      <textarea
-                        name="testo"
-                        className="dash-testo"
-                        rows={suggerito.testo.length > 120 ? 4 : 2}
-                        defaultValue={suggerito.testo}
-                        aria-label="Testo della risposta"
-                      />
+                      {conAI ? (
+                        // Positiva CON commento: la proposta la scrive l'AI sugli
+                        // esempi veri di Stefania (pannello Memoria). Il campo si
+                        // carica da solo a pagina già visibile e porta con sé il
+                        // suo testoOriginale.
+                        <CampoRispostaAI
+                          chiave={r.chiave}
+                          iniziale={suggerimentoAI?.testo ?? null}
+                          ripiego={suggerito.testo}
+                        />
+                      ) : (
+                        <>
+                          <input type="hidden" name="testoOriginale" value={suggerito.testo} />
+                          <textarea
+                            name="testo"
+                            className="dash-testo"
+                            rows={suggerito.testo.length > 120 ? 4 : 2}
+                            defaultValue={suggerito.testo}
+                            aria-label="Testo della risposta"
+                          />
+                        </>
+                      )}
                       <div className="dash-azioni">
                         <BottoneRispondi />
                         <AnteprimaFlusso titolo={`Cosa farà su «${r.nome || "questa recensione"}»`}>

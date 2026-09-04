@@ -122,7 +122,7 @@ function bloccoEsempi(esempi: Esempio[], italiano: boolean): string {
  */
 export async function generaRispostaSuggerita(
   r: RecensioneDaRispondere,
-  opts: { escludiEsempio?: string } = {},
+  opts: { escludiEsempio?: string; evita?: string } = {},
 ): Promise<Suggerimento> {
   const commento = (r.commento ?? "").trim();
   if (!commento) throw new Error("Nessun commento: per una recensione senza testo vale «Grazie.».");
@@ -151,9 +151,17 @@ export async function generaRispostaSuggerita(
     .join("\n\n");
 
   const stelle = r.stelle ? `${r.stelle}` : "—";
-  const utente = italiano
+  let utente = italiano
     ? `Recensione a cui rispondere:\nCliente: ${r.nome || "(senza nome)"}\nSede: ${r.sede || "(non indicata)"}\nPunteggio: ${stelle}/5\nCommento: «${commento}»`
     : `Review to reply to:\nCustomer: ${r.nome || "(no name)"}\nBranch: ${r.sede || "(not specified)"}\nRating: ${stelle}/5\nComment: «${commento}»`;
+
+  // «Rigenera»: senza questa nota il modello, a parità di richiesta, riproporrebbe
+  // quasi sempre la stessa frase e il pulsante sembrerebbe non funzionare.
+  if (opts.evita?.trim()) {
+    utente += italiano
+      ? `\n\nAvevamo già proposto questa risposta:\n«${opts.evita.trim()}»\nScrivine una DIVERSA: cambia la frase centrale (un altro aspetto da riprendere, o un altro modo di dirlo). Apertura e chiusura restano quelle di sempre.`
+      : `\n\nWe already proposed this reply:\n«${opts.evita.trim()}»\nWrite a DIFFERENT one: change the middle sentence (another aspect to pick up, or another way to say it). Keep the usual greeting and closing.`;
+  }
 
   const modello = modelloClaude();
   const risposta = await claude().messages.create({

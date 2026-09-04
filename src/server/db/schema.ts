@@ -614,6 +614,32 @@ export const COLLEZIONI: DefColl[] = [
   },
 
   {
+    // Risposte SUGGERITE dall'AI, salvate per recensione (_id = chiave della
+    // recensione). Si generano una volta sola: al ricarico della home il testo
+    // è già qui, quindi la pagina è immediata e non si ripaga la stessa
+    // recensione due volte. È solo una PROPOSTA: la pubblicazione resta un
+    // gesto umano.
+    nome: "ai_suggerimenti",
+    validator: {
+      $jsonSchema: {
+        bsonType: "object",
+        additionalProperties: false,
+        required: ["_id", "testo", "lingua", "modello", "esempiUsati", "generatoIl"],
+        properties: {
+          _id: { bsonType: "string", minLength: 1 },
+          testo: { bsonType: "string", minLength: 1 },
+          lingua: { enum: ["it", "en"] },
+          modello: stringa,
+          esempiUsati: { bsonType: "int", minimum: 0 },
+          costo: { bsonType: ["double", "int", "null"] },
+          generatoIl: { bsonType: "date" },
+        },
+      },
+    },
+    indici: [{ key: { generatoIl: -1 }, name: "i_ai_suggerimenti_data" }],
+  },
+
+  {
     // MEMORIA — i blocchi di CONTESTO per rispondere (chi siamo, tono, regole):
     // testo libero curato dall'admin, ciascuno accendibile/spegnibile.
     nome: "memoria_contesto",
