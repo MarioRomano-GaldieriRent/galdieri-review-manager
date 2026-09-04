@@ -545,6 +545,98 @@ export const COLLEZIONI: DefColl[] = [
   },
 
   {
+    // MEMORIA — gli ESEMPI reali per la generazione delle risposte: ogni
+    // risposta scritta da Stefania (email inviata) con la recensione a cui
+    // rispondeva. Un documento per email inviata (_id = id del messaggio).
+    //   attivo    — fa parte del contesto che verrà mostrato al modello
+    //   eliminata — tolta dal pannello (soft delete: una re-importazione NON la
+    //               fa risorgere, perché il documento esiste già)
+    //   origine   — "customer-care" quando il testo era di Cherubina e Stefania
+    //               l'ha solo rimandato (negative): nasce già escluso
+    nome: "memoria_esempi",
+    validator: {
+      $jsonSchema: {
+        bsonType: "object",
+        additionalProperties: false,
+        required: [
+          "_id",
+          "conversationId",
+          "tipo",
+          "lingua",
+          "sedeNome",
+          "nomeCliente",
+          "commento",
+          "risposta",
+          "inviataIl",
+          "origine",
+          "attivo",
+          "eliminata",
+          "nota",
+          "importataIl",
+          "creataIl",
+          "aggiornataIl",
+        ],
+        properties: {
+          _id: { bsonType: "string", minLength: 1 },
+          conversationId: stringaOFalsa,
+          tipo: {
+            enum: [
+              "positiva-con-testo",
+              "positiva-senza-testo",
+              "neutra",
+              "negativa",
+              "senza-recensione",
+            ],
+          },
+          stelle: { bsonType: ["int", "null"], minimum: 1, maximum: 5 },
+          lingua: { enum: ["it", "en", "altro"] },
+          sedeNome: stringaOFalsa,
+          nomeCliente: stringaOFalsa,
+          commento: stringaOFalsa,
+          risposta: { bsonType: "string", minLength: 1 },
+          inviataIl: { bsonType: "date" },
+          origine: { enum: ["stefania", "customer-care"] },
+          attivo: boolo,
+          eliminata: boolo,
+          nota: stringaOFalsa,
+          importataIl: { bsonType: "date" },
+          creataIl: { bsonType: "date" },
+          aggiornataIl: { bsonType: "date" },
+        },
+      },
+    },
+    indici: [
+      { key: { tipo: 1, lingua: 1, inviataIl: -1 }, name: "i_memoria_esempi_gruppo" },
+      { key: { eliminata: 1, attivo: 1, inviataIl: -1 }, name: "i_memoria_esempi_attivi" },
+      { key: { conversationId: 1 }, name: "i_memoria_esempi_conv" },
+      { key: { sedeNome: 1 }, name: "i_memoria_esempi_sede" },
+    ],
+  },
+
+  {
+    // MEMORIA — i blocchi di CONTESTO per rispondere (chi siamo, tono, regole):
+    // testo libero curato dall'admin, ciascuno accendibile/spegnibile.
+    nome: "memoria_contesto",
+    validator: {
+      $jsonSchema: {
+        bsonType: "object",
+        additionalProperties: false,
+        required: ["_id", "titolo", "testo", "attivo", "ordine", "creataIl", "aggiornataIl"],
+        properties: {
+          _id: { bsonType: "string", minLength: 1 },
+          titolo: { bsonType: "string", minLength: 1 },
+          testo: stringaOFalsa,
+          attivo: boolo,
+          ordine: { bsonType: "int" },
+          creataIl: { bsonType: "date" },
+          aggiornataIl: { bsonType: "date" },
+        },
+      },
+    },
+    indici: [{ key: { ordine: 1 }, name: "i_memoria_contesto_ordine" }],
+  },
+
+  {
     nome: "impostazioni",
     validator: {
       $and: [
@@ -554,7 +646,10 @@ export const COLLEZIONI: DefColl[] = [
         // e riallineato a ogni avvio.
         {
           $expr: {
-            $eq: [{ $size: { $setIntersection: [{ $ifNull: ["$valori.chiave", []] }, SEGRETI] } }, 0],
+            $eq: [
+              { $size: { $setIntersection: [{ $ifNull: ["$valori.chiave", []] }, SEGRETI] } },
+              0,
+            ],
           },
         },
         {
@@ -935,20 +1030,18 @@ export async function applicaSchema(d: Db): Promise<void> {
   // esistenti i campi del secondo fattore (il validatore non li prevede più) e
   // chiude le sessioni rimaste "in attesa del secondo fattore" (stato non più
   // valido). Idempotente: su documenti già puliti non fa nulla.
-  await d
-    .collection("credenziali")
-    .updateMany(
-      {},
-      {
-        $unset: {
-          totpCifrato: "",
-          totpAttivo: "",
-          codiciRecupero: "",
-          tentativiTotp: "",
-          ultimoPassoTotp: "",
-        },
+  await d.collection("credenziali").updateMany(
+    {},
+    {
+      $unset: {
+        totpCifrato: "",
+        totpAttivo: "",
+        codiciRecupero: "",
+        tentativiTotp: "",
+        ultimoPassoTotp: "",
       },
-    );
+    },
+  );
   await d.collection("sessioni").deleteMany({ statoAutenticazione: { $ne: "completa" } });
 
   for (const v of VISTE) {

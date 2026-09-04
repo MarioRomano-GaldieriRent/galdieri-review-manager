@@ -3266,6 +3266,143 @@ main.pipeline .pub-tabs {
   font-size: 0.8rem;
 }
 
+/* ---------- Memoria: contesto (blocchi) + esempi di risposta ---------- */
+.memoria-riepilogo {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  margin: 0 0 14px;
+  color: var(--text-soft);
+  font-size: 0.9rem;
+}
+.memoria-riepilogo b {
+  color: var(--text);
+}
+
+.memoria-blocco {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  margin-bottom: 12px;
+}
+.memoria-blocco.is-off {
+  opacity: 0.6;
+}
+.memoria-blocco textarea,
+.memoria-nuovo textarea {
+  width: 100%;
+  resize: vertical;
+  font: inherit;
+  line-height: 1.5;
+}
+.memoria-nuovo {
+  margin-top: 6px;
+}
+.memoria-nuovo summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--g-blue-dark);
+  padding: 6px 0;
+}
+
+.memoria-azioni {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+.memoria-azioni form {
+  display: inline;
+}
+
+.memoria-filtri {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 8px 10px;
+  margin: 0 0 14px;
+}
+.memoria-filtri label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.78rem;
+  color: var(--text-soft);
+}
+.memoria-filtri input,
+.memoria-filtri select {
+  min-width: 130px;
+}
+
+.memoria-gruppo {
+  border-top: 1px solid var(--border);
+  padding: 12px 0;
+}
+.memoria-gruppo-testa {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+}
+.memoria-gruppo-testa h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+.memoria-gruppo-desc {
+  margin: 4px 0 6px;
+}
+.memoria-sottogruppo {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  padding: 6px 0 6px 14px;
+  font-size: 0.92rem;
+}
+.memoria-sottogruppo form {
+  display: inline;
+}
+
+.memoria-voce {
+  border-top: 1px solid var(--border);
+  padding: 14px 0;
+}
+.memoria-voce.is-off {
+  opacity: 0.55;
+}
+.memoria-testa {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  margin-bottom: 8px;
+}
+.memoria-commento {
+  margin: 0 0 8px;
+  color: var(--text-soft);
+  white-space: pre-wrap;
+  font-size: 0.92rem;
+  line-height: 1.5;
+}
+.memoria-risposta {
+  margin: 0;
+  padding: 10px 12px;
+  background: var(--accent-soft);
+  border-left: 3px solid var(--g-blue);
+  border-radius: 0 8px 8px 0;
+  white-space: pre-wrap;
+  font-size: 0.95rem;
+  line-height: 1.55;
+}
+.memoria-pagine {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 14px;
+}
+
 /* ===========================================================================
    MOBILE — smartphone (≤ 640px)                               (audit 2026-09-04)
    Un unico blocco per la resa su telefono. Il DESKTOP non cambia: tutte le

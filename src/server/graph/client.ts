@@ -329,6 +329,91 @@ export async function searchMessages(opts: {
   );
 }
 
+/**
+ * Scorre una cartella (Posta in arrivo o Posta inviata) dalla più recente
+ * all'indietro fino a `since`, col corpo, e passa OGNI messaggio (filtrato per
+ * oggetto) a `onMessage` — in streaming, senza tenere in memoria migliaia di
+ * corpi HTML. Serve alle importazioni lunghe (es. la Memoria: un anno di
+ * risposte inviate). Come in searchMessages, $filter non si combina con
+ * $orderby per data: si filtra lato applicazione.
+ */
+export async function forEachMessageInFolder(
+  opts: {
+    folder: "Inbox" | "SentItems";
+    since: Date;
+    subjectContains?: string;
+    mailbox?: string;
+    maxPages?: number;
+    onPage?: (info: { pagina: number; letti: number; tenuti: number; ultimaData: string }) => void;
+  },
+  onMessage: (m: MailDetail) => Promise<void> | void,
+): Promise<{ pagine: number; letti: number; tenuti: number; raggiuntoTaglio: boolean }> {
+  const { fetchGraph } = await ctx(opts.mailbox);
+  const oggetto = (opts.subjectContains ?? "").trim().toLowerCase();
+  const maxPages = opts.maxPages ?? 150;
+  const sinceMs = opts.since.getTime();
+
+  const params = new URLSearchParams({
+    $orderby: "receivedDateTime desc",
+    $select: DETAIL_FIELDS,
+    $top: "100",
+  });
+  let path: string | null = `/mailFolders/${opts.folder}/messages?${params}`;
+
+  let pagine = 0;
+  let letti = 0;
+  let tenuti = 0;
+  let raggiuntoTaglio = false;
+
+  type Pagina = {
+    value?: GraphMessage[];
+    "@odata.nextLink"?: string;
+    error?: { message?: string };
+  };
+
+  while (path && pagine < maxPages && !raggiuntoTaglio) {
+    // Un 429/5xx passeggero non deve far morire un'importazione di 70 pagine.
+    let json: Pagina | null = null;
+    for (let tentativo = 0; tentativo < 3 && !json; tentativo++) {
+      const res = await fetchGraph(path);
+      if (res.ok) {
+        json = (await res.json()) as Pagina;
+        break;
+      }
+      if (res.status === 429 || res.status >= 500) {
+        const attesa = Math.min(Number(res.headers.get("retry-after")) || 2, 10);
+        await new Promise((ok) => setTimeout(ok, attesa * 1000));
+        continue;
+      }
+      const err = (await res.json().catch(() => ({}))) as Pagina;
+      throw new Error(`Graph ${res.status}: ${err.error?.message ?? "lettura non riuscita"}`);
+    }
+    if (!json) throw new Error("Graph: errore persistente durante la scansione della cartella");
+
+    pagine++;
+    let ultimaData = "";
+    for (const g of json.value ?? []) {
+      letti++;
+      ultimaData = g.receivedDateTime;
+      if (new Date(g.receivedDateTime).getTime() < sinceMs) {
+        raggiuntoTaglio = true;
+        break;
+      }
+      const m = toDetail(g);
+      if (oggetto && !m.subject.toLowerCase().includes(oggetto)) continue;
+      tenuti++;
+      await onMessage(m);
+    }
+    opts.onPage?.({ pagina: pagine, letti, tenuti, ultimaData });
+
+    const next = json["@odata.nextLink"];
+    const i = next ? next.indexOf("/mailFolders") : -1;
+    path = i >= 0 ? next!.substring(i) : null;
+  }
+
+  return { pagine, letti, tenuti, raggiuntoTaglio };
+}
+
 /** Segna un messaggio come letto o non letto (richiede Mail.ReadWrite). */
 export async function setReadState(id: string, isRead: boolean, mailbox?: string): Promise<void> {
   const { fetchGraph } = await ctx(mailbox);

@@ -41,6 +41,7 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
       ? [
           { href: "/impostazioni", label: "Impostazioni" },
           { href: "/automazioni", label: "Automazioni" },
+          { href: "/memoria", label: "Memoria" },
         ]
       : [];
 
