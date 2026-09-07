@@ -44,10 +44,16 @@ export async function provaCodaIgnoraAction(chiave: string): Promise<EsitoRobot>
     };
   }
 
-  return avviaRobotConEsito({
-    azione: "prova-coda",
-    nome: r.nome,
-    testo: TESTO_PROVA,
-    nomeGoogle,
-  });
+  // Attesa più larga del solito: la coda può richiedere decine di «Ignora».
+  // Il robot ha una scadenza INTERNA più corta (200 s), così torna da sé col
+  // passo-passo invece di far scadere questa attesa senza dire niente.
+  return avviaRobotConEsito(
+    {
+      azione: "prova-coda",
+      nome: r.nome,
+      testo: TESTO_PROVA,
+      nomeGoogle,
+    },
+    { attesaMs: 240_000 },
+  );
 }

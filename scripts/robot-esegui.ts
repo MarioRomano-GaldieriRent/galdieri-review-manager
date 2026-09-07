@@ -55,7 +55,20 @@ function esito(o: Record<string, unknown>): void {
   console.log("__ESITO__ " + JSON.stringify(o));
 }
 
-const traccia = (m: string) => console.error("   " + m);
+/**
+ * Ogni rigo di traccia va su stderr (per chi guarda il terminale) E in questo
+ * elenco, che finisce nel campo `log` dell'esito: senza di questo i passi
+ * fatti PRIMA della coda (apertura della sede) si perdevano, e sulla card non
+ * si vedeva niente su cui ragionare.
+ */
+const diario: string[] = [];
+const traccia = (m: string) => {
+  diario.push(m);
+  console.error("   " + m);
+};
+
+/** Momento in cui questo processo è partito: serve per la scadenza interna. */
+const AVVIO = Date.now();
 
 (async () => {
   const job = leggiJob();
@@ -95,16 +108,23 @@ const traccia = (m: string) => console.error("   " + m);
           ok: false,
           stato: "sede-non-mappata",
           messaggio: "Questa sede non è mappata su Google (Impostazioni → Mapping): serve il nome esatto dell'attività per aprirla direttamente.",
+          log: diario,
         });
         return;
       }
       traccia(`[prova-coda] apro la sede «${job.nomeGoogle}»…`);
       const sede = await apriSedePerNome(page0, job.nomeGoogle, { log: traccia });
-      if (!sede.aperta || !sede.root) {
-        esito({ ok: false, stato: "sede-non-aperta", messaggio: sede.dettaglio });
-        return;
-      }
-      const prova = await provaCodaIgnora(sede.root, job.nome, job.testo, { log: traccia });
+      traccia(`sede: ${sede.dettaglio}`);
+      // NIENTE cancello su sede.aperta: quel controllo conta i «Rispondi» della
+      // LISTA, che alla coda non servono — bloccava la prova prima di provarla.
+      // Basta avere un contesto DOM da cui partire.
+      const radice = sede.root ?? page0;
+      const prova = await provaCodaIgnora(radice, job.nome, job.testo, {
+        log: traccia,
+        // Si torna con l'esito PRIMA che chi aspetta vada in timeout muto:
+        // meglio un passo-passo leggibile che «ci sta mettendo troppo».
+        scadenza: AVVIO + 200_000,
+      });
       await page0
         .screenshot({ path: path.join(SCREENSHOT_DIR, "esegui-prova-coda.png") })
         .catch(() => {});
@@ -114,7 +134,9 @@ const traccia = (m: string) => console.error("   " + m);
         trovata: prova.trovata,
         scritto: prova.scritto,
         messaggio: prova.dettaglio,
-        log: prova.passi,
+        // TUTTI i passi: prima l'apertura della sede, poi la coda. Prima
+        // arrivavano solo quelli della coda e mancava metà della storia.
+        log: [...diario],
       });
       return;
     }

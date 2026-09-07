@@ -117,6 +117,19 @@ export function avviaRobotConEsito(
       }
     };
 
+    /**
+     * I righi di traccia che il robot stampa su stderr ("   …"). Servono per
+     * mostrare i passi ANCHE quando l'esito non arriva mai (tempo scaduto,
+     * processo morto): prima in quei casi la card restava senza niente da
+     * leggere e ogni tentativo sembrava identico al precedente.
+     */
+    const diario = (): string[] =>
+      out
+        .split(/\r?\n/)
+        .filter((r) => /^ {3}\S/.test(r))
+        .map((r) => r.slice(3))
+        .slice(-60);
+
     const finisci = (e: EsitoRobot) => {
       if (risolto) return;
       risolto = true;
@@ -157,6 +170,7 @@ export function avviaRobotConEsito(
         ok: false,
         stato: "senza-esito",
         messaggio: out.trim().slice(-240) || "Il robot è terminato senza dare un esito.",
+        log: diario(),
       }),
     );
 
@@ -166,7 +180,8 @@ export function avviaRobotConEsito(
           ok: false,
           stato: "attesa",
           messaggio:
-            "Il robot ci sta mettendo più del previsto. La finestra potrebbe essersi aperta lo stesso sul server: controllala.",
+            "Il robot ci sta mettendo più del previsto: qui sotto ci sono i passi fatti fino a ora. La finestra potrebbe essere ancora aperta sul server.",
+          log: diario(),
         }),
       attesaMs,
     );
