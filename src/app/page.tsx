@@ -295,7 +295,15 @@ export default async function HomePage({
   const label = settings.labels[0] ?? null;
   let graphOk = true;
   let erroreGraph: string | null = null;
-  let daApprovare: { r: Recensione; regola: Regola | null; rispostaPronta?: string | null }[] = [];
+  let daApprovare: {
+    r: Recensione;
+    regola: Regola | null;
+    rispostaPronta?: string | null;
+    /** Se la risposta è tornata «pronta» dal customer care: quando è tornata,
+     * da usare SOLO per ordinare la lista — non tocca né sostituisce la data
+     * di ricezione vera (r.ricevutaIl), che resta intatta. */
+    dataOrdinamento?: string;
+  }[] = [];
   /** Le sole card della pagina corrente: quelle che si renderizzano davvero. */
   let visibili: typeof daApprovare = [];
   let numeroPagina = 1;
@@ -392,13 +400,18 @@ export default async function HomePage({
     // dalla lista → vanno nel tab «In attesa». Le PRONTE (risposta arrivata)
     // RESTANO, precompilate col testo, e SALTANO i filtri Freshdesk (devono
     // comparire per essere pubblicate). Tutto best-effort.
-    let prontaMap = new Map<string, string | null>();
+    let prontaMap = new Map<string, { testo: string | null; aggiornataIl: string }>();
     await pAttese;
     try {
       const [attese, pronte] = await Promise.all([elencoInAttesa(), elencoPronte()]);
       nAttesa = attese.length;
       const attesaSet = new Set(attese.map((e) => e.chiave));
-      prontaMap = new Map(pronte.map((p) => [p.chiave, p.rispostaTesto]));
+      prontaMap = new Map(
+        pronte.map((p) => [
+          p.chiave,
+          { testo: p.rispostaTesto, aggiornataIl: p.rispostaTrovataIl ?? p.aggiornataIl },
+        ]),
+      );
       daApprovare = daApprovare.filter((x) => !attesaSet.has(x.r.chiave));
     } catch (e) {
       console.warn("[attese] lettura saltata:", e instanceof Error ? e.message : e);
@@ -489,22 +502,38 @@ export default async function HomePage({
     }
 
     // Precompila le PRONTE col testo recuperato dal customer care: nella card
-    // comparirà il box già pieno, pronto da pubblicare su Google.
+    // comparirà il box già pieno, pronto da pubblicare su Google. Porta anche
+    // la data in cui la risposta è arrivata: serve solo per l'ordinamento qui
+    // sotto, non tocca r.ricevutaIl (che resta la data vera di arrivo).
     if (prontaMap.size > 0) {
-      daApprovare = daApprovare.map((x) =>
-        prontaMap.has(x.r.chiave) ? { ...x, rispostaPronta: prontaMap.get(x.r.chiave) } : x,
-      );
+      daApprovare = daApprovare.map((x) => {
+        const p = prontaMap.get(x.r.chiave);
+        return p ? { ...x, rispostaPronta: p.testo, dataOrdinamento: p.aggiornataIl } : x;
+      });
     }
 
+    // La data su cui ordinare: per una recensione tornata «pronta» dal
+    // customer care conta QUANDO è tornata, non quando è arrivata in origine
+    // — altrimenti resterebbe sepolta fra recensioni più vecchie di lei, pur
+    // essendo di nuovo da lavorare oggi. Nessun dato si perde: è solo la
+    // CHIAVE DI ORDINAMENTO a cambiare, non r.ricevutaIl né altro sulla scheda.
+    const dataOrdine = (x: (typeof daApprovare)[number]) =>
+      new Date(x.dataOrdinamento ?? x.r.ricevutaIl).getTime();
+
     // Con l'occhio acceso: ordine per stelle crescente (1★ … 5★, senza voto in
-    // fondo) e, a parità, dalla più recente. Spento resta l'ordine per data.
+    // fondo) e, a parità, per data di ordinamento (dalla più recente). Spento:
+    // stesso criterio ma senza raggruppare per stelle — la query Mongo arriva
+    // già ordinata per ricevutaIl, ma da sola non basta più: una «pronta» deve
+    // scavalcare recensioni ricevute dopo di lei ma rimaste ferme.
     if (tutte) {
       daApprovare.sort((a, b) => {
         const sa = a.r.stelle ?? 99;
         const sb = b.r.stelle ?? 99;
         if (sa !== sb) return sa - sb;
-        return new Date(b.r.ricevutaIl).getTime() - new Date(a.r.ricevutaIl).getTime();
+        return dataOrdine(b) - dataOrdine(a);
       });
+    } else {
+      daApprovare.sort((a, b) => dataOrdine(b) - dataOrdine(a));
     }
     nApprovare = daApprovare.length;
     // DOPO tutti i filtri e l'ordinamento: si divide in pagine solo ciò che
