@@ -47,6 +47,7 @@ import { AnteprimaFlusso } from "./AnteprimaFlusso";
 import { PassoAnteprima } from "./_ui/automazioni";
 import { Stelle, VoceCoda, VoceStorico } from "./da-pubblicare/Voci";
 import { TastieraCoda } from "./da-pubblicare/TastieraCoda";
+import { FiltriDaApprovare } from "./FiltriDaApprovare";
 
 // La home è la pipeline di una recensione, in un'unica pagina:
 //
@@ -162,11 +163,49 @@ function leggiPagina(n: string | undefined): number {
   return Number.isInteger(v) && v > 0 ? Math.min(v, PAGINA_MAX) : PAGINA_DEFAULT;
 }
 
-/** Porta `n` nei link della vista (Aggiorna, mostra altre), solo se non è il default. */
-function conPagina(href: string, n: number): string {
-  if (n === PAGINA_DEFAULT) return href;
-  const sep = href.includes("?") ? "&" : "?";
-  return `${href}${sep}n=${n >= PAGINA_MAX ? "tutte" : n}`;
+/**
+ * Numero di pagina richiesto (parametro p): un intero ≥ 1, altrimenti 1. Il
+ * tetto vero — l'ultima pagina che esiste — si applica dopo, quando si conosce
+ * il totale delle recensioni.
+ */
+function leggiNumeroPagina(p: string | undefined): number {
+  const v = Number(p);
+  return Number.isInteger(v) && v > 0 ? v : 1;
+}
+
+/**
+ * I numeri di pagina da mostrare nella barra: tutti se sono pochi, altrimenti
+ * prima, ultima e una finestra intorno alla corrente, con «…» a segnare i
+ * salti — una paginazione vera, non un elenco che si allunga da solo.
+ */
+function numeriPagina(corrente: number, totale: number): (number | "…")[] {
+  if (totale <= 7) return Array.from({ length: totale }, (_, i) => i + 1);
+  const scelte = new Set(
+    [1, totale, corrente - 2, corrente - 1, corrente, corrente + 1, corrente + 2].filter(
+      (n) => n >= 1 && n <= totale,
+    ),
+  );
+  const ordinate = [...scelte].sort((a, b) => a - b);
+  const righe: (number | "…")[] = [];
+  let precedente = 0;
+  for (const n of ordinate) {
+    if (precedente && n - precedente > 1) righe.push("…");
+    righe.push(n);
+    precedente = n;
+  }
+  return righe;
+}
+
+/** Porta `n` e/o `p` nei link della vista (Aggiorna, cambio pagina/dimensione). */
+function urlLista(extra: { fresh?: true; n?: number; p?: number } = {}): string {
+  const q = new URLSearchParams();
+  if (extra.fresh) q.set("fresh", "1");
+  if (extra.n !== undefined && extra.n !== PAGINA_DEFAULT) {
+    q.set("n", extra.n >= PAGINA_MAX ? "tutte" : String(extra.n));
+  }
+  if (extra.p !== undefined && extra.p > 1) q.set("p", String(extra.p));
+  const s = q.toString();
+  return s ? `/?${s}` : "/";
 }
 
 /** Al momento si mostrano solo le recensioni a 5 stelle senza commento. */
@@ -195,12 +234,15 @@ export default async function HomePage({
     esitoMsg?: string;
     esitoChiave?: string;
     fresh?: string;
-    /** Quante card mostrare in «Da approvare»: 25 (default), 50, 100, "tutte". */
+    /** Quante card per pagina in «Da approvare»: 25 (default), 50, 100, "tutte". */
     n?: string;
+    /** Numero di pagina in «Da approvare» (1 in su). */
+    p?: string;
   }>;
 }) {
   const sp = await searchParams;
-  const pagina = leggiPagina(sp.n);
+  const dimensionePagina = leggiPagina(sp.n);
+  const numeroPaginaRichiesta = leggiNumeroPagina(sp.p);
   // Occhio in alto: spento (barrato) = solo le recensioni coperte da una regola
   // attiva (default); acceso = TUTTE le recensioni (1–5★), in ordine di stelle.
   //
@@ -254,8 +296,10 @@ export default async function HomePage({
   let graphOk = true;
   let erroreGraph: string | null = null;
   let daApprovare: { r: Recensione; regola: Regola | null; rispostaPronta?: string | null }[] = [];
-  /** Le prime `pagina` card di daApprovare: le sole che si renderizzano. */
+  /** Le sole card della pagina corrente: quelle che si renderizzano davvero. */
   let visibili: typeof daApprovare = [];
+  let numeroPagina = 1;
+  let totalePagine = 1;
   let nApprovare: number | null = null;
   /** Proposte AI già salvate, per chiave recensione (le mancanti se le chiede la card). */
   let suggeritiAI = new Map<string, { testo: string }>();
@@ -463,8 +507,15 @@ export default async function HomePage({
       });
     }
     nApprovare = daApprovare.length;
-    // DOPO tutti i filtri e l'ordinamento: si taglia solo ciò che si mostra.
-    visibili = daApprovare.slice(0, pagina);
+    // DOPO tutti i filtri e l'ordinamento: si divide in pagine solo ciò che
+    // resta. Un numero di pagina fuori range (link vecchio, dati cambiati nel
+    // frattempo) ripiega sull'ultima pagina che esiste, mai su una vuota.
+    totalePagine = Math.max(1, Math.ceil(daApprovare.length / dimensionePagina));
+    numeroPagina = Math.min(Math.max(1, numeroPaginaRichiesta), totalePagine);
+    visibili = daApprovare.slice(
+      (numeroPagina - 1) * dimensionePagina,
+      numeroPagina * dimensionePagina,
+    );
 
     // Proposte AI GIÀ generate per le positive con commento fra quelle MOSTRATE:
     // una sola query, e la card parte col box pieno. Quelle che mancano se le
@@ -589,7 +640,7 @@ export default async function HomePage({
         <Link
           href={
             step === "approvare"
-              ? conPagina("/?fresh=1", pagina)
+              ? urlLista({ fresh: true, n: dimensionePagina, p: numeroPagina })
               : step === "attesa"
                 ? "/?step=attesa"
                 : step === "ricontrollo"
@@ -665,6 +716,11 @@ export default async function HomePage({
             </section>
           )}
 
+          {/* Ricerca e filtro stelle: lavorano nel browser sulle card qui sotto,
+              senza ricaricare la pagina — un ricarico rifarebbe l'ingest della
+              posta e le sweep Freshdesk a ogni tasto premuto. */}
+          {daApprovare.length > 0 && <FiltriDaApprovare />}
+
           {daApprovare.length === 0 ? (
             <section className="card dash-vuoto">
               {tutte
@@ -700,7 +756,17 @@ export default async function HomePage({
               const suggerimentoAI = conAI ? suggeritiAI.get(r.chiave) : undefined;
 
               return (
-                <article key={r.chiave} className="card dash-card">
+                <article
+                  key={r.chiave}
+                  className="card dash-card"
+                  // Su cosa filtra la barra di ricerca (FiltriDaApprovare). Il
+                  // testo porta anche l'originale in lingua, così si trova sia
+                  // cercando la parola tradotta sia quella scritta dal cliente.
+                  data-nome={r.nome}
+                  data-sede={r.sede}
+                  data-stelle={r.stelle ?? ""}
+                  data-testo={[testo, r.originale].filter(Boolean).join(" ")}
+                >
                   {/* Archiviazione: nessun campo, un solo tocco. Il form vive qui
                       (fuori dal form "Rispondi", che non si può annidare) e il
                       bottone «Archivia», messo tra le azioni classiche, lo invia
@@ -861,39 +927,77 @@ export default async function HomePage({
             })
           )}
 
-          {daApprovare.length > 0 &&
-            (daApprovare.length > visibili.length || pagina !== PAGINA_DEFAULT) && (
-              <nav className="pub-sedi" aria-label="Quante recensioni mostrare">
-                <span className="hint">
-                  Mostrate {visibili.length} di {daApprovare.length}
-                </span>
-                {daApprovare.length > visibili.length && (
+          {daApprovare.length > 0 && (totalePagine > 1 || dimensionePagina !== PAGINA_DEFAULT) && (
+            <nav className="appr-paginazione" aria-label="Pagine di «Da approvare»">
+              <p className="hint">
+                Pagina {numeroPagina} di {totalePagine} · {daApprovare.length} recensioni in tutto
+              </p>
+              <div className="appr-paginazione-pagine">
+                {numeroPagina > 1 ? (
                   <Link
-                    href={conPagina("/", Math.min(pagina + PAGINA_DEFAULT, PAGINA_MAX))}
+                    href={urlLista({ n: dimensionePagina, p: numeroPagina - 1 })}
                     className="btn-mini"
+                    aria-label="Pagina precedente"
                   >
-                    Mostra altre {Math.min(PAGINA_DEFAULT, daApprovare.length - visibili.length)}
+                    ‹ Precedente
                   </Link>
+                ) : (
+                  <span className="btn-mini is-disabilitato" aria-hidden="true">
+                    ‹ Precedente
+                  </span>
                 )}
+                {numeriPagina(numeroPagina, totalePagine).map((voce, i) =>
+                  voce === "…" ? (
+                    <span key={`ellissi-${i}`} className="appr-ellissi" aria-hidden="true">
+                      …
+                    </span>
+                  ) : (
+                    <Link
+                      key={voce}
+                      href={urlLista({ n: dimensionePagina, p: voce })}
+                      className={`btn-mini${voce === numeroPagina ? " is-active" : ""}`}
+                      aria-current={voce === numeroPagina ? "page" : undefined}
+                    >
+                      {voce}
+                    </Link>
+                  ),
+                )}
+                {numeroPagina < totalePagine ? (
+                  <Link
+                    href={urlLista({ n: dimensionePagina, p: numeroPagina + 1 })}
+                    className="btn-mini"
+                    aria-label="Pagina successiva"
+                  >
+                    Successiva ›
+                  </Link>
+                ) : (
+                  <span className="btn-mini is-disabilitato" aria-hidden="true">
+                    Successiva ›
+                  </span>
+                )}
+              </div>
+              <div className="appr-paginazione-dimensione">
+                <span className="hint">Per pagina:</span>
                 {PAGINE_SCELTE.map((k) => (
                   <Link
                     key={k}
-                    href={conPagina("/", k)}
-                    className={`btn-mini${pagina === k ? " is-active" : ""}`}
-                    title={`Mostra ${k} recensioni per volta`}
+                    href={urlLista({ n: k })}
+                    className={`btn-mini${dimensionePagina === k ? " is-active" : ""}`}
+                    title={`Mostra ${k} recensioni per pagina`}
                   >
                     {k}
                   </Link>
                 ))}
                 <Link
-                  href={conPagina("/", PAGINA_MAX)}
-                  className={`btn-mini${pagina >= PAGINA_MAX ? " is-active" : ""}`}
-                  title="Mostra tutte le recensioni in una pagina sola"
+                  href={urlLista({ n: PAGINA_MAX })}
+                  className={`btn-mini${dimensionePagina >= PAGINA_MAX ? " is-active" : ""}`}
+                  title="Tutte le recensioni in una pagina sola"
                 >
                   Tutte
                 </Link>
-              </nav>
-            )}
+              </div>
+            </nav>
+          )}
         </section>
       )}
 

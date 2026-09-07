@@ -35,7 +35,7 @@ export function AutoAggiorna() {
         const pulito = new URLSearchParams();
         // step/sede = la vista; n = quante card mostrare in «Da approvare»;
         // q = il testo cercato nella barra dei filtri, quando arriva dall'URL.
-        for (const k of ["step", "sede", "n", "q"]) {
+        for (const k of ["step", "sede", "n", "p", "q"]) {
           const v = cur.get(k);
           if (v) pulito.set(k, v);
         }

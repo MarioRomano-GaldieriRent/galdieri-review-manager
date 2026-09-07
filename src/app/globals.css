@@ -3681,3 +3681,113 @@ main.pipeline .pub-tabs {
     gap: 10px;
   }
 }
+
+/* ===========================================================================
+   FILTRI DI «DA APPROVARE»
+   Barra di ricerca (nome, sede, testo) e tasti per stella. Il filtro è tutto
+   nel browser: nasconde le card già rese dal server, non ricarica la pagina —
+   ricaricare vorrebbe dire rifare posta e sweep Freshdesk a ogni tasto.
+   =========================================================================== */
+
+.appr-filtri {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.appr-filtri-riga {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.appr-cerca {
+  flex: 1 1 260px;
+  min-width: 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 0.86rem;
+  padding: 8px 14px;
+}
+
+.appr-cerca::placeholder {
+  color: var(--text-soft);
+}
+
+.appr-cerca:focus {
+  outline: none;
+  border-color: var(--brand-red);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--brand-red) 15%, transparent);
+}
+
+.appr-stelle {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 0.86rem;
+  padding: 8px 32px 8px 14px;
+  cursor: pointer;
+}
+
+.appr-stelle:focus {
+  outline: none;
+  border-color: var(--brand-red);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--brand-red) 15%, transparent);
+}
+
+.appr-conteggio {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.appr-conteggio p {
+  margin: 0;
+}
+
+/* Card esclusa dai filtri. Due classi, così vince su .dash-card senza !important. */
+.dash-card.is-filtrata {
+  display: none;
+}
+
+/* ===========================================================================
+   PAGINAZIONE di «Da approvare»
+   Pagine numerate, centrate sotto la lista: non un elenco che si allunga.
+   =========================================================================== */
+
+.appr-paginazione {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.appr-paginazione-pagine,
+.appr-paginazione-dimensione {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.appr-ellissi {
+  padding: 0 4px;
+  color: var(--text-soft);
+}
+
+.btn-mini.is-disabilitato {
+  opacity: 0.4;
+  pointer-events: none;
+}
