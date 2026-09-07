@@ -3736,6 +3736,14 @@ main.pipeline .pub-tabs {
   cursor: pointer;
 }
 
+/* Le stelle VUOTE (glifo monocromo ★, non l'emoji ⭐) prendono questo grigio
+   scuro invece del colore normale del testo: si vedono, ma senza un contorno
+   acceso — le PIENE restano gialle per conto loro (colore fisso dell'emoji,
+   che questa regola non tocca). */
+.appr-stelle option {
+  color: var(--text-soft);
+}
+
 .appr-stelle:focus {
   outline: none;
   border-color: var(--brand-red);

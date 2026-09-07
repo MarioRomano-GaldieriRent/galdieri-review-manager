@@ -152,8 +152,11 @@ export function FiltriDaApprovare() {
             <option value="">Tutte le stelle</option>
             {disponibili.map((n) => (
               <option key={n} value={n} aria-label={n === 1 ? "1 stella" : `${n} stelle`}>
-                {"★".repeat(n)}
-                {"☆".repeat(5 - n)}
+                {/* ⭐ è un'emoji a colori (giallo fisso, non lo tocca il CSS);
+                    ★ è il glifo monocromo, intonato scuro dal CSS qui sotto —
+                    così le vuote si vedono, ma senza un contorno acceso. */}
+                {"⭐".repeat(n)}
+                {"★".repeat(5 - n)}
               </option>
             ))}
           </select>
