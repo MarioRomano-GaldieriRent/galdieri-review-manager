@@ -152,7 +152,13 @@ const AVVIO = Date.now();
     // 1) PER SEDE, se mappata: si va dritti lì.
     if (job.nomeGoogle) {
       traccia(`sede mappata: vado dritto su «${job.nomeGoogle}»…`);
-      const ps = await rispondiPerSede(page0, job.nomeGoogle, job.nome, job.testo, { log: traccia });
+      // La coda ha una scadenza CORTA: se non conclude entro un minuto e
+      // mezzo deve lasciare il tempo al ripiego sulla lista, che è la strada
+      // che ha sempre funzionato.
+      const ps = await rispondiPerSede(page0, job.nomeGoogle, job.nome, job.testo, {
+        log: traccia,
+        scadenza: AVVIO + 90_000,
+      });
       dettaglio = ps.dettaglio;
       if (ps.trovata) {
         trovata = true;

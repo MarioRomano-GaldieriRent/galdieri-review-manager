@@ -181,29 +181,56 @@ async function bottoneInviaRisposta(root: Radice): Promise<Locator | null> {
   if ((await pub.count().catch(() => 0)) > 0 && (await pub.isVisible().catch(() => false))) {
     return pub;
   }
-  // Overlay: il submit «Rispondi» è quello accanto ad «Annulla» (stessa riga).
-  const annulla = root.getByRole("button", { name: /^Annulla$/i }).first();
-  const aBox = await annulla.boundingBox().catch(() => null);
-  if (!aBox) return null;
-  const rispondi = root.getByRole("button", { name: /^rispondi$/i });
-  const n = await rispondi.count().catch(() => 0);
-  let best: Locator | null = null;
-  let bestD = Infinity;
-  for (let i = 0; i < n; i++) {
-    const b = rispondi.nth(i);
-    const box = await b.boundingBox().catch(() => null);
-    if (!box) continue;
-    const dy = Math.abs(box.y - aBox.y);
-    if (dy < 40 && box.x < aBox.x + 5) {
-      // stessa riga di «Annulla» e alla sua sinistra: è il submit del riquadro.
-      const d = aBox.x - box.x + dy;
+
+  /**
+   * Il «Rispondi» sulla STESSA RIGA di un riferimento (il più vicino a lui).
+   * Serve a distinguere il submit del riquadro dai «Rispondi» delle ALTRE
+   * recensioni, che aprirebbero il loro riquadro invece di inviare.
+   */
+  const rispondiSullaRigaDi = async (
+    rif: Locator,
+    soloASinistra: boolean,
+  ): Promise<Locator | null> => {
+    const rBox = await rif.boundingBox().catch(() => null);
+    if (!rBox) return null;
+    const rispondi = root.getByRole("button", { name: /^rispondi$/i });
+    const n = await rispondi.count().catch(() => 0);
+    let best: Locator | null = null;
+    let bestD = Infinity;
+    for (let i = 0; i < n; i++) {
+      const b = rispondi.nth(i);
+      const box = await b.boundingBox().catch(() => null);
+      if (!box) continue;
+      const dy = Math.abs(box.y - rBox.y);
+      if (dy >= 40) continue;
+      if (soloASinistra && box.x >= rBox.x + 5) continue;
+      const d = Math.abs(rBox.x - box.x) + dy;
       if (d < bestD) {
         bestD = d;
         best = b;
       }
     }
-  }
-  return best;
+    return best;
+  };
+
+  // Overlay per-sede: il submit «Rispondi» è quello accanto ad «Annulla», alla
+  // sua sinistra (stessa riga).
+  const conAnnulla = await rispondiSullaRigaDi(
+    root.getByRole("button", { name: /^Annulla$/i }).first(),
+    true,
+  );
+  if (conAnnulla) return conAnnulla;
+
+  // Coda «Rispondere a recensioni»: lì un «Annulla» non c'è, e il submit sta
+  // sulla stessa riga di «Ignora». Si accetta SOLO se il campo della coda è
+  // davvero a schermo: senza quel vincolo, in una lista qualunque si rischiava
+  // di scambiare per submit il «Rispondi» di un'altra recensione.
+  const campoCoda = await root
+    .getByPlaceholder(/Risposta pubblica|La tua risposta/i)
+    .count()
+    .catch(() => 0);
+  if (campoCoda === 0) return null;
+  return rispondiSullaRigaDi(root.getByRole("button", { name: /^Ignora$/i }).first(), false);
 }
 
 /** Invia/pubblica la risposta scritta (clicca il bottone giusto secondo la UI). */
@@ -1026,6 +1053,10 @@ export type EsitoCodaIgnora = {
    * anche quando fallisce — è la diagnostica che serve per calibrare i
    * selettori senza dover leggere gli screenshot sul server. */
   passi: string[];
+  /** La radice della coda dove sta il riquadro: serve a chi poi pubblica. */
+  root?: Radice | null;
+  /** L'autore letto sulla recensione dove si è scritto: la PROVA del match. */
+  autore?: string;
 };
 
 /**
@@ -1034,48 +1065,85 @@ export type EsitoCodaIgnora = {
  * vecchio (manca «npm run build» + restart dopo il git pull) e non serve
  * cercare il problema altrove.
  */
-export const VERSIONE_CODA = "coda-4";
+export const VERSIONE_CODA = "coda-5";
+
+/** Minuscolo, senza accenti, spazi normalizzati: per confrontare i nomi. */
+function senzaAccenti(x: string): string {
+  return x
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
+}
 
 /**
- * METODO ALTERNATIVO: invece di scorrere/cercare nella lista intera della
- * sede, usa la coda di Google «Rispondere a recensioni» (le sole recensioni
- * ancora SENZA risposta, una alla volta, col contatore «N di TOT recensioni»)
- * e il tasto «Ignora» per saltare alla successiva finché non compare quella
- * cercata. Può essere molto più diretto in una sede con tante recensioni.
+ * Il nome compare nel testo come PAROLA INTERA. Il confronto «contiene» non va
+ * bene: molti recensori Google hanno un nome cortissimo (perfino una sola
+ * lettera, «D»), e cercandolo come sottostringa combaciava con mezza pagina —
+ * era il motivo per cui il robot scriveva sulla recensione sbagliata.
+ */
+function combaciaNome(testo: string, nome: string): boolean {
+  const t = senzaAccenti(testo);
+  const q = senzaAccenti(nome);
+  if (!q || !t) return false;
+  const fuggito = q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(^|[^\\p{L}\\p{N}])${fuggito}([^\\p{L}\\p{N}]|$)`, "u").test(t);
+}
+
+/**
+ * METODO DELLA CODA: invece di scorrere la lista intera della sede, si entra
+ * nella coda di Google «Rispondere a recensioni» — le sole recensioni ancora
+ * SENZA risposta, UNA alla volta, col contatore «N di TOT recensioni» — e si
+ * preme «Ignora» per passare alla successiva finché non compare quella cercata.
+ * In una sede con centinaia di recensioni è molto più diretto.
  *
- * Vista CONFERMATA dal vivo (screenshot reali): nella coda il campo «Risposta
- * pubblica» è GIÀ APERTO per la recensione mostrata — non c'è un «Rispondi»
- * da cliccare prima per aprirlo, a differenza dell'overlay per-sede. Il
- * «Rispondi» in basso è invece il pulsante che INVIA (disabilitato finché il
- * campo è vuoto): qui NON va MAI cliccato. Per uscire senza pubblicare si
- * svuota il campo e si preme «Ignora», che salta alla successiva.
+ * Vista CONFERMATA dal vivo: nella coda il campo «Risposta pubblica» è GIÀ
+ * APERTO per la recensione mostrata (non c'è un «Rispondi» da cliccare prima,
+ * a differenza dell'overlay per-sede). Il «Rispondi» in basso è il pulsante che
+ * INVIA, e sta sulla stessa riga di «Ignora».
  *
- * Tre cose imparate dal primo giro dal vivo, e per cui questa versione è fatta
- * così:
+ * Le lezioni pagate dal vivo, e perché il codice è fatto così:
  *  1. il tasto della coda NON è detto che stia nello stesso contesto DOM della
- *     lista (pagina o iframe): qui si cerca in TUTTI — pagina e ogni iframe;
+ *     lista: si cerca in TUTTI — pagina e ogni iframe;
  *  2. un click può fallire in silenzio, e gli indizi della coda («Ignora», un
  *     «N di M») esistono anche sulla LISTA: entrare va verificato come un
  *     CAMBIAMENTO dopo il click — più indizi di prima — non dedotto dall'aver
  *     cliccato né da una lettura fatta prima di cliccare;
- *  3. chi guarda ha bisogno del passo-passo SEMPRE, anche quando va bene:
- *     l'elenco dei controlli veri viene registrato a ogni tappa.
+ *  3. il nome va confrontato con l'AUTORE della recensione mostrata, dentro il
+ *     suo riquadro, non cercato in tutta la pagina: così si preme «Ignora»
+ *     finché non compare davvero la sua, che è il modo in cui il metodo
+ *     funziona a mano;
+ *  4. chi guarda ha bisogno del passo-passo SEMPRE: a ogni salto si registra
+ *     l'autore visto, così dal log si capisce cosa stava guardando il robot.
+ *
+ * `uscita` decide come si esce una volta scritto:
+ *   - "sicura"  → svuota il campo ed esce con «Ignora»: NON pubblica mai. È il
+ *                 tasto di prova (solo admin).
+ *   - "lascia"  → lascia il testo nel riquadro e restituisce `root`: la
+ *                 pubblicazione la decide il chiamante (tasto «Rispondi»).
  *
  * `scadenza` (timestamp ms) è il momento oltre il quale si smette di saltare e
- * si torna comunque con l'esito: meglio un passo-passo leggibile che il
- * timeout muto di chi aspetta.
+ * si torna comunque con l'esito: meglio un passo-passo leggibile che il timeout
+ * muto di chi aspetta.
  *
- * Presuppone la sede GIÀ APERTA. NON pubblica MAI, qualunque cosa succeda.
+ * Presuppone la sede GIÀ APERTA. Non clicca MAI da sé il pulsante d'invio.
  */
-export async function provaCodaIgnora(
+export async function cercaNellaCoda(
   root: Radice,
   nomeCliente: string,
   testo: string,
-  opts: { maxIgnora?: number; log?: (m: string) => void; scadenza?: number } = {},
+  opts: {
+    maxIgnora?: number;
+    log?: (m: string) => void;
+    scadenza?: number;
+    uscita?: "sicura" | "lascia";
+  } = {},
 ): Promise<EsitoCodaIgnora> {
   const maxIgnora = opts.maxIgnora ?? 40;
   const log = opts.log ?? (() => {});
   const scadenza = opts.scadenza ?? Number.POSITIVE_INFINITY;
+  const uscita = opts.uscita ?? "sicura";
   const nome = nomeCliente.trim();
   const pg = paginaDi(root);
   const passi: string[] = [];
@@ -1086,7 +1154,7 @@ export async function provaCodaIgnora(
   const scaduto = () => Date.now() > scadenza;
   const perche = (e: unknown) => (e instanceof Error ? e.message.split("\n")[0] : String(e));
 
-  annota(`metodo coda «Ignora», versione ${VERSIONE_CODA}.`);
+  annota(`metodo coda «Ignora», versione ${VERSIONE_CODA}, uscita «${uscita}».`);
 
   /**
    * TUTTI i contesti DOM in cui il controllo può stare: la radice ricevuta, la
@@ -1141,12 +1209,13 @@ export async function provaCodaIgnora(
    * «Ignora» è anche l'etichetta con cui si chiudono i banner, e un «N di M»
    * può essere il pager della lista: presi in OR facevano scambiare la LISTA
    * per la coda, e allora il tasto «Rispondere a recensioni» non veniva più
-   * cliccato (era il difetto del giro precedente). Qui si contano tre indizi
-   * separati e si registra il punteggio, senza pretendere che stiano tutti
-   * nello stesso frame — dal vivo si è visto che possono essere sparsi.
+   * cliccato. Qui si contano tre indizi separati e si registra il punteggio,
+   * senza pretendere che stiano tutti nello stesso frame — dal vivo si è visto
+   * che possono essere sparsi.
    */
   const etichettaIgnora = /^ignora$|^ignore$|^salta$|^skip$/i;
   const contatoreCoda = /\d+\s*di\s*\d+/i;
+  const campoRisposta = /Risposta pubblica|La tua risposta/i;
   type Segnali = { punti: number; radice: Radice | null; descrizione: string };
   const leggiSegnali = async (): Promise<Segnali> => {
     let radice: Radice | null = null;
@@ -1193,7 +1262,7 @@ export async function provaCodaIgnora(
 
     for (const r of radici()) {
       const n = await r
-        .getByPlaceholder(/Risposta pubblica|La tua risposta/i)
+        .getByPlaceholder(campoRisposta)
         .count()
         .catch(() => 0);
       if (n > 0) {
@@ -1286,6 +1355,7 @@ export async function provaCodaIgnora(
       trovata: false,
       scritto: false,
       passi,
+      root: null,
       dettaglio: scaduto()
         ? "Tempo scaduto prima di entrare nella coda «Rispondere a recensioni»: vedi il passo-passo."
         : "Non sono riuscito a entrare nella coda «Rispondere a recensioni». Nel passo-passo ci sono i controlli visti davvero (pagina e iframe): servono per calibrare l'etichetta esatta.",
@@ -1293,43 +1363,82 @@ export async function provaCodaIgnora(
   }
 
   /**
-   * Impronta della recensione mostrata: serve a capire se un «Ignora» ha
-   * davvero fatto passare alla successiva o se ha solo chiuso un banner. Si
-   * usa il contatore quando c'è (cambia a ogni salto), altrimenti la quantità
-   * di testo a schermo.
+   * Il RIQUADRO della recensione mostrata adesso. Si parte dal campo di
+   * risposta (nella coda è già aperto) e si sale di antenato in antenato: il
+   * primo che contiene anche il tasto «Ignora» è il riquadro completo
+   * (autore + recensione + campo + tasti). Se non lo si trova così, ci si
+   * accontenta del primo antenato con abbastanza testo, dicendolo.
    */
-  const impronta = async (r: Radice): Promise<string> => {
-    const c = r.getByText(contatoreCoda).first();
-    if ((await c.count().catch(() => 0)) > 0) {
-      const t = ((await c.textContent().catch(() => "")) || "").replace(/\s+/g, " ").trim();
-      if (t) return t;
+  const cartaCorrente = async (r: Radice): Promise<{ loc: Locator; via: string } | null> => {
+    const campo = r.getByPlaceholder(campoRisposta).first();
+    if ((await campo.count().catch(() => 0)) === 0) return null;
+    let ripiego: { loc: Locator; via: string } | null = null;
+    let n: Locator = campo;
+    for (let i = 0; i < 10; i++) {
+      n = n.locator("xpath=..");
+      const t = ((await n.innerText().catch(() => "")) || "").trim();
+      if (t.length < 40) continue;
+      const conIgnora = await n
+        .getByRole("button", { name: etichettaIgnora })
+        .count()
+        .catch(() => 0);
+      if (conIgnora > 0) return { loc: n, via: `${i + 1} livelli sopra il campo, con «Ignora»` };
+      ripiego = ripiego ?? { loc: n, via: `${i + 1} livelli sopra il campo (senza «Ignora»)` };
     }
-    const b = await r
-      .locator("body")
-      .innerText()
-      .catch(() => "");
-    return `testo:${b.replace(/\s+/g, " ").trim().length}`;
+    return ripiego;
+  };
+
+  /** Autore = prima riga utile del riquadro (saltando il contatore). */
+  const autoreDi = (testoCarta: string): string => {
+    for (const riga of testoCarta.split("\n").map((x) => x.trim())) {
+      if (!riga) continue;
+      if (contatoreCoda.test(riga) && /recension/i.test(riga)) continue;
+      return riga.slice(0, 60);
+    }
+    return "";
   };
 
   let trovatoCliente = false;
+  let autoreTrovato = "";
   let salti = 0;
   let riprese = 0;
   let fermi = 0;
+  let senzaCarta = 0;
   for (let i = 0; i <= maxIgnora; i++) {
     if (scaduto()) {
       annota(`tempo esaurito dopo ${salti} «Ignora»: mi fermo per darti comunque il passo-passo.`);
       break;
     }
-    const presente =
-      (await coda
-        .getByText(nome, { exact: false })
-        .count()
-        .catch(() => 0)) > 0;
-    if (presente) {
+
+    // Chi è la recensione mostrata ADESSO. È il cuore del metodo: si confronta
+    // il nome con l'AUTORE di QUESTO riquadro, non col testo di tutta la
+    // pagina — altrimenti si scrive sulla prima che capita.
+    const carta = await cartaCorrente(coda);
+    if (!carta) {
+      senzaCarta++;
+      annota(`non riesco a isolare il riquadro della recensione (tentativo ${senzaCarta}).`);
+      if (senzaCarta >= 2) {
+        await fotografaControlli("controlli senza riquadro riconoscibile");
+        break;
+      }
+      await pg.waitForTimeout(900);
+      continue;
+    }
+    const testoCarta = ((await carta.loc.innerText().catch(() => "")) || "").trim();
+    const autore = autoreDi(testoCarta);
+    const riassunto = testoCarta.replace(/\s+/g, " ").slice(0, 70);
+    annota(`recensione ${salti + 1}: autore «${autore}» · «${riassunto}…»`);
+
+    if (combaciaNome(autore, nome)) {
       trovatoCliente = true;
-      annota(`«${nome}» trovato dopo ${salti} «Ignora».`);
+      autoreTrovato = autore;
+      annota(`«${nome}» combacia con l'autore dopo ${salti} «Ignora»: è la sua.`);
       break;
     }
+    if (combaciaNome(testoCarta, nome)) {
+      annota(`  «${nome}» compare nel testo ma l'autore è «${autore}»: non è la sua, vado avanti.`);
+    }
+
     const b = coda.getByRole("button", { name: etichettaIgnora }).first();
     const ci = (await b.count().catch(() => 0)) > 0 && (await b.isVisible().catch(() => false));
     if (!ci) {
@@ -1337,7 +1446,6 @@ export async function provaCodaIgnora(
       await fotografaControlli("controlli dove si è fermata");
       break;
     }
-    const prima = await impronta(coda);
     try {
       await b.click({ timeout: 5000 });
       salti++;
@@ -1354,17 +1462,22 @@ export async function provaCodaIgnora(
       break;
     }
     await pg.waitForTimeout(700);
-    const dopoSalto = await impronta(coda);
-    if (dopoSalto === prima) {
+
+    // Guardia sui salti a vuoto: se dopo «Ignora» il riquadro mostra lo STESSO
+    // autore, quel tasto non era della coda (di solito è quello di un banner).
+    const dopoCarta = await cartaCorrente(coda);
+    const dopoAutore = dopoCarta
+      ? autoreDi(((await dopoCarta.loc.innerText().catch(() => "")) || "").trim())
+      : "";
+    if (dopoAutore && dopoAutore === autore) {
       fermi++;
-      annota(`«Ignora» n. ${salti}: la vista NON è cambiata (${prima}) — forse era il tasto di un banner, non della coda.`);
+      annota(`«Ignora» n. ${salti}: l'autore mostrato è ancora «${autore}» — quel tasto non fa avanzare la coda.`);
       if (fermi >= 2) {
         await fotografaControlli("controlli dove la vista non cambia");
         break;
       }
     } else {
       fermi = 0;
-      if (salti % 10 === 0) annota(`…${salti} «Ignora» fatti (ora: ${dopoSalto}), ancora nessun «${nome}».`);
     }
   }
 
@@ -1373,7 +1486,8 @@ export async function provaCodaIgnora(
       trovata: false,
       scritto: false,
       passi,
-      dettaglio: `«${nome}» non trovato: ${salti} «Ignora» fatti su un massimo di ${maxIgnora}. Il motivo esatto (coda finita, tempo scaduto, click fallito) è nell'ultimo rigo del passo-passo.`,
+      root: coda,
+      dettaglio: `«${nome}» non trovato: ${salti} «Ignora» fatti su un massimo di ${maxIgnora}. Nel passo-passo c'è l'autore di ogni recensione vista, e il motivo per cui si è fermato.`,
     };
   }
 
@@ -1382,7 +1496,9 @@ export async function provaCodaIgnora(
       trovata: true,
       scritto: false,
       passi,
-      dettaglio: `Trovato «${nome}»: il campo «Risposta pubblica» è già pronto — non ho scritto niente (test senza testo).`,
+      root: coda,
+      autore: autoreTrovato,
+      dettaglio: `Trovato «${nome}» (autore «${autoreTrovato}»): campo pronto, non ho scritto niente (nessun testo da scrivere).`,
     };
   }
 
@@ -1403,7 +1519,13 @@ export async function provaCodaIgnora(
   };
   let campoAttivo: Locator | null = null;
   for (const [via, loc] of campi) {
-    if (await loc.count().then((n) => n === 0).catch(() => true)) continue;
+    if (
+      await loc
+        .count()
+        .then((n) => n === 0)
+        .catch(() => true)
+    )
+      continue;
     const c = loc.first();
     if (!(await c.isVisible().catch(() => false))) {
       annota(`campo (${via}): presente ma non visibile, salto.`);
@@ -1438,35 +1560,65 @@ export async function provaCodaIgnora(
       trovata: true,
       scritto: false,
       passi,
-      dettaglio: `Trovato «${nome}» ma non ho trovato il campo «Risposta pubblica» dove scrivere.`,
+      root: coda,
+      autore: autoreTrovato,
+      dettaglio: `Trovato «${nome}» (autore «${autoreTrovato}») ma non ho trovato il campo «Risposta pubblica» dove scrivere.`,
     };
   }
 
-  // «Rispondi» qui è il pulsante che INVIA: si guarda solo se si è abilitato
-  // (prova che il testo è stato accettato), NON lo si clicca mai.
+  // Il pulsante d'invio si guarda solo per sapere se si è acceso (prova che il
+  // testo è stato accettato). Questa funzione non lo clicca MAI da sé: in
+  // uscita «lascia» la decisione è di chi ha chiamato.
   const submit = coda.getByRole("button", { name: /^rispondi$/i }).first();
   const abilitato =
     (await submit.count().catch(() => 0)) > 0 ? await submit.isEnabled().catch(() => false) : false;
-  annota(`bottone «Rispondi» (invio) abilitato: ${abilitato}. NON lo clicco: è solo una prova.`);
+  annota(`bottone «Rispondi» (invio) abilitato: ${abilitato}.`);
 
-  // Si esce senza pubblicare: si svuota lo STESSO campo appena scritto, poi
-  // «Ignora» (salta alla successiva senza inviare) — qui non c'è un «Annulla».
-  await campoAttivo.click({ timeout: 3000 }).catch(() => {});
-  await svuota();
-  const ignoraFinale = coda.getByRole("button", { name: /^ignora$/i }).first();
-  if ((await ignoraFinale.count().catch(() => 0)) > 0) {
-    await ignoraFinale.click({ timeout: 4000 }).catch(() => {});
-    annota("campo svuotato e «Ignora» cliccato: uscito senza pubblicare.");
-  } else {
-    annota("campo svuotato; nessun «Ignora» per uscire, lascio la vista com'è (niente pubblicato).");
+  if (uscita === "sicura") {
+    // Si esce senza pubblicare: si svuota lo STESSO campo appena scritto, poi
+    // «Ignora» (salta alla successiva senza inviare) — qui non c'è un «Annulla».
+    await campoAttivo.click({ timeout: 3000 }).catch(() => {});
+    await svuota();
+    const ignoraFinale = coda.getByRole("button", { name: etichettaIgnora }).first();
+    if ((await ignoraFinale.count().catch(() => 0)) > 0) {
+      await ignoraFinale.click({ timeout: 4000 }).catch(() => {});
+      annota("campo svuotato e «Ignora» cliccato: uscito senza pubblicare.");
+    } else {
+      annota("campo svuotato; nessun «Ignora» per uscire, lascio la vista com'è (niente pubblicato).");
+    }
+    return {
+      trovata: true,
+      scritto: true,
+      passi,
+      root: null,
+      autore: autoreTrovato,
+      dettaglio: `Trovato «${nome}» (autore «${autoreTrovato}») in ${salti} salti, scritto nel campo (invio abilitato: ${abilitato}) — NON pubblicato.`,
+    };
   }
 
+  annota("testo lasciato nel riquadro: la pubblicazione la decide chi ha chiesto il lavoro.");
   return {
     trovata: true,
     scritto: true,
     passi,
-    dettaglio: `Trovato «${nome}» con la coda «Ignora» in ${salti} salti, scritto nel campo (bottone d'invio abilitato: ${abilitato}) — NON pubblicato.`,
+    root: coda,
+    autore: autoreTrovato,
+    dettaglio: `Trovato «${nome}» (autore «${autoreTrovato}») in ${salti} salti con la coda, testo pronto nel riquadro (invio abilitato: ${abilitato}).`,
   };
+}
+
+/**
+ * Il tasto di PROVA (solo admin): stesso metodo, ma con l'uscita SICURA —
+ * scrive, controlla che l'invio si accenda e poi svuota ed esce con «Ignora».
+ * Non pubblica mai, qualunque cosa succeda.
+ */
+export function provaCodaIgnora(
+  root: Radice,
+  nomeCliente: string,
+  testo: string,
+  opts: { maxIgnora?: number; log?: (m: string) => void; scadenza?: number } = {},
+): Promise<EsitoCodaIgnora> {
+  return cercaNellaCoda(root, nomeCliente, testo, { ...opts, uscita: "sicura" });
 }
 
 export type EsitoPerSede = {
@@ -1488,16 +1640,57 @@ export async function rispondiPerSede(
   nomeGoogle: string,
   nomeCliente: string,
   testo: string,
-  opts: { log?: (m: string) => void } = {},
+  /**
+   * `conCoda` (di default ACCESO) prova prima la coda «Rispondere a
+   * recensioni»; `scadenza` è il momento oltre il quale la coda smette di
+   * saltare e lascia il posto al ripiego sulla lista.
+   */
+  opts: { log?: (m: string) => void; conCoda?: boolean; scadenza?: number } = {},
 ): Promise<EsitoPerSede> {
   const log = opts.log ?? (() => {});
+  const conCoda = opts.conCoda ?? true;
 
   const sede = await apriSedePerNome(page, nomeGoogle, { log });
-  if (!sede.aperta || !sede.root) {
+  if (!sede.root) {
     return { trovata: false, scritto: false, root: null, dettaglio: `sede «${nomeGoogle}»: ${sede.dettaglio}` };
   }
-  const root = sede.root;
+  if (!sede.aperta) {
+    // La lista non mostra «Rispondi», ma la coda non ne ha bisogno: si prova
+    // lo stesso invece di arrendersi qui.
+    log(`la lista non mostra «Rispondi» (${sede.dettaglio}): provo lo stesso.`);
+  }
+  let root = sede.root;
 
+  // 1) Prima la CODA «Rispondere a recensioni»: mostra SOLO le recensioni
+  //    ancora senza risposta, una alla volta, e si salta con «Ignora» finché
+  //    non compare l'autore giusto. In una sede con centinaia di recensioni è
+  //    molto più diretto che scorrere la lista.
+  if (conCoda) {
+    const c = await cercaNellaCoda(root, nomeCliente, testo, {
+      log,
+      uscita: "lascia",
+      scadenza: opts.scadenza,
+    });
+    if (c.trovata && c.scritto && c.root) {
+      return {
+        trovata: true,
+        scritto: true,
+        root: c.root,
+        dettaglio: `sede «${nomeGoogle}» · coda: ${c.dettaglio}`,
+      };
+    }
+    log(`la coda non ha concluso (${c.dettaglio}): riapro la sede e ripiego sulla lista.`);
+    // Dopo i salti siamo dentro la coda: per cercare nella LISTA bisogna
+    // tornare al punto di partenza, altrimenti si cercherebbe nella vista
+    // sbagliata.
+    const sede2 = await apriSedePerNome(page, nomeGoogle, { log });
+    if (!sede2.root) {
+      return { trovata: false, scritto: false, root: null, dettaglio: `sede «${nomeGoogle}»: ${sede2.dettaglio}` };
+    }
+    root = sede2.root;
+  }
+
+  // 2) Ripiego: la lista della sede, come si è sempre fatto.
   const t = await cercaClienteNelleRecensioni(root, nomeCliente, { log });
   if (!t.trovata) {
     return { trovata: false, scritto: false, root, dettaglio: `sede «${nomeGoogle}»: ${t.dettaglio}` };
