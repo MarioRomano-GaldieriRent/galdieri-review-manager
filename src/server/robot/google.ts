@@ -249,7 +249,18 @@ async function bottoneInviaRisposta(root: Radice): Promise<Locator | null> {
     (await visibile(root.getByRole("button", { name: /^Ignora$/i }))) &&
     (await visibile(root.getByText(/\d+\s*di\s*\d+/i)));
   if (!segniDellaCoda) return null;
-  return rispondiSullaRigaDi(root.getByRole("button", { name: /^Ignora$/i }).first(), false);
+  // Il riferimento dev'essere l'«Ignora» VISIBILE della coda: il primo del DOM
+  // può essere quello nascosto di un banner rimasto nella lista, e allora non
+  // si troverebbe più niente.
+  const ignore = root.getByRole("button", { name: /^Ignora$/i });
+  const quantiIgnora = Math.min(await ignore.count().catch(() => 0), 6);
+  for (let i = 0; i < quantiIgnora; i++) {
+    const c = ignore.nth(i);
+    if (await c.isVisible({ timeout: 1500 }).catch(() => false)) {
+      return rispondiSullaRigaDi(c, false);
+    }
+  }
+  return null;
 }
 
 /** Invia/pubblica la risposta scritta (clicca il bottone giusto secondo la UI). */
@@ -1084,7 +1095,7 @@ export type EsitoCodaIgnora = {
  * vecchio (manca «npm run build» + restart dopo il git pull) e non serve
  * cercare il problema altrove.
  */
-export const VERSIONE_CODA = "coda-8";
+export const VERSIONE_CODA = "coda-9";
 
 /** Minuscolo, senza accenti, spazi normalizzati: per confrontare i nomi. */
 function senzaAccenti(x: string): string {
@@ -1194,10 +1205,13 @@ function stessoContenuto(testoCarta: string, testoAtteso: string): boolean {
  *     l'autore visto, così dal log si capisce cosa stava guardando il robot.
  *
  * `uscita` decide come si esce una volta scritto:
- *   - "sicura"  → svuota il campo ed esce con «Ignora»: NON pubblica mai. È il
- *                 tasto di prova (solo admin).
- *   - "lascia"  → lascia il testo nel riquadro e restituisce `root`: la
- *                 pubblicazione la decide il chiamante (tasto «Rispondi»).
+ *   - "sicura"  → svuota il campo ed esce con «Ignora»: non lascia traccia.
+ *   - "ferma"   → scrive e SI FERMA lì, senza toccare altro: la recensione
+ *                 resta a schermo con la risposta pronta, perché una persona
+ *                 possa controllare che sia davvero quella giusta. Non
+ *                 pubblica e non scarta: decide chi guarda.
+ *   - "lascia"  → come "ferma", ma restituisce `root` perché la
+ *                 pubblicazione la faccia il chiamante (tasto «Rispondi»).
  *
  * `scadenza` (timestamp ms) è il momento oltre il quale si smette di saltare e
  * si torna comunque con l'esito: meglio un passo-passo leggibile che il timeout
@@ -1213,7 +1227,7 @@ export async function cercaNellaCoda(
     maxIgnora?: number;
     log?: (m: string) => void;
     scadenza?: number;
-    uscita?: "sicura" | "lascia";
+    uscita?: "sicura" | "lascia" | "ferma";
     /**
      * Il testo della recensione come sta nel database: è il modo più sicuro di
      * riconoscerla: i nomi si ripetono e possono essere una sola lettera, il
@@ -1681,6 +1695,9 @@ export async function cercaNellaCoda(
             ? "il TESTO della recensione"
             : "l'autore";
       annota(`trovata dopo ${salti} «Ignora»: combacia ${come}.`);
+      // Il riquadro per intero (stelle comprese, se sono testo): è quello che
+      // serve a chi deve controllare con i propri occhi che sia la sua.
+      annota(`la recensione trovata dice: «${testoCarta.replace(/\s+/g, " ").slice(0, 300)}»`);
       break;
     }
     if (combaciaNome(autore, nome)) {
@@ -1847,8 +1864,12 @@ export async function cercaNellaCoda(
     // «Ignora» (salta alla successiva senza inviare) — qui non c'è un «Annulla».
     await campoAttivo.click({ timeout: 3000 }).catch(() => {});
     await svuota();
-    const ignoraFinale = tastoIgnora(coda).first();
-    if ((await ignoraFinale.count().catch(() => 0)) > 0) {
+    // Dev'essere l'«Ignora» VISIBILE della coda. Prendere il primo del DOM
+    // significava prendere quello NASCOSTO di un banner rimasto nella lista:
+    // il click restava appeso su un elemento invisibile e falliva in silenzio,
+    // lasciando la recensione lì invece di passare oltre.
+    const ignoraFinale = await primoVisibile(tastoIgnora(coda));
+    if (ignoraFinale) {
       await ignoraFinale.click({ timeout: 4000 }).catch(() => {});
       annota("campo svuotato e «Ignora» cliccato: uscito senza pubblicare.");
     } else {
@@ -1864,6 +1885,20 @@ export async function cercaNellaCoda(
     };
   }
 
+  if (uscita === "ferma") {
+    annota(
+      "mi fermo qui: recensione a schermo e risposta già scritta nel riquadro. Non pubblico e non scarto — controlla tu e decidi.",
+    );
+    return {
+      trovata: true,
+      scritto: true,
+      passi,
+      root: coda,
+      autore: autoreTrovato,
+      dettaglio: `Trovato «${nome}» (autore «${autoreTrovato}») dopo ${salti} «Ignora». Risposta SCRITTA nel riquadro e finestra lasciata aperta sul server: controlla che sia la recensione giusta. Non ho pubblicato né scartato (invio abilitato: ${abilitato}).`,
+    };
+  }
+
   annota("testo lasciato nel riquadro: la pubblicazione la decide chi ha chiesto il lavoro.");
   return {
     trovata: true,
@@ -1876,9 +1911,10 @@ export async function cercaNellaCoda(
 }
 
 /**
- * Il tasto di PROVA (solo admin): stesso metodo, ma con l'uscita SICURA —
- * scrive, controlla che l'invio si accenda e poi svuota ed esce con «Ignora».
- * Non pubblica mai, qualunque cosa succeda.
+ * Il tasto di PROVA (solo admin): stesso metodo, ma si FERMA sulla recensione
+ * trovata con la risposta già scritta nel riquadro, senza pubblicare e senza
+ * scartare — così una persona può guardare lo schermo del server e verificare
+ * che sia davvero quella giusta prima di decidere. La finestra la chiude lei.
  */
 export function provaCodaIgnora(
   root: Radice,
@@ -1891,7 +1927,7 @@ export function provaCodaIgnora(
     testoRecensione?: string;
   } = {},
 ): Promise<EsitoCodaIgnora> {
-  return cercaNellaCoda(root, nomeCliente, testo, { ...opts, uscita: "sicura" });
+  return cercaNellaCoda(root, nomeCliente, testo, { ...opts, uscita: "ferma" });
 }
 
 export type EsitoPerSede = {

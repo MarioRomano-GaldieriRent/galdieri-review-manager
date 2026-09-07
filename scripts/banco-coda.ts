@@ -1,6 +1,8 @@
 import { chromium, type Browser } from "playwright";
 import { cercaNellaCoda } from "@/server/robot/google";
 
+type Uscita = "sicura" | "ferma";
+
 //   npm run robot:banco
 //
 // Banco di prova della coda: una finta pagina che imita la vista di Google
@@ -123,7 +125,7 @@ type Prova = { nome: string; controlli: [string, boolean][]; passi: string[] };
 async function scenario(
   browser: Browser,
   titolo: string,
-  { conTesto, reale }: { conTesto: boolean; reale: boolean },
+  { conTesto, reale, uscita }: { conTesto: boolean; reale: boolean; uscita: Uscita },
 ): Promise<Prova> {
   const page = await browser.newPage();
   await page.setContent(pagina(reale));
@@ -131,7 +133,7 @@ async function scenario(
   const passi: string[] = [];
   const esito = await cercaNellaCoda(page, "D", "PROVA — non pubblicare", {
     log: (m) => passi.push(m),
-    uscita: "sicura",
+    uscita,
     maxIgnora: 10,
     testoRecensione: conTesto ? BERSAGLIO.testo : undefined,
   });
@@ -146,6 +148,9 @@ async function scenario(
     const v = (c as HTMLTextAreaElement).value;
     return (typeof v === "string" ? v : c.textContent) || "";
   });
+  const contatore = await page.evaluate(
+    () => document.getElementById("contatore")?.textContent?.trim() ?? "",
+  );
   await page.close();
 
   return {
@@ -163,7 +168,14 @@ async function scenario(
       ["ha fatto 3 salti", passi.some((p) => p.includes("trovata dopo 3 «Ignora»"))],
       ["ha scritto", esito.scritto === true],
       ["NON ha pubblicato", pubblicato === false],
-      ["ha svuotato il campo uscendo", rimasto.trim() === "" || rimasto === "(campo assente)"],
+      uscita === "ferma"
+        ? // Il tasto di prova si deve FERMARE lì: risposta scritta e recensione
+          // ancora a schermo, perché una persona controlli che sia la sua.
+          ["si è fermata con la risposta scritta", rimasto.includes("PROVA")]
+        : ["ha svuotato il campo uscendo", rimasto.trim() === "" || rimasto === "(campo assente)"],
+      uscita === "ferma"
+        ? ["NON ha premuto «Ignora» dopo aver scritto", contatore.startsWith("4 di 4")]
+        : ["è passata oltre uscendo", !contatore.startsWith("4 di 4")],
     ],
   };
 }
@@ -174,16 +186,26 @@ async function scenario(
     await scenario(browser, "col testo della recensione (come il tasto sulla card)", {
       conTesto: true,
       reale: false,
+      uscita: "ferma",
     }),
     await scenario(browser, "col solo nome (se il testo non arriva)", {
       conTesto: false,
       reale: false,
+      uscita: "ferma",
     }),
     // Lo scenario che riproduce il blocco vero: tasti col testo dentro span
     // annidati e campo contenteditable SENZA placeholder.
     await scenario(browser, "markup vero di Google (campo senza placeholder)", {
       conTesto: true,
       reale: true,
+      uscita: "ferma",
+    }),
+    // L'uscita che non lascia traccia: serve che continui a funzionare, perché
+    // è quella che il robot usa quando NON deve far restare niente a schermo.
+    await scenario(browser, "uscita «sicura»: svuota e passa oltre", {
+      conTesto: true,
+      reale: true,
+      uscita: "sicura",
     }),
   ];
   await browser.close();

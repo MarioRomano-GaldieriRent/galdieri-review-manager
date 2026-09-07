@@ -138,6 +138,7 @@ const AVVIO = Date.now();
         // meglio un passo-passo leggibile che «ci sta mettendo troppo».
         scadenza: AVVIO + 200_000,
       });
+      await page0.bringToFront().catch(() => {});
       await page0
         .screenshot({ path: path.join(SCREENSHOT_DIR, "esegui-prova-coda.png") })
         .catch(() => {});
@@ -155,6 +156,11 @@ const AVVIO = Date.now();
         // arrivavano solo quelli della coda e mancava metà della storia.
         log: [...diario],
       });
+      // Trovata e scritta: la finestra resta APERTA sulla recensione con la
+      // risposta già nel riquadro, così si controlla con i propri occhi che sia
+      // quella giusta prima di decidere. La chiude l'operatore (o si chiude da
+      // sé dopo 30 minuti), esattamente come fa il tasto «cerca».
+      if (prova.trovata && prova.scritto) await attendiChiusura();
       return;
     }
 
