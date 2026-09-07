@@ -33,7 +33,9 @@ export function AutoAggiorna() {
         cur.get("fresh") === "1" || cur.has("run") || [...cur.keys()].some((k) => k.startsWith("esito"));
       if (haVolatili) {
         const pulito = new URLSearchParams();
-        for (const k of ["step", "sede"]) {
+        // step/sede = la vista; n = quante card mostrare in «Da approvare»;
+        // q = il testo cercato nella barra dei filtri, quando arriva dall'URL.
+        for (const k of ["step", "sede", "n", "q"]) {
           const v = cur.get(k);
           if (v) pulito.set(k, v);
         }

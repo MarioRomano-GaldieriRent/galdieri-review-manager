@@ -146,6 +146,29 @@ function IconaOcchioBarrato() {
 
 type Passo = "approvare" | "attesa" | "pubblicare" | "ricontrollo" | "archiviati";
 
+// Paginazione di «Da approvare»: si renderizzano le prime `n` card (parametro
+// n nell'URL), non tutta la coda. I filtri girano comunque sull'INTERO insieme
+// — la lista che si vede è sempre quella giusta, solo più corta — ma la pagina
+// pesa e si costruisce in proporzione a quante card si mostrano, e le proposte
+// AI si chiedono solo per quelle. Il conteggio nel tab resta il totale.
+const PAGINA_DEFAULT = 25;
+const PAGINE_SCELTE = [25, 50, 100] as const;
+/** «Tutte» ha comunque un tetto: oltre non ha senso costruire una pagina sola. */
+const PAGINA_MAX = 500;
+
+function leggiPagina(n: string | undefined): number {
+  if (n === "tutte") return PAGINA_MAX;
+  const v = Number(n);
+  return Number.isInteger(v) && v > 0 ? Math.min(v, PAGINA_MAX) : PAGINA_DEFAULT;
+}
+
+/** Porta `n` nei link della vista (Aggiorna, mostra altre), solo se non è il default. */
+function conPagina(href: string, n: number): string {
+  if (n === PAGINA_DEFAULT) return href;
+  const sep = href.includes("?") ? "&" : "?";
+  return `${href}${sep}n=${n >= PAGINA_MAX ? "tutte" : n}`;
+}
+
 /** Al momento si mostrano solo le recensioni a 5 stelle senza commento. */
 function soloCinqueSenzaCommento(v: VocePubblicazione): boolean {
   return v.stelle === 5 && !v.testoRecensione;
@@ -172,9 +195,12 @@ export default async function HomePage({
     esitoMsg?: string;
     esitoChiave?: string;
     fresh?: string;
+    /** Quante card mostrare in «Da approvare»: 25 (default), 50, 100, "tutte". */
+    n?: string;
   }>;
 }) {
   const sp = await searchParams;
+  const pagina = leggiPagina(sp.n);
   // Occhio in alto: spento (barrato) = solo le recensioni coperte da una regola
   // attiva (default); acceso = TUTTE le recensioni (1–5★), in ordine di stelle.
   //
@@ -228,6 +254,8 @@ export default async function HomePage({
   let graphOk = true;
   let erroreGraph: string | null = null;
   let daApprovare: { r: Recensione; regola: Regola | null; rispostaPronta?: string | null }[] = [];
+  /** Le prime `pagina` card di daApprovare: le sole che si renderizzano. */
+  let visibili: typeof daApprovare = [];
   let nApprovare: number | null = null;
   /** Proposte AI già salvate, per chiave recensione (le mancanti se le chiede la card). */
   let suggeritiAI = new Map<string, { testo: string }>();
@@ -435,11 +463,13 @@ export default async function HomePage({
       });
     }
     nApprovare = daApprovare.length;
+    // DOPO tutti i filtri e l'ordinamento: si taglia solo ciò che si mostra.
+    visibili = daApprovare.slice(0, pagina);
 
-    // Proposte AI GIÀ generate per le positive con commento: una sola query, e
-    // la card parte col box pieno. Quelle che mancano se le chiede il campo da
-    // solo, a pagina già visibile (vedi CampoRispostaAI).
-    const chiaviAI = daApprovare
+    // Proposte AI GIÀ generate per le positive con commento fra quelle MOSTRATE:
+    // una sola query, e la card parte col box pieno. Quelle che mancano se le
+    // chiede il campo da solo, a pagina già visibile (vedi CampoRispostaAI).
+    const chiaviAI = visibili
       .filter((x) => (x.r.stelle ?? 0) >= 4 && (x.r.originale || "").trim() && !x.rispostaPronta)
       .map((x) => x.r.chiave);
     if (chiaviAI.length > 0) {
@@ -559,7 +589,7 @@ export default async function HomePage({
         <Link
           href={
             step === "approvare"
-              ? "/?fresh=1"
+              ? conPagina("/?fresh=1", pagina)
               : step === "attesa"
                 ? "/?step=attesa"
                 : step === "ricontrollo"
@@ -600,7 +630,13 @@ export default async function HomePage({
 
       {/* =================================================== Da approvare === */}
       {step === "approvare" && (
-        <section className="dash-centro">
+        <section
+          className="dash-centro"
+          // Quante card ci sono davvero nella pagina rispetto al totale: chi
+          // cerca o filtra fra le card nel browser sa che vede solo le prime.
+          data-mostrate={visibili.length}
+          data-totale={daApprovare.length}
+        >
           <AutoAggiorna />
 
           {!graphOk && (
@@ -636,7 +672,7 @@ export default async function HomePage({
                 : "Nessuna recensione da approvare (nessuna coperta dalle regole attive)."}
             </section>
           ) : (
-            daApprovare.map(({ r, regola, rispostaPronta }) => {
+            visibili.map(({ r, regola, rispostaPronta }) => {
               const nodo = regola ? nodoRisposta(regola) : null;
               const proposta = nodo ? testoPerRecensione(nodo, r) : null;
               // Se il customer care ha già rimandato la risposta (voce «pronta»),
@@ -824,6 +860,40 @@ export default async function HomePage({
               );
             })
           )}
+
+          {daApprovare.length > 0 &&
+            (daApprovare.length > visibili.length || pagina !== PAGINA_DEFAULT) && (
+              <nav className="pub-sedi" aria-label="Quante recensioni mostrare">
+                <span className="hint">
+                  Mostrate {visibili.length} di {daApprovare.length}
+                </span>
+                {daApprovare.length > visibili.length && (
+                  <Link
+                    href={conPagina("/", Math.min(pagina + PAGINA_DEFAULT, PAGINA_MAX))}
+                    className="btn-mini"
+                  >
+                    Mostra altre {Math.min(PAGINA_DEFAULT, daApprovare.length - visibili.length)}
+                  </Link>
+                )}
+                {PAGINE_SCELTE.map((k) => (
+                  <Link
+                    key={k}
+                    href={conPagina("/", k)}
+                    className={`btn-mini${pagina === k ? " is-active" : ""}`}
+                    title={`Mostra ${k} recensioni per volta`}
+                  >
+                    {k}
+                  </Link>
+                ))}
+                <Link
+                  href={conPagina("/", PAGINA_MAX)}
+                  className={`btn-mini${pagina >= PAGINA_MAX ? " is-active" : ""}`}
+                  title="Mostra tutte le recensioni in una pagina sola"
+                >
+                  Tutte
+                </Link>
+              </nav>
+            )}
         </section>
       )}
 
