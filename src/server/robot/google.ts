@@ -225,11 +225,20 @@ async function bottoneInviaRisposta(root: Radice): Promise<Locator | null> {
   // sulla stessa riga di «Ignora». Si accetta SOLO se il campo della coda è
   // davvero a schermo: senza quel vincolo, in una lista qualunque si rischiava
   // di scambiare per submit il «Rispondi» di un'altra recensione.
-  const campoCoda = await root
-    .getByPlaceholder(/Risposta pubblica|La tua risposta/i)
-    .count()
-    .catch(() => 0);
-  if (campoCoda === 0) return null;
+  // «a schermo» va inteso alla lettera: contare non basta, perché Google tiene
+  // nel DOM anche i pezzi NASCOSTI della vista che non stai guardando, e un
+  // conteggio li includeva — bastava quello per aprire questa strada mentre si
+  // era ancora su una lista qualunque.
+  const campi = root.getByPlaceholder(/Risposta pubblica|La tua risposta/i);
+  const quanti = Math.min(await campi.count().catch(() => 0), 6);
+  let campoVisibile = false;
+  for (let i = 0; i < quanti && !campoVisibile; i++) {
+    campoVisibile = await campi
+      .nth(i)
+      .isVisible()
+      .catch(() => false);
+  }
+  if (!campoVisibile) return null;
   return rispondiSullaRigaDi(root.getByRole("button", { name: /^Ignora$/i }).first(), false);
 }
 
@@ -1065,7 +1074,7 @@ export type EsitoCodaIgnora = {
  * vecchio (manca «npm run build» + restart dopo il git pull) e non serve
  * cercare il problema altrove.
  */
-export const VERSIONE_CODA = "coda-5";
+export const VERSIONE_CODA = "coda-6";
 
 /** Minuscolo, senza accenti, spazi normalizzati: per confrontare i nomi. */
 function senzaAccenti(x: string): string {
@@ -1213,6 +1222,22 @@ export async function cercaNellaCoda(
    * senza pretendere che stiano tutti nello stesso frame — dal vivo si è visto
    * che possono essere sparsi.
    */
+  /**
+   * Il primo elemento VISIBILE fra quelli che combaciano. Contarli non basta:
+   * l'interfaccia di Google tiene nel DOM anche i pezzi NASCOSTI della vista
+   * che non stai guardando, quindi il campo di risposta e l'«Ignora» della coda
+   * risultavano presenti già mentre eri sulla lista — gli indizi erano accesi
+   * prima ancora di cliccare, e il cambiamento non si vedeva mai.
+   */
+  const primoVisibile = async (loc: Locator, max = 6): Promise<Locator | null> => {
+    const n = Math.min(await loc.count().catch(() => 0), max);
+    for (let i = 0; i < n; i++) {
+      const c = loc.nth(i);
+      if (await c.isVisible().catch(() => false)) return c;
+    }
+    return null;
+  };
+
   const etichettaIgnora = /^ignora$|^ignore$|^salta$|^skip$/i;
   const contatoreCoda = /\d+\s*di\s*\d+/i;
   const campoRisposta = /Risposta pubblica|La tua risposta/i;
@@ -1223,12 +1248,8 @@ export async function cercaNellaCoda(
     let punti = 0;
 
     for (const r of radici()) {
-      const n = await r
-        .getByRole("button", { name: etichettaIgnora })
-        .first()
-        .isEnabled()
-        .catch(() => false);
-      if (n) {
+      const b = await primoVisibile(r.getByRole("button", { name: etichettaIgnora }));
+      if (b && (await b.isEnabled().catch(() => false))) {
         punti++;
         radice = radice ?? r;
         visti.push(`«Ignora» attivo (${nomeRadice(r)})`);
@@ -1241,8 +1262,8 @@ export async function cercaNellaCoda(
     // radice non serviva a niente: in una pagina di recensioni c'è ovunque.
     // Si scartano anche gli intervalli tipo «1-10 di 348», che sono pager.
     for (const r of radici()) {
-      const c = r.getByText(contatoreCoda).first();
-      if ((await c.count().catch(() => 0)) === 0) continue;
+      const c = await primoVisibile(r.getByText(contatoreCoda));
+      if (!c) continue;
       const testoC = ((await c.textContent().catch(() => "")) || "").replace(/\s+/g, " ").trim();
       if (/\d\s*[-–]\s*\d+\s*di/i.test(testoC)) continue; // «1-10 di 348»: è un pager
       const attorno = (
@@ -1261,11 +1282,7 @@ export async function cercaNellaCoda(
     }
 
     for (const r of radici()) {
-      const n = await r
-        .getByPlaceholder(campoRisposta)
-        .count()
-        .catch(() => 0);
-      if (n > 0) {
+      if (await primoVisibile(r.getByPlaceholder(campoRisposta))) {
         punti++;
         radice = radice ?? r;
         visti.push(`campo di risposta già aperto (${nomeRadice(r)})`);
@@ -1280,10 +1297,79 @@ export async function cercaNellaCoda(
     };
   };
 
-  // L'etichetta VERA osservata è «Rispondere a recensioni» (non «Rispondi
-  // alle…», che era solo una supposizione iniziale non calibrata dal vivo).
-  const etichettaCoda =
-    /rispondere a recensioni|rispondi alle recensioni|reply to reviews|gestisci le risposte|manage responses/i;
+  /**
+   * Come si trova il tasto per ENTRARE nella coda. Cercarlo per «nome
+   * accessibile» con una frase esatta non è bastato — e infatti, ripensandoci
+   * col senno del log, non è mai stato cliccato: l'etichetta cambia
+   * («Rispondere a recensioni», «Rispondi alle recensioni», spesso con un
+   * contatore accanto) e a volte il testo è spezzato fra più elementi, così
+   * getByRole non lo vedeva e getByText restituiva il contenitore grande.
+   *
+   * Qui si guarda il DOM vero: si prende l'elemento PIÙ PICCOLO il cui testo
+   * (o aria-label) parla insieme di «rispond…» e «recension…», si sale al primo
+   * antenato cliccabile e lo si MARCA con un attributo — poi il click lo fa
+   * Playwright, con i suoi controlli di visibilità e scroll. È la stessa
+   * tecnica già usata per il «Rispondi» della card giusta.
+   */
+  const marcaCandidati = (r: Radice): Promise<string[]> =>
+    r
+      .evaluate(() => {
+        // ATTENZIONE: qui dentro NIENTE funzioni con nome (`const f = () => …`).
+        // Il robot gira con tsx/esbuild, che le avvolge in `__name(…)`, e quel
+        // wrapper NON esiste nel browser: la evaluate lancerebbe
+        // «__name is not defined» — che è esattamente quello che succedeva, con
+        // l'errore nascosto da un catch silenzioso. Tutto inline, quindi.
+        document
+          .querySelectorAll("[data-robot-coda]")
+          .forEach((e) => e.removeAttribute("data-robot-coda"));
+        const cliccabile = "button, a, [role=button], [role=tab], [role=link], [role=menuitem]";
+        const scelti: { el: Element; testo: string }[] = [];
+        const visti = new Set<Element>();
+        for (const e of Array.from(document.querySelectorAll("*"))) {
+          const box = e.getBoundingClientRect();
+          if (box.width < 2 || box.height < 2) continue; // non a schermo
+          const testo = (e.getAttribute("aria-label") || e.textContent || "")
+            .replace(/\s+/g, " ")
+            .trim();
+          const t = testo.toLowerCase();
+          const parla =
+            t.length > 0 &&
+            t.length <= 60 &&
+            ((t.includes("rispond") && t.includes("recension")) ||
+              (t.includes("reply") && t.includes("review")));
+          if (!parla) continue;
+          // Se un figlio combacia già, questo è solo il contenitore: si scende.
+          let figlio = false;
+          for (const c of Array.from(e.children)) {
+            const tc = (c.getAttribute("aria-label") || c.textContent || "")
+              .replace(/\s+/g, " ")
+              .trim()
+              .toLowerCase();
+            if (
+              tc.length > 0 &&
+              tc.length <= 60 &&
+              ((tc.includes("rispond") && tc.includes("recension")) ||
+                (tc.includes("reply") && tc.includes("review")))
+            ) {
+              figlio = true;
+              break;
+            }
+          }
+          if (figlio) continue;
+          const bersaglio = e.closest(cliccabile) || e;
+          if (visti.has(bersaglio)) continue;
+          visti.add(bersaglio);
+          scelti.push({ el: bersaglio, testo });
+          if (scelti.length >= 4) break;
+        }
+        scelti.forEach((o, i) => o.el.setAttribute("data-robot-coda", String(i)));
+        return scelti.map((o) => o.el.tagName.toLowerCase() + ": " + o.testo.slice(0, 45));
+      })
+      // L'errore va DETTO, non inghiottito: nascosto qui dentro è costato due giri.
+      .catch((e) => {
+        annota(`lettura del DOM fallita in ${nomeRadice(r)}: ${perche(e)}`);
+        return [] as string[];
+      });
 
   // Lettura PRIMA di toccare qualsiasi cosa: serve solo come rumore di fondo.
   // NON è una scorciatoia per saltare il click — usarla così era il difetto:
@@ -1291,52 +1377,76 @@ export async function cercaNellaCoda(
   const iniziali = await leggiSegnali();
   annota(`indizi di coda prima di cliccare: ${iniziali.descrizione}`);
 
-  let coda: Radice | null = null;
-  const tentativi: { via: string; loc: Locator }[] = [];
-  for (const r of radici()) {
-    const dove = nomeRadice(r);
-    tentativi.push({ via: `bottone · ${dove}`, loc: r.getByRole("button", { name: etichettaCoda }) });
-    tentativi.push({ via: `link · ${dove}`, loc: r.getByRole("link", { name: etichettaCoda }) });
-    tentativi.push({ via: `tab · ${dove}`, loc: r.getByRole("tab", { name: etichettaCoda }) });
-    tentativi.push({ via: `testo · ${dove}`, loc: r.getByText(etichettaCoda) });
-  }
+  /**
+   * Si è entrati davvero? Serve un CAMBIAMENTO rispetto a prima: o più indizi,
+   * o indizi diversi con almeno due su tre. Il solo «più indizi» non basta,
+   * perché il punteggio è limitato a 3: se la lista ne mostrava già tre, nessun
+   * click avrebbe mai potuto farlo salire.
+   */
+  const entrato = (dopo: Segnali): boolean =>
+    dopo.radice !== null &&
+    (dopo.punti > iniziali.punti || (dopo.punti >= 2 && dopo.descrizione !== iniziali.descrizione));
 
-  for (const t of tentativi) {
+  let coda: Radice | null = null;
+  const urlPrima = pg.url();
+
+  for (const r of radici()) {
     if (coda || scaduto()) break;
-    const n = await t.loc.count().catch(() => 0);
-    if (n === 0) continue;
-    annota(`${t.via}: ${n} corrispondenze per «Rispondere a recensioni».`);
-    // Si provano le prime corrispondenze: getByText prende spesso il
-    // CONTENITORE esterno prima del bottone vero, e quello non è cliccabile.
-    for (let i = 0; i < Math.min(n, 3) && !coda; i++) {
-      const c = t.loc.nth(i);
-      if (!(await c.isVisible().catch(() => false))) {
-        annota(`  ${i + 1}ª: presente ma non visibile, salto.`);
-        continue;
-      }
-      const suo = ((await c.textContent().catch(() => "")) || "").replace(/\s+/g, " ").trim();
-      if (suo.length > 80) {
-        annota(`  ${i + 1}ª: è un contenitore («${suo.slice(0, 40)}…»), non lo clicco.`);
-        continue;
-      }
+    const etichette = await marcaCandidati(r);
+    if (etichette.length === 0) {
+      annota(`nessun candidato «rispondere a recensioni» in ${nomeRadice(r)}.`);
+      continue;
+    }
+    annota(`candidati in ${nomeRadice(r)}: ${JSON.stringify(etichette)}`);
+    for (let i = 0; i < etichette.length && !coda; i++) {
+      const c = r.locator(`[data-robot-coda="${i}"]`).first();
+      if ((await c.count().catch(() => 0)) === 0) continue;
       await c.scrollIntoViewIfNeeded().catch(() => {});
       try {
         await c.click({ timeout: 6000 });
-        annota(`  ${i + 1}ª («${suo.slice(0, 40)}»): cliccata.`);
+        annota(`  cliccato il candidato ${i + 1} (${etichette[i]}).`);
       } catch (e) {
-        annota(`  ${i + 1}ª («${suo.slice(0, 40)}»): click FALLITO — ${perche(e)}`);
+        annota(`  candidato ${i + 1} (${etichette[i]}): click FALLITO — ${perche(e)}`);
         continue;
       }
-      await pg.waitForTimeout(2200);
-      // Si è entrati solo se il click ha fatto CAMBIARE le cose in meglio: un
-      // punteggio più alto di prima. Se resta uguale, il click non ha aperto
-      // niente e si prova la strada successiva.
+      await pg.waitForTimeout(2500);
       const dopo = await leggiSegnali();
-      if (dopo.punti > iniziali.punti && dopo.radice) {
+      if (entrato(dopo)) {
         coda = dopo.radice;
         annota(`  sono entrato nella coda: ${dopo.descrizione}`);
       } else {
-        annota(`  cliccato, ma la vista non è cambiata (${dopo.descrizione}): provo la prossima strada.`);
+        annota(
+          `  cliccato, ma la vista non è cambiata (${dopo.descrizione}; URL ${pg.url() === urlPrima ? "invariato" : "cambiato"}): provo il prossimo.`,
+        );
+      }
+    }
+  }
+
+  // Rete di sicurezza: la vecchia ricerca per ruolo/etichetta, nel caso il
+  // controllo non sia raggiungibile con la marcatura (per esempio se sta in un
+  // frame che non si lascia interrogare).
+  const etichettaCoda =
+    /rispondere a recensioni|rispondi alle recensioni|reply to reviews|gestisci le risposte|manage responses/i;
+  if (!coda && !scaduto()) {
+    annota("nessun candidato ha aperto la coda: riprovo per ruolo/etichetta.");
+    for (const r of radici()) {
+      if (coda) break;
+      for (const loc of [
+        r.getByRole("button", { name: etichettaCoda }),
+        r.getByRole("link", { name: etichettaCoda }),
+        r.getByRole("tab", { name: etichettaCoda }),
+      ]) {
+        const c = loc.first();
+        if ((await c.count().catch(() => 0)) === 0) continue;
+        await c.scrollIntoViewIfNeeded().catch(() => {});
+        await c.click({ timeout: 5000 }).catch(() => {});
+        await pg.waitForTimeout(2500);
+        const dopo = await leggiSegnali();
+        if (entrato(dopo)) {
+          coda = dopo.radice;
+          annota(`entrato per ruolo/etichetta in ${nomeRadice(r)}: ${dopo.descrizione}`);
+          break;
+        }
       }
     }
   }
@@ -1370,8 +1480,8 @@ export async function cercaNellaCoda(
    * accontenta del primo antenato con abbastanza testo, dicendolo.
    */
   const cartaCorrente = async (r: Radice): Promise<{ loc: Locator; via: string } | null> => {
-    const campo = r.getByPlaceholder(campoRisposta).first();
-    if ((await campo.count().catch(() => 0)) === 0) return null;
+    const campo = await primoVisibile(r.getByPlaceholder(campoRisposta));
+    if (!campo) return null;
     let ripiego: { loc: Locator; via: string } | null = null;
     let n: Locator = campo;
     for (let i = 0; i < 10; i++) {
@@ -1526,8 +1636,8 @@ export async function cercaNellaCoda(
         .catch(() => true)
     )
       continue;
-    const c = loc.first();
-    if (!(await c.isVisible().catch(() => false))) {
+    const c = await primoVisibile(loc);
+    if (!c) {
       annota(`campo (${via}): presente ma non visibile, salto.`);
       continue;
     }
