@@ -32,6 +32,7 @@ import {
   avviaEscalationAction,
 } from "./dashboard/actions";
 import { BottoneGoogle } from "./BottoneGoogle";
+import { BottoneProvaCoda } from "./BottoneProvaCoda";
 import { BottoneRispondi } from "./BottoneRispondi";
 import {
   chiaviArchiviate,
@@ -892,6 +893,7 @@ export default async function HomePage({
                           </ol>
                         </AnteprimaFlusso>
                         <BottoneGoogle chiave={r.chiave} label={label?.id ?? ""} nome={r.nome} />
+                        {operatore?.ruolo === "admin" && <BottoneProvaCoda chiave={r.chiave} />}
                         <VediMail id={r.messaggioId} className="btn-mini" />
                         <BottoneArchivia chiave={r.chiave} />
                       </div>
@@ -935,6 +937,7 @@ export default async function HomePage({
                       />
                       <div className="dash-azioni">
                         <BottoneGoogle chiave={r.chiave} label={label?.id ?? ""} nome={r.nome} />
+                        {operatore?.ruolo === "admin" && <BottoneProvaCoda chiave={r.chiave} />}
                         <VediMail id={r.messaggioId} className="btn-mini" />
                         <BottoneArchivia chiave={r.chiave} />
                       </div>

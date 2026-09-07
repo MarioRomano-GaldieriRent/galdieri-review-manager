@@ -42,6 +42,7 @@
     "robot:ordina": "tsx --tsconfig tsconfig.json scripts/robot-ordina.ts",
     "robot:gruppi": "tsx --tsconfig tsconfig.json scripts/robot-gruppi.ts",
     "robot:diag-gruppo": "tsx --tsconfig tsconfig.json scripts/robot-diag-gruppo.ts",
+    "robot:riprova-accesso": "tsx --tsconfig tsconfig.json scripts/robot-riprova-accesso.ts",
     "robot:esegui": "tsx --tsconfig tsconfig.json scripts/robot-esegui.ts",
     "robot:pubblica": "tsx --tsconfig tsconfig.json scripts/robot-pubblica.ts",
     "diag:recticket": "tsx --tsconfig tsconfig.json scripts/diag-recensioni-ticket.ts",

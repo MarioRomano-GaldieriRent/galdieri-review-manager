@@ -1018,6 +1018,142 @@ export async function rispondiAllaRecensione(
   };
 }
 
+export type EsitoCodaIgnora = {
+  trovata: boolean;
+  scritto: boolean;
+  dettaglio: string;
+  /** Un rigo per passo: cosa ha trovato/cliccato, in ordine. Sempre presente,
+   * anche quando fallisce — è la diagnostica che serve per calibrare i
+   * selettori (nomi esatti dei controlli «Rispondi alle recensioni»/«Ignora»,
+   * che qui non erano ancora documentati). */
+  passi: string[];
+};
+
+/**
+ * METODO ALTERNATIVO, da calibrare dal vivo: invece di scorrere/cercare nella
+ * lista intera della sede, usa la coda di Google «Rispondi alle recensioni»
+ * (le sole recensioni ancora SENZA risposta, una alla volta) e il tasto
+ * «Ignora» per saltare alla successiva finché non compare quella cercata. Può
+ * essere molto più diretto in una sede con tante recensioni.
+ *
+ * Presuppone la sede GIÀ APERTA (root = quello che ha restituito
+ * apriSedePerNome). NON pubblica MAI: trovato il cliente scrive la bozza (se
+ * `testo` non è vuoto) e chiude su «Annulla», come rispondiAllaRecensione.
+ */
+export async function provaCodaIgnora(
+  root: Radice,
+  nomeCliente: string,
+  testo: string,
+  opts: { maxIgnora?: number; log?: (m: string) => void } = {},
+): Promise<EsitoCodaIgnora> {
+  const maxIgnora = opts.maxIgnora ?? 60;
+  const log = opts.log ?? (() => {});
+  const nome = nomeCliente.trim();
+  const pg = paginaDi(root);
+  const passi: string[] = [];
+  const annota = (m: string) => {
+    passi.push(m);
+    log(m);
+  };
+
+  const etichettaCoda = /rispondi alle recensioni|reply to reviews|gestisci le risposte|manage responses/i;
+  let inCoda = false;
+  for (const loc of [
+    root.getByRole("button", { name: etichettaCoda }),
+    root.getByRole("link", { name: etichettaCoda }),
+    root.getByRole("tab", { name: etichettaCoda }),
+    root.getByText(etichettaCoda),
+  ]) {
+    const c = loc.first();
+    if ((await c.count().catch(() => 0)) === 0) continue;
+    if (!(await c.isVisible().catch(() => false))) continue;
+    await c.scrollIntoViewIfNeeded().catch(() => {});
+    await c.click({ timeout: 6000 }).catch(() => {});
+    annota('cliccato «Rispondi alle recensioni».');
+    inCoda = true;
+    break;
+  }
+  await pg.waitForTimeout(1800);
+
+  if (!inCoda) {
+    return {
+      trovata: false,
+      scritto: false,
+      passi,
+      dettaglio: "Nessun controllo «Rispondi alle recensioni» trovato: il metodo non è applicabile qui, o l'etichetta di Google è diversa da quella prevista.",
+    };
+  }
+
+  const etichettaIgnora = /^ignora$|^ignore$|^salta$|^skip$/i;
+  let trovatoCliente = false;
+  for (let i = 0; i <= maxIgnora; i++) {
+    const presente = (await root.getByText(nome, { exact: false }).count().catch(() => 0)) > 0;
+    if (presente) {
+      trovatoCliente = true;
+      annota(`«${nome}» trovato dopo ${i} «Ignora».`);
+      break;
+    }
+    let cliccato = false;
+    for (const loc of [
+      root.getByRole("button", { name: etichettaIgnora }),
+      root.getByRole("link", { name: etichettaIgnora }),
+    ]) {
+      const b = loc.first();
+      if ((await b.count().catch(() => 0)) === 0) continue;
+      if (!(await b.isVisible().catch(() => false))) continue;
+      await b.click({ timeout: 5000 }).catch(() => {});
+      cliccato = true;
+      break;
+    }
+    if (!cliccato) {
+      annota(`nessun «Ignora» al passo ${i}: mi fermo qui.`);
+      break;
+    }
+    await pg.waitForTimeout(900);
+  }
+
+  if (!trovatoCliente) {
+    return {
+      trovata: false,
+      scritto: false,
+      passi,
+      dettaglio: `«${nome}» non trovato entro ${maxIgnora} «Ignora» (o «Ignora» non più disponibile prima di allora).`,
+    };
+  }
+
+  const rispondi = root.getByRole("button", { name: /^rispondi$/i }).first();
+  if ((await rispondi.count().catch(() => 0)) === 0) {
+    return {
+      trovata: true,
+      scritto: false,
+      passi,
+      dettaglio: `Trovato «${nome}» ma senza «Rispondi» (forse ha già risposta).`,
+    };
+  }
+  await rispondi.click({ timeout: 6000 }).catch(() => {});
+  annota('cliccato «Rispondi».');
+  await pg.waitForTimeout(1200);
+
+  if (!testo.trim()) {
+    return { trovata: true, scritto: false, passi, dettaglio: "Riquadro aperto — non ho scritto niente (test senza testo)." };
+  }
+
+  const r = await scriviRisposta(root, testo);
+  annota(`scritto (${r.via}); «Pubblica» abilitato: ${r.abilitato}.`);
+  await pg.waitForTimeout(600);
+  await annulla(root);
+  annota('«Annulla» cliccato: NON pubblicato.');
+
+  return {
+    trovata: true,
+    scritto: r.scritto,
+    passi,
+    dettaglio: r.scritto
+      ? `Trovato «${nome}» con la coda «Ignora» e testo SCRITTO nel riquadro — NON pubblicato.`
+      : `Trovato «${nome}» con la coda «Ignora» ma non sono riuscito a scrivere nel riquadro.`,
+  };
+}
+
 export type EsitoPerSede = {
   trovata: boolean;
   scritto: boolean;

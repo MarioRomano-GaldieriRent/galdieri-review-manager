@@ -2,7 +2,9 @@ import { mkdirSync } from "fs";
 import path from "path";
 import {
   apriContesto,
+  apriSedePerNome,
   cercaNeiGruppiPerPagina,
+  provaCodaIgnora,
   pubblica,
   rispondiPerSede,
   sessioneAttiva,
@@ -28,12 +30,12 @@ import {
 // Stampa UNA riga  __ESITO__ {json}  e chiude (tranne "cerca", che resta aperta).
 
 type Job = {
-  azione: "test" | "pubblica" | "cerca";
+  azione: "test" | "pubblica" | "cerca" | "prova-coda";
   nome: string;
   testo: string;
   nomeGoogle: string;
 };
-const AZIONI = ["test", "pubblica", "cerca"] as const;
+const AZIONI = ["test", "pubblica", "cerca", "prova-coda"] as const;
 
 function leggiJob(): Job {
   const raw = process.env.ROBOT_JOB || process.argv[2] || "";
@@ -80,6 +82,40 @@ const traccia = (m: string) => console.error("   " + m);
     const page0 = ctx.pages()[0] ?? (await ctx.newPage());
     if (!(await sessioneAttiva(page0))) {
       esito({ ok: false, stato: "non-loggato", messaggio: "Robot non loggato su Google. Lancia: npm run robot:sessione" });
+      return;
+    }
+
+    // "prova-coda": METODO DI PROVA, percorso a sé — usa la coda «Rispondi alle
+    // recensioni» + «Ignora» invece di scorrere/cercare nella lista. Solo
+    // per-sede (nessun ripiego sui gruppi: qui si vuole isolare il metodo
+    // nuovo per vedere se regge da solo). NON pubblica MAI.
+    if (job.azione === "prova-coda") {
+      if (!job.nomeGoogle) {
+        esito({
+          ok: false,
+          stato: "sede-non-mappata",
+          messaggio: "Questa sede non è mappata su Google (Impostazioni → Mapping): serve il nome esatto dell'attività per aprirla direttamente.",
+        });
+        return;
+      }
+      traccia(`[prova-coda] apro la sede «${job.nomeGoogle}»…`);
+      const sede = await apriSedePerNome(page0, job.nomeGoogle, { log: traccia });
+      if (!sede.aperta || !sede.root) {
+        esito({ ok: false, stato: "sede-non-aperta", messaggio: sede.dettaglio });
+        return;
+      }
+      const prova = await provaCodaIgnora(sede.root, job.nome, job.testo, { log: traccia });
+      await page0
+        .screenshot({ path: path.join(SCREENSHOT_DIR, "esegui-prova-coda.png") })
+        .catch(() => {});
+      esito({
+        ok: prova.trovata,
+        stato: prova.trovata ? (prova.scritto ? "prova-scritta" : "prova-trovata-non-scritta") : "prova-non-trovata",
+        trovata: prova.trovata,
+        scritto: prova.scritto,
+        messaggio: prova.dettaglio,
+        log: prova.passi,
+      });
       return;
     }
 

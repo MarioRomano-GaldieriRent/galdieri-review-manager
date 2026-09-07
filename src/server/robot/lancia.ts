@@ -7,7 +7,10 @@ import { spawn, type ChildProcess } from "node:child_process";
 // blocca finché il robot non ha finito.
 
 export type JobRobot = {
-  azione: "test" | "pubblica" | "cerca";
+  // "prova-coda": METODO DI PROVA (solo admin, vedi provaCodaIgnoraAction) —
+  // usa la coda «Rispondi alle recensioni» + «Ignora» invece di scorrere la
+  // lista. NON pubblica MAI, qualunque cosa succeda: è un test.
+  azione: "test" | "pubblica" | "cerca" | "prova-coda";
   nome: string;
   testo: string;
   /**
@@ -24,6 +27,8 @@ export type EsitoRobot = {
   gruppo?: string;
   trovata?: boolean;
   scritto?: boolean;
+  /** Passo-passo del metodo di prova «coda Ignora» (solo azione "prova-coda"). */
+  log?: string[];
 };
 
 // -------------------------------------------------------------- un robot per volta
