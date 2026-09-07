@@ -1034,7 +1034,7 @@ export type EsitoCodaIgnora = {
  * vecchio (manca «npm run build» + restart dopo il git pull) e non serve
  * cercare il problema altrove.
  */
-export const VERSIONE_CODA = "coda-3";
+export const VERSIONE_CODA = "coda-4";
 
 /**
  * METODO ALTERNATIVO: invece di scorrere/cercare nella lista intera della
@@ -1054,8 +1054,10 @@ export const VERSIONE_CODA = "coda-3";
  * così:
  *  1. il tasto della coda NON è detto che stia nello stesso contesto DOM della
  *     lista (pagina o iframe): qui si cerca in TUTTI — pagina e ogni iframe;
- *  2. un click può fallire in silenzio: entrare nella coda va VERIFICATO
- *     (compare «Ignora» / il contatore), non dedotto dall'aver cliccato;
+ *  2. un click può fallire in silenzio, e gli indizi della coda («Ignora», un
+ *     «N di M») esistono anche sulla LISTA: entrare va verificato come un
+ *     CAMBIAMENTO dopo il click — più indizi di prima — non dedotto dall'aver
+ *     cliccato né da una lettura fatta prima di cliccare;
  *  3. chi guarda ha bisogno del passo-passo SEMPRE, anche quando va bene:
  *     l'elenco dei controlli veri viene registrato a ogni tappa.
  *
@@ -1135,29 +1137,78 @@ export async function provaCodaIgnora(
   await fotografaControlli("controlli prima di entrare");
 
   /**
-   * Verifica POSITIVA di essere DENTRO la coda: compare un «Ignora», oppure il
-   * contatore «N di TOT». Prima si dava per riuscito il click e si andava
-   * avanti a vuoto; è la ragione per cui il primo giro non diceva niente.
+   * Riconoscere la coda: NON basta un indizio solo. Su Business Profile
+   * «Ignora» è anche l'etichetta con cui si chiudono i banner, e un «N di M»
+   * può essere il pager della lista: presi in OR facevano scambiare la LISTA
+   * per la coda, e allora il tasto «Rispondere a recensioni» non veniva più
+   * cliccato (era il difetto del giro precedente). Qui si contano tre indizi
+   * separati e si registra il punteggio, senza pretendere che stiano tutti
+   * nello stesso frame — dal vivo si è visto che possono essere sparsi.
    */
   const etichettaIgnora = /^ignora$|^ignore$|^salta$|^skip$/i;
-  const contatoreCoda = /\d+\s+di\s+\d+/i;
-  const radiceCoda = async (): Promise<Radice | null> => {
-    const rr = radici();
-    for (const r of rr) {
+  const contatoreCoda = /\d+\s*di\s*\d+/i;
+  type Segnali = { punti: number; radice: Radice | null; descrizione: string };
+  const leggiSegnali = async (): Promise<Segnali> => {
+    let radice: Radice | null = null;
+    const visti: string[] = [];
+    let punti = 0;
+
+    for (const r of radici()) {
       const n = await r
         .getByRole("button", { name: etichettaIgnora })
-        .count()
-        .catch(() => 0);
-      if (n > 0) return r;
+        .first()
+        .isEnabled()
+        .catch(() => false);
+      if (n) {
+        punti++;
+        radice = radice ?? r;
+        visti.push(`«Ignora» attivo (${nomeRadice(r)})`);
+        break;
+      }
     }
-    for (const r of rr) {
+
+    // Contatore: vale solo se la parola «recensioni» sta ATTACCATA al numero
+    // (nell'elemento stesso o in quello che lo contiene). Cercarla in tutta la
+    // radice non serviva a niente: in una pagina di recensioni c'è ovunque.
+    // Si scartano anche gli intervalli tipo «1-10 di 348», che sono pager.
+    for (const r of radici()) {
+      const c = r.getByText(contatoreCoda).first();
+      if ((await c.count().catch(() => 0)) === 0) continue;
+      const testoC = ((await c.textContent().catch(() => "")) || "").replace(/\s+/g, " ").trim();
+      if (/\d\s*[-–]\s*\d+\s*di/i.test(testoC)) continue; // «1-10 di 348»: è un pager
+      const attorno = (
+        (await c
+          .locator("xpath=..")
+          .textContent()
+          .catch(() => "")) || ""
+      )
+        .replace(/\s+/g, " ")
+        .trim();
+      if (!/recension/i.test(testoC) && !/recension/i.test(attorno)) continue;
+      punti++;
+      radice = radice ?? r;
+      visti.push(`contatore «${testoC.slice(0, 30)}» (${nomeRadice(r)})`);
+      break;
+    }
+
+    for (const r of radici()) {
       const n = await r
-        .getByText(contatoreCoda)
+        .getByPlaceholder(/Risposta pubblica|La tua risposta/i)
         .count()
         .catch(() => 0);
-      if (n > 0) return r;
+      if (n > 0) {
+        punti++;
+        radice = radice ?? r;
+        visti.push(`campo di risposta già aperto (${nomeRadice(r)})`);
+        break;
+      }
     }
-    return null;
+
+    return {
+      punti,
+      radice,
+      descrizione: visti.length ? `${punti}/3 — ${visti.join("; ")}` : "0/3 — nessun indizio",
+    };
   };
 
   // L'etichetta VERA osservata è «Rispondere a recensioni» (non «Rispondi
@@ -1165,9 +1216,13 @@ export async function provaCodaIgnora(
   const etichettaCoda =
     /rispondere a recensioni|rispondi alle recensioni|reply to reviews|gestisci le risposte|manage responses/i;
 
-  let coda = await radiceCoda();
-  if (coda) annota(`sono GIÀ nella coda (${nomeRadice(coda)}): non serve cliccare niente.`);
+  // Lettura PRIMA di toccare qualsiasi cosa: serve solo come rumore di fondo.
+  // NON è una scorciatoia per saltare il click — usarla così era il difetto:
+  // un «Ignora» da banner sulla lista bastava a non cliccare mai la coda.
+  const iniziali = await leggiSegnali();
+  annota(`indizi di coda prima di cliccare: ${iniziali.descrizione}`);
 
+  let coda: Radice | null = null;
   const tentativi: { via: string; loc: Locator }[] = [];
   for (const r of radici()) {
     const dove = nomeRadice(r);
@@ -1204,13 +1259,25 @@ export async function provaCodaIgnora(
         continue;
       }
       await pg.waitForTimeout(2200);
-      coda = await radiceCoda();
-      annota(
-        coda
-          ? `  sono entrato nella coda (${nomeRadice(coda)}).`
-          : "  cliccato, ma la coda non è comparsa: provo la prossima strada.",
-      );
+      // Si è entrati solo se il click ha fatto CAMBIARE le cose in meglio: un
+      // punteggio più alto di prima. Se resta uguale, il click non ha aperto
+      // niente e si prova la strada successiva.
+      const dopo = await leggiSegnali();
+      if (dopo.punti > iniziali.punti && dopo.radice) {
+        coda = dopo.radice;
+        annota(`  sono entrato nella coda: ${dopo.descrizione}`);
+      } else {
+        annota(`  cliccato, ma la vista non è cambiata (${dopo.descrizione}): provo la prossima strada.`);
+      }
     }
+  }
+
+  // Ripiego per il caso legittimo: nessun tasto ha funzionato, ma gli indizi
+  // erano già forti in partenza (2 su 3) — può darsi che fossimo GIÀ nella
+  // coda. Si prosegue da lì, ma dicendo chiaramente che non è una certezza.
+  if (!coda && iniziali.punti >= 2 && iniziali.radice) {
+    coda = iniziali.radice;
+    annota(`nessun tasto ha aperto la coda, ma gli indizi erano già forti (${iniziali.descrizione}): proseguo da qui, ingresso PRESUNTO.`);
   }
 
   if (!coda) {
@@ -1225,9 +1292,29 @@ export async function provaCodaIgnora(
     };
   }
 
+  /**
+   * Impronta della recensione mostrata: serve a capire se un «Ignora» ha
+   * davvero fatto passare alla successiva o se ha solo chiuso un banner. Si
+   * usa il contatore quando c'è (cambia a ogni salto), altrimenti la quantità
+   * di testo a schermo.
+   */
+  const impronta = async (r: Radice): Promise<string> => {
+    const c = r.getByText(contatoreCoda).first();
+    if ((await c.count().catch(() => 0)) > 0) {
+      const t = ((await c.textContent().catch(() => "")) || "").replace(/\s+/g, " ").trim();
+      if (t) return t;
+    }
+    const b = await r
+      .locator("body")
+      .innerText()
+      .catch(() => "");
+    return `testo:${b.replace(/\s+/g, " ").trim().length}`;
+  };
+
   let trovatoCliente = false;
   let salti = 0;
   let riprese = 0;
+  let fermi = 0;
   for (let i = 0; i <= maxIgnora; i++) {
     if (scaduto()) {
       annota(`tempo esaurito dopo ${salti} «Ignora»: mi fermo per darti comunque il passo-passo.`);
@@ -1250,12 +1337,13 @@ export async function provaCodaIgnora(
       await fotografaControlli("controlli dove si è fermata");
       break;
     }
+    const prima = await impronta(coda);
     try {
       await b.click({ timeout: 5000 });
       salti++;
     } catch (e) {
       annota(`«Ignora» n. ${salti + 1}: click FALLITO — ${perche(e)}`);
-      const nuova = riprese < 2 ? await radiceCoda() : null;
+      const nuova = riprese < 2 ? (await leggiSegnali()).radice : null;
       if (nuova) {
         riprese++;
         coda = nuova;
@@ -1266,7 +1354,18 @@ export async function provaCodaIgnora(
       break;
     }
     await pg.waitForTimeout(700);
-    if (salti % 10 === 0) annota(`…${salti} «Ignora» fatti, ancora nessun «${nome}».`);
+    const dopoSalto = await impronta(coda);
+    if (dopoSalto === prima) {
+      fermi++;
+      annota(`«Ignora» n. ${salti}: la vista NON è cambiata (${prima}) — forse era il tasto di un banner, non della coda.`);
+      if (fermi >= 2) {
+        await fotografaControlli("controlli dove la vista non cambia");
+        break;
+      }
+    } else {
+      fermi = 0;
+      if (salti % 10 === 0) annota(`…${salti} «Ignora» fatti (ora: ${dopoSalto}), ancora nessun «${nome}».`);
+    }
   }
 
   if (!trovatoCliente) {
