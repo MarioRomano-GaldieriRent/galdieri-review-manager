@@ -6,18 +6,20 @@ import { cercaNellaCoda } from "@/server/robot/google";
 // Banco di prova della coda: una finta pagina che imita la vista di Google
 // (lista con il tasto «Rispondere a recensioni», poi la coda una recensione
 // alla volta con «Ignora»). Serve a verificare che il codice VERO clicchi,
-// entri, salti fino alla recensione giusta e scriva lì — senza toccare Google e
-// senza bisogno del login: gira in Chromium headless su una pagina finta.
+// entri, giri le recensioni con «Ignora» e scriva su quella giusta — senza
+// toccare Google e senza login: gira in Chromium headless.
 //
-// Ha già ripagato il costo tre volte. Ha scoperto che:
+// Ha già ripagato il costo quattro volte. Ha scoperto che:
 //  - dentro page.evaluate le funzioni con NOME rompono tutto sotto tsx
 //    («__name is not defined»), e l'errore era pure inghiottito da un catch;
 //  - contare gli elementi senza guardare se sono VISIBILI faceva risultare la
 //    coda «già aperta» mentre si era ancora sulla lista;
 //  - riconoscere la persona col solo nome è pericoloso: col cliente «D» si
 //    combaciava con «Vito D'Amico» e si sarebbe scritto sotto la SUA
-//    recensione. Il caso è qui sotto, ed è il motivo per cui adesso si
-//    riconosce anche dal TESTO della recensione.
+//    recensione — da lì il riconoscimento dal TESTO della recensione;
+//  - se il campo di risposta non si riconosceva (nella coda vera è un
+//    contenteditable senza placeholder) il metodo si fermava PRIMA di premere
+//    «Ignora» nemmeno una volta: è lo scenario «markup vero» qui sotto.
 
 type Recensione = { autore: string; testo: string };
 
@@ -29,11 +31,41 @@ const RECENSIONI: Recensione[] = [
   { autore: "Daniele Bianchi", testo: "Tutto bene, D come sempre." },
   { autore: "D", testo: "Pessima esperienza al Point aeroporto di Olbia." },
 ];
+const BERSAGLIO = RECENSIONI[3];
 
-const PAGINA = `
+/**
+ * I due tasti in fondo alla coda. In «reale» sono copiati dal DOM vero di
+ * Google: <button> col testo dentro uno span annidato e un mucchio di classi
+ * generate, «Rispondi» disabilitato finché non si scrive.
+ */
+function tasti(reale: boolean): string {
+  if (!reale) {
+    return `<button id="ignora">Ignora</button><button id="invia" disabled>Rispondi</button>`;
+  }
+  return `
+    <button id="ignora" class="AeBiU-LgbsSe FwaX8 nq9VD P8Hxme" jscontroller="O626Fe" jsname="dmDvRc">
+      <span class="XjoK4b"></span><span class="UTNHae"></span><span class="AeBiU-RLmnJb"></span>
+      <span jsname="V67aGc" class="AeBiU-vQzf8d">Ignora</span><span jsname="UkTUqb"></span>
+    </button>
+    <button id="invia" class="UywwFc-LgbsSe FwaX8 P8Hxme" jscontroller="O626Fe" jsname="hrGhad" disabled>
+      <span class="XjoK4b"></span><span class="MMvswb"><span class="OLCwg"></span></span>
+      <span jsname="V67aGc" class="UywwFc-vQzf8d">Rispondi</span><span jsname="UkTUqb"></span>
+    </button>`;
+}
+
+/** Il campo dove si scrive: con placeholder, o come nella coda vera. */
+function campo(reale: boolean): string {
+  return reale
+    ? `<div id="campo" contenteditable="true" role="textbox" aria-label="Scrivi"></div>`
+    : `<textarea id="campo" placeholder="Risposta pubblica"></textarea>`;
+}
+
+function pagina(reale: boolean): string {
+  return `
 <!doctype html><meta charset="utf-8"><title>finta Google</title>
 <style>body{font-family:sans-serif;margin:20px} .riga{display:flex;gap:8px;margin-top:10px}
-button{padding:8px 14px} .nascosto{display:none}</style>
+button{padding:8px 14px} .nascosto{display:none}
+#campo[contenteditable]{border:1px solid #ccc;min-height:40px;padding:6px}</style>
 
 <div id="lista">
   <h1>Recensioni della sede</h1>
@@ -51,23 +83,23 @@ button{padding:8px 14px} .nascosto{display:none}</style>
     <div id="autore"></div>
     <div id="stelle">★★★★★</div>
     <div id="testo"></div>
-    <textarea id="campo" placeholder="Risposta pubblica"></textarea>
-    <div class="riga">
-      <button id="ignora">Ignora</button>
-      <button id="invia" disabled>Rispondi</button>
-    </div>
+    ${campo(reale)}
+    <div class="riga">${tasti(reale)}</div>
   </div>
 </div>
 
 <script>
-  const RECENSIONI = __RECENSIONI__;
+  const RECENSIONI = ${JSON.stringify(RECENSIONI)};
+  const campo = document.getElementById("campo");
+  const leggiCampo = () => ("value" in campo ? campo.value : campo.textContent) || "";
+  const svuotaCampo = () => { if ("value" in campo) campo.value = ""; else campo.textContent = ""; };
   let i = 0;
   function mostra() {
     if (i >= RECENSIONI.length) { document.getElementById("riquadro").textContent = "Nessuna recensione da gestire"; return; }
     document.getElementById("contatore").textContent = (i + 1) + " di " + RECENSIONI.length + " recensioni";
     document.getElementById("autore").textContent = RECENSIONI[i].autore;
     document.getElementById("testo").textContent = RECENSIONI[i].testo;
-    document.getElementById("campo").value = "";
+    svuotaCampo();
     document.getElementById("invia").disabled = true;
   }
   document.getElementById("cta").addEventListener("click", () => {
@@ -76,36 +108,44 @@ button{padding:8px 14px} .nascosto{display:none}</style>
     mostra();
   });
   document.getElementById("ignora").addEventListener("click", () => { i++; mostra(); });
-  document.getElementById("campo").addEventListener("input", (e) => {
-    document.getElementById("invia").disabled = e.target.value.trim().length === 0;
+  campo.addEventListener("input", () => {
+    document.getElementById("invia").disabled = leggiCampo().trim().length === 0;
   });
   document.getElementById("banner-chiudi").addEventListener("click", function () { this.remove(); });
   window.__pubblicato = false;
   document.getElementById("invia").addEventListener("click", () => { window.__pubblicato = true; });
 </script>
-`.replace("__RECENSIONI__", JSON.stringify(RECENSIONI));
+`;
+}
 
 type Prova = { nome: string; controlli: [string, boolean][]; passi: string[] };
 
-async function scenario(browser: Browser, titolo: string, conTesto: boolean): Promise<Prova> {
+async function scenario(
+  browser: Browser,
+  titolo: string,
+  { conTesto, reale }: { conTesto: boolean; reale: boolean },
+): Promise<Prova> {
   const page = await browser.newPage();
-  await page.setContent(PAGINA);
+  await page.setContent(pagina(reale));
 
   const passi: string[] = [];
   const esito = await cercaNellaCoda(page, "D", "PROVA — non pubblicare", {
     log: (m) => passi.push(m),
     uscita: "sicura",
     maxIgnora: 10,
-    testoRecensione: conTesto ? RECENSIONI[3].testo : undefined,
+    testoRecensione: conTesto ? BERSAGLIO.testo : undefined,
   });
 
   const pubblicato = await page.evaluate(
     () => (window as unknown as { __pubblicato: boolean }).__pubblicato,
   );
-  const testoFinale = await page.evaluate(
-    () =>
-      (document.getElementById("campo") as HTMLTextAreaElement | null)?.value ?? "(campo assente)",
-  );
+  const rimasto = await page.evaluate(() => {
+    const c = document.getElementById("campo");
+    if (!c) return "(campo assente)";
+    // textarea o contenteditable: il testo sta in due posti diversi.
+    const v = (c as HTMLTextAreaElement).value;
+    return (typeof v === "string" ? v : c.textContent) || "";
+  });
   await page.close();
 
   return {
@@ -114,23 +154,16 @@ async function scenario(browser: Browser, titolo: string, conTesto: boolean): Pr
     controlli: [
       ["è entrata nella coda", passi.some((p) => p.includes("sono entrato nella coda"))],
       ["ha cliccato il tasto della coda", passi.some((p) => p.includes("cliccato il candidato"))],
-      // Il cuore della prova: NON deve fermarsi su «Vito D'Amico», che col
-      // vecchio confronto combaciava con «D».
+      // Il cuore della prova: deve GIRARE le recensioni, non fermarsi subito.
+      ["ha premuto «Ignora» per girare", passi.some((p) => p.includes("recensione 2"))],
       ["NON si è fermata su «Vito D'Amico»", esito.autore !== "Vito D'Amico"],
       ["NON si è fermata su «Daniele Bianchi»", esito.autore !== "Daniele Bianchi"],
-      ["ha trovato l'autore «D»", esito.trovata === true && esito.autore === "D"],
+      ["è arrivata alla recensione di «D»", passi.some((p) => p.includes("recensione 4"))],
+      ["l'ha riconosciuta", esito.trovata === true],
       ["ha fatto 3 salti", passi.some((p) => p.includes("trovata dopo 3 «Ignora»"))],
       ["ha scritto", esito.scritto === true],
       ["NON ha pubblicato", pubblicato === false],
-      ["ha svuotato il campo uscendo", testoFinale === "" || testoFinale === "(campo assente)"],
-      conTesto
-        ? [
-            "ha riconosciuto il TESTO",
-            passi.some(
-              (p) => p.includes("il testo E l'autore") || p.includes("il TESTO della recensione"),
-            ),
-          ]
-        : ["ha riconosciuto per autore", passi.some((p) => p.includes("combacia l'autore"))],
+      ["ha svuotato il campo uscendo", rimasto.trim() === "" || rimasto === "(campo assente)"],
     ],
   };
 }
@@ -138,8 +171,20 @@ async function scenario(browser: Browser, titolo: string, conTesto: boolean): Pr
 (async () => {
   const browser = await chromium.launch({ headless: true });
   const prove = [
-    await scenario(browser, "con il testo della recensione (come il tasto sulla card)", true),
-    await scenario(browser, "col solo nome (se il testo non arriva)", false),
+    await scenario(browser, "col testo della recensione (come il tasto sulla card)", {
+      conTesto: true,
+      reale: false,
+    }),
+    await scenario(browser, "col solo nome (se il testo non arriva)", {
+      conTesto: false,
+      reale: false,
+    }),
+    // Lo scenario che riproduce il blocco vero: tasti col testo dentro span
+    // annidati e campo contenteditable SENZA placeholder.
+    await scenario(browser, "markup vero di Google (campo senza placeholder)", {
+      conTesto: true,
+      reale: true,
+    }),
   ];
   await browser.close();
 

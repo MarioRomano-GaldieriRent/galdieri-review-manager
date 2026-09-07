@@ -1084,7 +1084,7 @@ export type EsitoCodaIgnora = {
  * vecchio (manca «npm run build» + restart dopo il git pull) e non serve
  * cercare il problema altrove.
  */
-export const VERSIONE_CODA = "coda-7";
+export const VERSIONE_CODA = "coda-8";
 
 /** Minuscolo, senza accenti, spazi normalizzati: per confrontare i nomi. */
 function senzaAccenti(x: string): string {
@@ -1316,7 +1316,28 @@ export async function cercaNellaCoda(
 
   const etichettaIgnora = /^ignora$|^ignore$|^salta$|^skip$/i;
   const contatoreCoda = /\d+\s*di\s*\d+/i;
-  const campoRisposta = /Risposta pubblica|La tua risposta/i;
+  const campoRisposta = /Risposta pubblica|La tua risposta|Rispondi a|Scrivi/i;
+  /**
+   * Tutti i modi in cui può presentarsi il riquadro dove si scrive. Fidarsi del
+   * solo placeholder era troppo poco: se non combaciava, il metodo non riusciva
+   * a isolare la recensione e si fermava PRIMA di premere «Ignora».
+   */
+  const campiDiRisposta = (r: Radice): Locator =>
+    r
+      .getByPlaceholder(campoRisposta)
+      .or(r.getByRole("textbox", { name: /rispost|risposta/i }))
+      .or(r.locator("textarea"))
+      .or(r.locator('[contenteditable="true"]'));
+
+  /**
+   * Il tasto «Ignora» della coda. Dal vivo è un <button> col testo dentro uno
+   * span annidato, quindi il nome accessibile è «Ignora»: si cerca per ruolo e,
+   * per sicurezza, anche fra i <button> il cui testo è solo quello.
+   */
+  const tastoIgnora = (r: Radice): Locator =>
+    r
+      .getByRole("button", { name: etichettaIgnora })
+      .or(r.locator("button").filter({ hasText: /^\s*(ignora|ignore|salta|skip)\s*$/i }));
   type Segnali = { punti: number; radice: Radice | null; descrizione: string };
   const leggiSegnali = async (): Promise<Segnali> => {
     let radice: Radice | null = null;
@@ -1324,7 +1345,7 @@ export async function cercaNellaCoda(
     let punti = 0;
 
     for (const r of radici()) {
-      const b = await primoVisibile(r.getByRole("button", { name: etichettaIgnora }));
+      const b = await primoVisibile(tastoIgnora(r));
       if (b && (await b.isEnabled({ timeout: 1500 }).catch(() => false))) {
         punti++;
         radice = radice ?? r;
@@ -1358,7 +1379,7 @@ export async function cercaNellaCoda(
     }
 
     for (const r of radici()) {
-      if (await primoVisibile(r.getByPlaceholder(campoRisposta))) {
+      if (await primoVisibile(campiDiRisposta(r))) {
         punti++;
         radice = radice ?? r;
         visti.push(`campo di risposta già aperto (${nomeRadice(r)})`);
@@ -1563,20 +1584,34 @@ export async function cercaNellaCoda(
    * accontenta del primo antenato con abbastanza testo, dicendolo.
    */
   const cartaCorrente = async (r: Radice): Promise<{ loc: Locator; via: string } | null> => {
-    const campo = await primoVisibile(r.getByPlaceholder(campoRisposta));
-    if (!campo) return null;
+    const partenze: [string, Locator | null][] = [
+      ["il campo di risposta", await primoVisibile(campiDiRisposta(r))],
+      ["«Ignora»", await primoVisibile(tastoIgnora(r))],
+    ];
     let ripiego: { loc: Locator; via: string } | null = null;
-    let n: Locator = campo;
-    for (let i = 0; i < 10; i++) {
-      n = n.locator("xpath=..");
-      const t = ((await n.innerText().catch(() => "")) || "").trim();
-      if (t.length < 40) continue;
-      const conIgnora = await n
-        .getByRole("button", { name: etichettaIgnora })
-        .count()
-        .catch(() => 0);
-      if (conIgnora > 0) return { loc: n, via: `${i + 1} livelli sopra il campo, con «Ignora»` };
-      ripiego = ripiego ?? { loc: n, via: `${i + 1} livelli sopra il campo (senza «Ignora»)` };
+    for (const [da, base] of partenze) {
+      if (!base) continue;
+      let n: Locator = base;
+      for (let i = 0; i < 10; i++) {
+        n = n.locator("xpath=..");
+        const t = ((await n.innerText().catch(() => "")) || "").trim();
+        if (t.length < 40) continue;
+        // Un antenato che contiene «Ignora» contiene tutta la recensione
+        // mostrata: è quello il riquadro. (Qui `n` è un Locator, non una
+        // radice, quindi il tasto si cerca in tutt'e due i modi a mano.)
+        const conIgnora =
+          (await n
+            .getByRole("button", { name: etichettaIgnora })
+            .count()
+            .catch(() => 0)) +
+          (await n
+            .locator("button")
+            .filter({ hasText: /^\s*(ignora|ignore|salta|skip)\s*$/i })
+            .count()
+            .catch(() => 0));
+        if (conIgnora > 0) return { loc: n, via: `${i + 1} livelli sopra ${da}` };
+        ripiego = ripiego ?? { loc: n, via: `${i + 1} livelli sopra ${da} (senza «Ignora»)` };
+      }
     }
     return ripiego;
   };
@@ -1606,21 +1641,30 @@ export async function cercaNellaCoda(
     // Chi è la recensione mostrata ADESSO. È il cuore del metodo: si confronta
     // il nome con l'AUTORE di QUESTO riquadro, non col testo di tutta la
     // pagina — altrimenti si scrive sulla prima che capita.
+    // Se il riquadro non si isola NON ci si ferma: la coda mostra una
+    // recensione alla volta, quindi il testo dell'intera vista è comunque
+    // quello della recensione mostrata. Fermarsi qui era il difetto: si
+    // usciva senza aver premuto «Ignora» nemmeno una volta.
     const carta = await cartaCorrente(coda);
+    const dove = carta ? carta.loc : coda.locator("body");
     if (!carta) {
       senzaCarta++;
-      annota(`non riesco a isolare il riquadro della recensione (tentativo ${senzaCarta}).`);
-      if (senzaCarta >= 2) {
+      if (senzaCarta === 1) {
+        annota("non riesco a isolare il riquadro: uso il testo di tutta la vista (nella coda c'è una recensione sola, quindi va bene lo stesso).");
         await fotografaControlli("controlli senza riquadro riconoscibile");
-        break;
       }
-      await pg.waitForTimeout(900);
-      continue;
     }
-    const testoCarta = ((await carta.loc.innerText().catch(() => "")) || "").trim();
+    const testoCarta = ((await dove.innerText().catch(() => "")) || "").trim();
+    if (!testoCarta) {
+      annota(`la vista non ha testo leggibile dopo ${salti} «Ignora»: mi fermo.`);
+      await fotografaControlli("controlli senza testo");
+      break;
+    }
     const autore = autoreDi(testoCarta);
-    const riassunto = testoCarta.replace(/\s+/g, " ").slice(0, 70);
-    annota(`recensione ${salti + 1}: autore «${autore}» · «${riassunto}…»`);
+    const riassunto = testoCarta.replace(/\s+/g, " ").slice(0, 90);
+    annota(
+      `recensione ${salti + 1}${carta ? " (" + carta.via + ")" : " (vista intera)"}: autore «${autore}» · «${riassunto}…»`,
+    );
 
     // Si va avanti con «Ignora» finché non combacia il CONTENUTO o l'autore.
     // Il contenuto vale più del nome: è l'unica prova che regge quando il
@@ -1651,10 +1695,20 @@ export async function cercaNellaCoda(
     };
     const contatorePrima = await contatoreDi(coda);
 
-    const b = coda.getByRole("button", { name: etichettaIgnora }).first();
-    const ci = (await b.count().catch(() => 0)) > 0 && (await b.isVisible().catch(() => false));
-    if (!ci) {
-      annota(`nessun «Ignora» disponibile dopo ${salti} salti: coda finita o vista cambiata.`);
+    let b = await primoVisibile(tastoIgnora(coda));
+    if (!b) {
+      for (const r of radici()) {
+        const alt = await primoVisibile(tastoIgnora(r));
+        if (alt) {
+          coda = r;
+          b = alt;
+          annota(`«Ignora» ritrovato in ${nomeRadice(r)}: riaggancio la coda lì.`);
+          break;
+        }
+      }
+    }
+    if (!b) {
+      annota(`nessun «Ignora» visibile dopo ${salti} salti: coda finita o vista cambiata.`);
       await fotografaControlli("controlli dove si è fermata");
       break;
     }
@@ -1722,9 +1776,10 @@ export async function cercaNellaCoda(
   const campi = [
     ["placeholder «Risposta pubblica»", coda.getByPlaceholder(/Risposta pubblica/i)],
     ["placeholder «La tua risposta»", coda.getByPlaceholder(/La tua risposta/i)],
-    ["textbox col nome «rispost…»", coda.getByRole("textbox", { name: /rispost/i })],
+    ["textbox col nome «rispost…»", coda.getByRole("textbox", { name: /rispost|risposta/i })],
     ["textarea", coda.locator("textarea")],
     ["contenteditable", coda.locator('[contenteditable="true"]')],
+    ["un campo qualunque della coda", campiDiRisposta(coda)],
   ] as const;
   const svuota = async () => {
     await pg.keyboard.press("Control+A").catch(() => {});
@@ -1792,7 +1847,7 @@ export async function cercaNellaCoda(
     // «Ignora» (salta alla successiva senza inviare) — qui non c'è un «Annulla».
     await campoAttivo.click({ timeout: 3000 }).catch(() => {});
     await svuota();
-    const ignoraFinale = coda.getByRole("button", { name: etichettaIgnora }).first();
+    const ignoraFinale = tastoIgnora(coda).first();
     if ((await ignoraFinale.count().catch(() => 0)) > 0) {
       await ignoraFinale.click({ timeout: 4000 }).catch(() => {});
       annota("campo svuotato e «Ignora» cliccato: uscito senza pubblicare.");
