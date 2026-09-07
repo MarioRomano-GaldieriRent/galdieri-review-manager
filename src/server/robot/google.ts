@@ -1095,7 +1095,7 @@ export type EsitoCodaIgnora = {
  * vecchio (manca «npm run build» + restart dopo il git pull) e non serve
  * cercare il problema altrove.
  */
-export const VERSIONE_CODA = "coda-9";
+export const VERSIONE_CODA = "coda-11";
 
 /** Minuscolo, senza accenti, spazi normalizzati: per confrontare i nomi. */
 function senzaAccenti(x: string): string {
@@ -1640,6 +1640,110 @@ export async function cercaNellaCoda(
     return "";
   };
 
+  /**
+   * Legge la recensione MOSTRATA ORA nel pop-up della coda, prendendo ogni
+   * pezzo dall'elemento giusto. Calibrato sull'HTML vero del pop-up, dove
+   * leggere «il testo del riquadro» non funziona per due motivi:
+   *
+   *  1. il nome del recensore sta in un <a> verso il suo profilo che contiene
+   *     ANCHE l'icona «apri in una nuova finestra». Quell'icona è una legatura
+   *     testuale, quindi il testo dell'elemento non è «D» ma «Dopen_in_new»: il
+   *     confronto col nome non poteva combaciare mai. Qui l'icona si toglie;
+   *  2. la recensione lunga è mostrata TAGLIATA, con «Visualizza la recensione
+   *     completa»; il testo intero c'è, ma in un nodo con display:none, che
+   *     innerText non restituisce. Qui si legge textContent, che lo prende.
+   *
+   * E si resta DENTRO il dialogo: sotto al pop-up c'è la lista della sede con
+   * le altre recensioni, che altrimenti si mescolerebbero a questa.
+   */
+  const leggiMostrata = (
+    r: Radice,
+  ): Promise<{ autore: string; stelle: string; testo: string; contatore: string; via: string }> =>
+    r
+      .evaluate(() => {
+        // Niente funzioni con nome qui dentro: sotto tsx diventerebbero
+        // __name(...) e la evaluate lancerebbe. Tutto inline.
+        // Il dialogo VISIBILE, se c'è: sotto al pop-up resta la lista della
+        // sede, e prendere il primo elemento del documento voleva dire leggere
+        // la recensione sbagliata (per giunta nascosta).
+        let dlg: Element | null = null;
+        for (const d of Array.from(document.querySelectorAll('[role="dialog"]'))) {
+          const box = d.getBoundingClientRect();
+          if (box.width > 2 && box.height > 2) {
+            dlg = d;
+            break;
+          }
+        }
+        const ambito: Element = dlg || document.body;
+        let art: Element | null = null;
+        for (const a of Array.from(ambito.querySelectorAll("article"))) {
+          const box = a.getBoundingClientRect();
+          if (box.width > 2 && box.height > 2) {
+            art = a;
+            break;
+          }
+        }
+        if (!art) art = ambito;
+
+        // Autore: il link al profilo del recensore. Si toglie tutto ciò che è
+        // decorativo (icone, svg, roba aria-hidden) prima di leggere il testo.
+        let autore = "";
+        const a =
+          art.querySelector('a[href*="/maps/contrib/"]') ||
+          art.querySelector('a[jsname="xs1xe"]') ||
+          art.querySelector('a[aria-label*="recensore" i]');
+        if (a) {
+          const copia = a.cloneNode(true) as HTMLElement;
+          copia
+            .querySelectorAll('i, svg, [aria-hidden="true"], .google-symbols, .notranslate')
+            .forEach((e) => e.remove());
+          autore = (copia.textContent || "").replace(/\s+/g, " ").trim();
+        }
+
+        // Stelle: stanno nell'etichetta per i lettori di schermo.
+        let stelle = "";
+        const st =
+          art.querySelector('[role="img"][aria-label*="stelle" i]') ||
+          art.querySelector('[role="img"][aria-label*="star" i]');
+        if (st) stelle = (st.getAttribute("aria-label") || "").trim();
+
+        // Testo: da una COPIA senza icone (altrimenti «open_in_new» finisce
+        // dentro la recensione), e con textContent, così arriva anche la parte
+        // NASCOSTA — il testo per intero e l'originale sotto la traduzione,
+        // che innerText non restituirebbe.
+        const copiaArt = art.cloneNode(true) as HTMLElement;
+        copiaArt
+          .querySelectorAll("i, svg, .google-symbols, .notranslate")
+          .forEach((e) => e.remove());
+        const testo = (copiaArt.textContent || "").replace(/\s+/g, " ").trim();
+
+        // Contatore «N di M recensioni», dentro il dialogo.
+        let contatore = "";
+        for (const e of Array.from(ambito.querySelectorAll("div, span"))) {
+          const t = (e.textContent || "").replace(/\s+/g, " ").trim();
+          if (t.length >= 40 || !/^\d+\s+di\s+\d+\s+recension/i.test(t)) continue;
+          const box = e.getBoundingClientRect();
+          if (box.width < 2 || box.height < 2) continue;
+          contatore = t;
+          break;
+        }
+
+        return {
+          autore,
+          stelle,
+          testo,
+          contatore,
+          via: dlg ? "dialogo della coda" : "pagina (nessun dialogo)",
+        };
+      })
+      .catch((e) => ({
+        autore: "",
+        stelle: "",
+        testo: "",
+        contatore: "",
+        via: `lettura fallita: ${e instanceof Error ? e.message.split("\n")[0] : String(e)}`,
+      }));
+
   let trovatoCliente = false;
   let autoreTrovato = "";
   let salti = 0;
@@ -1659,25 +1763,24 @@ export async function cercaNellaCoda(
     // recensione alla volta, quindi il testo dell'intera vista è comunque
     // quello della recensione mostrata. Fermarsi qui era il difetto: si
     // usciva senza aver premuto «Ignora» nemmeno una volta.
-    const carta = await cartaCorrente(coda);
-    const dove = carta ? carta.loc : coda.locator("body");
-    if (!carta) {
+    const vista = await leggiMostrata(coda);
+    let autore = vista.autore;
+    let testoCarta = vista.testo;
+    if (!testoCarta) {
+      // Ripiego: il vecchio modo, agganciandosi al riquadro attorno al campo.
+      const carta = await cartaCorrente(coda);
+      if (carta) testoCarta = ((await carta.loc.innerText().catch(() => "")) || "").trim();
+      if (!autore) autore = autoreDi(testoCarta);
       senzaCarta++;
-      if (senzaCarta === 1) {
-        annota("non riesco a isolare il riquadro: uso il testo di tutta la vista (nella coda c'è una recensione sola, quindi va bene lo stesso).");
-        await fotografaControlli("controlli senza riquadro riconoscibile");
-      }
+      if (senzaCarta === 1) annota(`lettura diretta a vuoto (${vista.via}): ripiego sul riquadro.`);
     }
-    const testoCarta = ((await dove.innerText().catch(() => "")) || "").trim();
     if (!testoCarta) {
       annota(`la vista non ha testo leggibile dopo ${salti} «Ignora»: mi fermo.`);
       await fotografaControlli("controlli senza testo");
       break;
     }
-    const autore = autoreDi(testoCarta);
-    const riassunto = testoCarta.replace(/\s+/g, " ").slice(0, 90);
     annota(
-      `recensione ${salti + 1}${carta ? " (" + carta.via + ")" : " (vista intera)"}: autore «${autore}» · «${riassunto}…»`,
+      `recensione ${salti + 1}${vista.contatore ? " [" + vista.contatore + "]" : ""}: autore «${autore}»${vista.stelle ? " · " + vista.stelle : ""} · «${testoCarta.slice(0, 90)}…»`,
     );
 
     // Si va avanti con «Ignora» finché non combacia il CONTENUTO o l'autore.
@@ -1697,7 +1800,9 @@ export async function cercaNellaCoda(
       annota(`trovata dopo ${salti} «Ignora»: combacia ${come}.`);
       // Il riquadro per intero (stelle comprese, se sono testo): è quello che
       // serve a chi deve controllare con i propri occhi che sia la sua.
-      annota(`la recensione trovata dice: «${testoCarta.replace(/\s+/g, " ").slice(0, 300)}»`);
+      annota(
+        `la recensione trovata${vista.stelle ? " (" + vista.stelle + ")" : ""} dice: «${testoCarta.slice(0, 300)}»`,
+      );
       break;
     }
     if (combaciaNome(autore, nome)) {
@@ -1706,11 +1811,7 @@ export async function cercaNellaCoda(
       annota(`  «${nome}» compare nel testo ma l'autore è «${autore}»: non è la sua, vado avanti.`);
     }
 
-    const contatoreDi = async (r: Radice): Promise<string> => {
-      const c = await primoVisibile(r.getByText(contatoreCoda));
-      return c ? ((await c.textContent().catch(() => "")) || "").replace(/\s+/g, " ").trim() : "";
-    };
-    const contatorePrima = await contatoreDi(coda);
+    const contatorePrima = vista.contatore;
 
     let b = await primoVisibile(tastoIgnora(coda));
     if (!b) {
@@ -1748,11 +1849,9 @@ export async function cercaNellaCoda(
 
     // Guardia sui salti a vuoto: se dopo «Ignora» il riquadro mostra lo STESSO
     // autore, quel tasto non era della coda (di solito è quello di un banner).
-    const dopoCarta = await cartaCorrente(coda);
-    const dopoAutore = dopoCarta
-      ? autoreDi(((await dopoCarta.loc.innerText().catch(() => "")) || "").trim())
-      : "";
-    const dopoContatore = await contatoreDi(coda);
+    const dopo = await leggiMostrata(coda);
+    const dopoAutore = dopo.autore;
+    const dopoContatore = dopo.contatore;
     if (dopoAutore && dopoAutore === autore && dopoContatore === contatorePrima) {
       fermi++;
       annota(`«Ignora» n. ${salti}: l'autore mostrato è ancora «${autore}» — quel tasto non fa avanzare la coda.`);
