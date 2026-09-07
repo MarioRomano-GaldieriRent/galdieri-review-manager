@@ -151,8 +151,9 @@ export function FiltriDaApprovare() {
           >
             <option value="">Tutte le stelle</option>
             {disponibili.map((n) => (
-              <option key={n} value={n}>
-                {n === 1 ? "1 stella" : `${n} stelle`}
+              <option key={n} value={n} aria-label={n === 1 ? "1 stella" : `${n} stelle`}>
+                {"★".repeat(n)}
+                {"☆".repeat(5 - n)}
               </option>
             ))}
           </select>
