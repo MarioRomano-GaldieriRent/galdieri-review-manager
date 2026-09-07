@@ -3223,6 +3223,24 @@ main.pipeline .pub-tabs {
   border-bottom-color: var(--g-blue);
 }
 
+/* Il conteggio dei tab si legge come una NOTIFICA: pallino rosso, per capire
+   a colpo d'occhio quanto c'e' da fare. Scoped ai tab: il .chip-count dei
+   filtri a stelle (Automazioni) resta testo semplice. */
+.pub-tab .chip-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 19px;
+  height: 19px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--brand-red);
+  color: #fff;
+  font-size: 0.72rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
 .pub-ricontrollo-nota {
   margin: 0 0 16px;
 }
@@ -3290,6 +3308,11 @@ main.pipeline .pub-tabs {
 
 .ai-badge-ko {
   color: var(--brand-red);
+}
+
+/* Proposta non ancora chiesta (la card non e ancora a schermo). */
+.ai-badge-attesa {
+  opacity: 0.55;
 }
 
 /* Rotellina del "sto scrivendo la proposta". */
@@ -3502,37 +3525,47 @@ main.pipeline .pub-tabs {
     min-height: 40px;
   }
 
-  /* --- Barra tab della home: i 4 tab scorrono in orizzontale, le icone
-         Aggiorna/occhio restano ancorate a destra (basta "Archiviati" orfano). --- */
+  /* --- Barra tab della home: su telefono i 4 tab stanno TUTTI a vista, in
+         una griglia 2x2 di pastiglie. Prima scorrevano in orizzontale e se ne
+         vedevano solo due, senza che si capisse che ce n'erano altri. Le icone
+         Aggiorna/occhio salgono su una riga propria, allineate a destra. --- */
   .pub-tabs {
-    flex-wrap: nowrap;
+    flex-wrap: wrap;
     align-items: center;
-    gap: 4px;
+    gap: 6px;
+    padding-bottom: 8px;
   }
   .pub-tabs-scroll {
-    display: flex;
-    flex: 1 1 auto;
-    min-width: 0; /* indispensabile: senza, lo scroll non si attiva */
-    gap: 4px;
-    overflow-x: auto;
-    overflow-y: hidden;
-    -webkit-overflow-scrolling: touch;
-    scrollbar-width: none;
+    order: 2;
+    flex: 1 1 100%;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
   }
-  .pub-tabs-scroll::-webkit-scrollbar {
-    display: none;
-  }
+  /* Pastiglie: quando i tab vanno a capo il solo sottolineato non basta piu' a
+     dire quale e' attivo, il riquadro si'. */
   .pub-tab {
-    flex: 0 0 auto;
-    padding: 10px 12px;
+    justify-content: center;
+    padding: 10px 8px;
+    font-size: 0.88rem;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    border-bottom-width: 1px;
     margin-bottom: 0;
+  }
+  .pub-tab.is-active {
+    background: var(--accent-soft);
+    border-color: var(--g-blue);
+    color: var(--g-blue-dark);
   }
   .pub-aggiorna,
   .pub-occhio-form {
+    order: 1;
     flex: 0 0 auto;
   }
   .pub-aggiorna {
-    margin-left: 0;
+    margin-left: auto;
   }
 
   /* --- Automazioni: la card recensione non allarga più la griglia (era la

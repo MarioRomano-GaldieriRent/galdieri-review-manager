@@ -490,7 +490,9 @@ export default async function HomePage({
             title="Recensioni coperte dalle regole attive, in attesa di una tua decisione"
           >
             Da approvare
-            {nApprovare !== null && <span className="chip-count">{nApprovare}</span>}
+            {nApprovare !== null && nApprovare > 0 && (
+              <span className="chip-count">{nApprovare}</span>
+            )}
           </Link>
           <Link
             href="/?step=attesa"
