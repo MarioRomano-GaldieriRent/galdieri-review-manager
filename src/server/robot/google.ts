@@ -191,7 +191,9 @@ async function bottoneInviaRisposta(root: Radice): Promise<Locator | null> {
     rif: Locator,
     soloASinistra: boolean,
   ): Promise<Locator | null> => {
-    const rBox = await rif.boundingBox().catch(() => null);
+    // Timeout corto: un riferimento che non c'è costerebbe 30 secondi di
+    // attesa a vuoto, e qui siamo nel mezzo della pubblicazione.
+    const rBox = await rif.boundingBox({ timeout: 1500 }).catch(() => null);
     if (!rBox) return null;
     const rispondi = root.getByRole("button", { name: /^rispondi$/i });
     const n = await rispondi.count().catch(() => 0);
@@ -199,7 +201,7 @@ async function bottoneInviaRisposta(root: Radice): Promise<Locator | null> {
     let bestD = Infinity;
     for (let i = 0; i < n; i++) {
       const b = rispondi.nth(i);
-      const box = await b.boundingBox().catch(() => null);
+      const box = await b.boundingBox({ timeout: 1500 }).catch(() => null);
       if (!box) continue;
       const dy = Math.abs(box.y - rBox.y);
       if (dy >= 40) continue;
@@ -225,20 +227,28 @@ async function bottoneInviaRisposta(root: Radice): Promise<Locator | null> {
   // sulla stessa riga di «Ignora». Si accetta SOLO se il campo della coda è
   // davvero a schermo: senza quel vincolo, in una lista qualunque si rischiava
   // di scambiare per submit il «Rispondi» di un'altra recensione.
-  // «a schermo» va inteso alla lettera: contare non basta, perché Google tiene
-  // nel DOM anche i pezzi NASCOSTI della vista che non stai guardando, e un
-  // conteggio li includeva — bastava quello per aprire questa strada mentre si
-  // era ancora su una lista qualunque.
-  const campi = root.getByPlaceholder(/Risposta pubblica|La tua risposta/i);
-  const quanti = Math.min(await campi.count().catch(() => 0), 6);
-  let campoVisibile = false;
-  for (let i = 0; i < quanti && !campoVisibile; i++) {
-    campoVisibile = await campi
-      .nth(i)
-      .isVisible()
-      .catch(() => false);
-  }
-  if (!campoVisibile) return null;
+  // Qui si sta per CLICCARE un invio: prima bisogna essere sicuri di stare
+  // davvero nella coda, non su una lista con un banner «Ignora» aperto. Si
+  // pretendono tutti e tre i segni della coda, e VISIBILI — contare non basta,
+  // perché Google tiene nel DOM anche i pezzi della vista che non guardi.
+  const visibile = async (loc: Locator): Promise<boolean> => {
+    const quanti = Math.min(await loc.count().catch(() => 0), 6);
+    for (let i = 0; i < quanti; i++) {
+      if (
+        await loc
+          .nth(i)
+          .isVisible()
+          .catch(() => false)
+      )
+        return true;
+    }
+    return false;
+  };
+  const segniDellaCoda =
+    (await visibile(root.getByPlaceholder(/Risposta pubblica|La tua risposta/i))) &&
+    (await visibile(root.getByRole("button", { name: /^Ignora$/i }))) &&
+    (await visibile(root.getByText(/\d+\s*di\s*\d+/i)));
+  if (!segniDellaCoda) return null;
   return rispondiSullaRigaDi(root.getByRole("button", { name: /^Ignora$/i }).first(), false);
 }
 
@@ -1074,13 +1084,18 @@ export type EsitoCodaIgnora = {
  * vecchio (manca «npm run build» + restart dopo il git pull) e non serve
  * cercare il problema altrove.
  */
-export const VERSIONE_CODA = "coda-6";
+export const VERSIONE_CODA = "coda-7";
 
 /** Minuscolo, senza accenti, spazi normalizzati: per confrontare i nomi. */
 function senzaAccenti(x: string): string {
   return x
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
+    // Apostrofi e trattini «tipografici»: Google li rende come li ha scritti
+    // chi recensisce, il database no. Senza questo «D'Angelo» e «D’Angelo»
+    // sarebbero due persone diverse e la coda non troverebbe mai la sua.
+    .replace(/[\u2018\u2019\u02bc\u00b4`]/g, "'")
+    .replace(/[\u2010-\u2015]/g, "-")
     .toLowerCase()
     .replace(/\s+/g, " ")
     .trim();
@@ -1098,6 +1113,58 @@ function combaciaNome(testo: string, nome: string): boolean {
   if (!q || !t) return false;
   const fuggito = q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return new RegExp(`(^|[^\\p{L}\\p{N}])${fuggito}([^\\p{L}\\p{N}]|$)`, "u").test(t);
+}
+
+/** Solo lettere e numeri, per confrontare due testi ignorando la forma. */
+function ridotto(x: string): string {
+  return senzaAccenti(x)
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * DECIDE se l'autore mostrato è DAVVERO la persona cercata. Qui il «contiene»
+ * di combaciaNome non basta e sarebbe pericoloso: col cliente «D» combacia con
+ * «Vito D'Amico», «D'Angelo Vincenzo», «Maria D. Rossi» — e su quella strada si
+ * pubblicherebbe, per sempre, sotto la recensione di un estraneo. Serve
+ * un'UGUAGLIANZA.
+ *
+ * Unica tolleranza, e solo per nomi lunghi di almeno due parole: l'autore può
+ * avere qualcosa in più in coda («Mario Rossi G.»), mai in meno e mai diverso
+ * («Mario Rossini» non è «Mario Rossi»). Un nome di una o due lettere dev'essere
+ * identico e basta.
+ */
+function eSuaLaRecensione(autore: string, nome: string): boolean {
+  const a = ridotto(autore.split("·")[0]); // via «· Local Guide · N recensioni»
+  const q = ridotto(nome);
+  if (!a || !q) return false;
+  if (a === q) return true;
+  const tq = q.split(" ");
+  const ta = a.split(" ");
+  if (q.length < 3 || tq.length < 2) return false;
+  return tq.length < ta.length && tq.every((x, i) => x === ta[i]);
+}
+
+/**
+ * Il CONTENUTO mostrato è quello che stiamo cercando? È la prova più forte che
+ * ci sia: due persone possono chiamarsi uguale — o chiamarsi «D» — ma non
+ * scrivono la stessa recensione. Si confronta il testo salvato nel database con
+ * quello a schermo, ridotti entrambi a sole lettere e numeri, perché Google
+ * manda a capo, cambia la punteggiatura e aggiunge le sue righe («Tradotto da
+ * Google»): un confronto letterale non reggerebbe.
+ *
+ * Le recensioni lunghe vengono mostrate tagliate con «Altro»: in quel caso
+ * basta che l'inizio combaci, purché sia un pezzo abbastanza lungo da non
+ * poter capitare per caso.
+ */
+function stessoContenuto(testoCarta: string, testoAtteso: string): boolean {
+  const a = ridotto(testoCarta);
+  const q = ridotto(testoAtteso);
+  if (q.length < 12) return false; // troppo corto per essere una prova
+  if (a.includes(q)) return true;
+  const pezzo = q.slice(0, 60);
+  return pezzo.length >= 30 && a.includes(pezzo);
 }
 
 /**
@@ -1147,12 +1214,19 @@ export async function cercaNellaCoda(
     log?: (m: string) => void;
     scadenza?: number;
     uscita?: "sicura" | "lascia";
+    /**
+     * Il testo della recensione come sta nel database: è il modo più sicuro di
+     * riconoscerla: i nomi si ripetono e possono essere una sola lettera, il
+     * testo no. Se manca, si va di solo autore (regola stretta).
+     */
+    testoRecensione?: string;
   } = {},
 ): Promise<EsitoCodaIgnora> {
   const maxIgnora = opts.maxIgnora ?? 40;
   const log = opts.log ?? (() => {});
   const scadenza = opts.scadenza ?? Number.POSITIVE_INFINITY;
   const uscita = opts.uscita ?? "sicura";
+  const testoAtteso = (opts.testoRecensione ?? "").trim();
   const nome = nomeCliente.trim();
   const pg = paginaDi(root);
   const passi: string[] = [];
@@ -1163,7 +1237,9 @@ export async function cercaNellaCoda(
   const scaduto = () => Date.now() > scadenza;
   const perche = (e: unknown) => (e instanceof Error ? e.message.split("\n")[0] : String(e));
 
-  annota(`metodo coda «Ignora», versione ${VERSIONE_CODA}, uscita «${uscita}».`);
+  annota(
+    `metodo coda «Ignora», versione ${VERSIONE_CODA}, uscita «${uscita}», riconoscimento: ${testoAtteso ? "testo della recensione + autore" : "solo autore"}.`,
+  );
 
   /**
    * TUTTI i contesti DOM in cui il controllo può stare: la radice ricevuta, la
@@ -1233,7 +1309,7 @@ export async function cercaNellaCoda(
     const n = Math.min(await loc.count().catch(() => 0), max);
     for (let i = 0; i < n; i++) {
       const c = loc.nth(i);
-      if (await c.isVisible().catch(() => false)) return c;
+      if (await c.isVisible({ timeout: 1500 }).catch(() => false)) return c;
     }
     return null;
   };
@@ -1249,7 +1325,7 @@ export async function cercaNellaCoda(
 
     for (const r of radici()) {
       const b = await primoVisibile(r.getByRole("button", { name: etichettaIgnora }));
-      if (b && (await b.isEnabled().catch(() => false))) {
+      if (b && (await b.isEnabled({ timeout: 1500 }).catch(() => false))) {
         punti++;
         radice = radice ?? r;
         visti.push(`«Ignora» attivo (${nomeRadice(r)})`);
@@ -1455,8 +1531,15 @@ export async function cercaNellaCoda(
   // erano già forti in partenza (2 su 3) — può darsi che fossimo GIÀ nella
   // coda. Si prosegue da lì, ma dicendo chiaramente che non è una certezza.
   if (!coda && iniziali.punti >= 2 && iniziali.radice) {
-    coda = iniziali.radice;
-    annota(`nessun tasto ha aperto la coda, ma gli indizi erano già forti (${iniziali.descrizione}): proseguo da qui, ingresso PRESUNTO.`);
+    if (uscita === "sicura") {
+      coda = iniziali.radice;
+      annota(`nessun tasto ha aperto la coda, ma gli indizi erano già forti (${iniziali.descrizione}): proseguo da qui, ingresso PRESUNTO — lo faccio solo perché è una prova che non pubblica.`);
+    } else {
+      // Di là si pubblica: un ingresso «presunto» vuol dire non sapere in che
+      // vista si è e scrivere alla cieca. Meglio arrendersi e lasciare il
+      // posto al ripiego collaudato.
+      annota(`indizi forti (${iniziali.descrizione}) ma ingresso NON verificato: qui si pubblica, non mi fido — lascio perdere la coda.`);
+    }
   }
 
   if (!coda) {
@@ -1539,15 +1622,34 @@ export async function cercaNellaCoda(
     const riassunto = testoCarta.replace(/\s+/g, " ").slice(0, 70);
     annota(`recensione ${salti + 1}: autore «${autore}» · «${riassunto}…»`);
 
-    if (combaciaNome(autore, nome)) {
+    // Si va avanti con «Ignora» finché non combacia il CONTENUTO o l'autore.
+    // Il contenuto vale più del nome: è l'unica prova che regge quando il
+    // recensore si chiama «D» o quando due clienti sono omonimi.
+    const perTesto = testoAtteso ? stessoContenuto(testoCarta, testoAtteso) : false;
+    const perNome = eSuaLaRecensione(autore, nome);
+    if (perTesto || perNome) {
       trovatoCliente = true;
       autoreTrovato = autore;
-      annota(`«${nome}» combacia con l'autore dopo ${salti} «Ignora»: è la sua.`);
+      const come =
+        perTesto && perNome
+          ? "il testo E l'autore"
+          : perTesto
+            ? "il TESTO della recensione"
+            : "l'autore";
+      annota(`trovata dopo ${salti} «Ignora»: combacia ${come}.`);
       break;
     }
-    if (combaciaNome(testoCarta, nome)) {
+    if (combaciaNome(autore, nome)) {
+      annota(`  autore «${autore}»: si somiglia a «${nome}» ma non è lo stesso nome, vado avanti.`);
+    } else if (combaciaNome(testoCarta, nome)) {
       annota(`  «${nome}» compare nel testo ma l'autore è «${autore}»: non è la sua, vado avanti.`);
     }
+
+    const contatoreDi = async (r: Radice): Promise<string> => {
+      const c = await primoVisibile(r.getByText(contatoreCoda));
+      return c ? ((await c.textContent().catch(() => "")) || "").replace(/\s+/g, " ").trim() : "";
+    };
+    const contatorePrima = await contatoreDi(coda);
 
     const b = coda.getByRole("button", { name: etichettaIgnora }).first();
     const ci = (await b.count().catch(() => 0)) > 0 && (await b.isVisible().catch(() => false));
@@ -1579,7 +1681,8 @@ export async function cercaNellaCoda(
     const dopoAutore = dopoCarta
       ? autoreDi(((await dopoCarta.loc.innerText().catch(() => "")) || "").trim())
       : "";
-    if (dopoAutore && dopoAutore === autore) {
+    const dopoContatore = await contatoreDi(coda);
+    if (dopoAutore && dopoAutore === autore && dopoContatore === contatorePrima) {
       fermi++;
       annota(`«Ignora» n. ${salti}: l'autore mostrato è ancora «${autore}» — quel tasto non fa avanzare la coda.`);
       if (fermi >= 2) {
@@ -1726,7 +1829,12 @@ export function provaCodaIgnora(
   root: Radice,
   nomeCliente: string,
   testo: string,
-  opts: { maxIgnora?: number; log?: (m: string) => void; scadenza?: number } = {},
+  opts: {
+    maxIgnora?: number;
+    log?: (m: string) => void;
+    scadenza?: number;
+    testoRecensione?: string;
+  } = {},
 ): Promise<EsitoCodaIgnora> {
   return cercaNellaCoda(root, nomeCliente, testo, { ...opts, uscita: "sicura" });
 }
@@ -1755,7 +1863,13 @@ export async function rispondiPerSede(
    * recensioni»; `scadenza` è il momento oltre il quale la coda smette di
    * saltare e lascia il posto al ripiego sulla lista.
    */
-  opts: { log?: (m: string) => void; conCoda?: boolean; scadenza?: number } = {},
+  opts: {
+    log?: (m: string) => void;
+    conCoda?: boolean;
+    scadenza?: number;
+    /** Il testo della recensione dal database: serve alla coda per riconoscerla. */
+    testoRecensione?: string;
+  } = {},
 ): Promise<EsitoPerSede> {
   const log = opts.log ?? (() => {});
   const conCoda = opts.conCoda ?? true;
@@ -1780,6 +1894,7 @@ export async function rispondiPerSede(
       log,
       uscita: "lascia",
       scadenza: opts.scadenza,
+      testoRecensione: opts.testoRecensione,
     });
     if (c.trovata && c.scritto && c.root) {
       return {
@@ -1794,7 +1909,10 @@ export async function rispondiPerSede(
     // tornare al punto di partenza, altrimenti si cercherebbe nella vista
     // sbagliata.
     const sede2 = await apriSedePerNome(page, nomeGoogle, { log });
-    if (!sede2.root) {
+    // Qui serve la LISTA per davvero: se non è tornata (magari siamo rimasti
+    // dentro la coda perché il ritorno è fallito), non si cerca alla cieca —
+    // si torna indietro e tocca al ripiego sui gruppi, che è collaudato.
+    if (!sede2.aperta || !sede2.root) {
       return { trovata: false, scritto: false, root: null, dettaglio: `sede «${nomeGoogle}»: ${sede2.dettaglio}` };
     }
     root = sede2.root;

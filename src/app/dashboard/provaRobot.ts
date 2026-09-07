@@ -53,6 +53,10 @@ export async function provaCodaIgnoraAction(chiave: string): Promise<EsitoRobot>
       nome: r.nome,
       testo: TESTO_PROVA,
       nomeGoogle,
+      // Il testo vero della recensione: è così che la coda riconosce QUALE
+      // recensione ha davanti, invece di fidarsi di un nome che può essere
+      // una sola lettera.
+      testoRecensione: r.originale,
     },
     { attesaMs: 240_000 },
   );

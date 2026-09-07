@@ -18,6 +18,12 @@ export type JobRobot = {
    * robot va DRITTO su quella sede. Vuoto/assente = ripiego sui gruppi.
    */
   nomeGoogle?: string;
+  /**
+   * Il testo della recensione com'è nel database. Serve al metodo della coda
+   * per riconoscere QUALE recensione sta guardando: i nomi si ripetono e a
+   * volte sono una sola lettera, il testo no. Se manca si va di solo nome.
+   */
+  testoRecensione?: string;
 };
 
 export type EsitoRobot = {
@@ -163,7 +169,11 @@ export function avviaRobotConEsito(
     child.stdout?.on("data", guarda);
     child.stderr?.on("data", guarda);
     child.on("error", (e) =>
-      finisci({ ok: false, stato: "avvio-fallito", messaggio: `Non riesco ad avviare il robot: ${e.message}` }),
+      finisci({
+        ok: false,
+        stato: "avvio-fallito",
+        messaggio: `Non riesco ad avviare il robot: ${e.message}`,
+      }),
     );
     child.on("close", () =>
       finisci({
@@ -216,7 +226,12 @@ export async function lanciaRobot(job: JobRobot): Promise<EsitoRobot> {
         }
         if (!risolto) {
           risolto = true;
-          resolve({ ok: false, stato: "timeout", messaggio: "Il robot ci ha messo troppo: l'ho fermato. Riprova (browser chiuso, Chrome chiuso)." });
+          resolve({
+            ok: false,
+            stato: "timeout",
+            messaggio:
+              "Il robot ci ha messo troppo: l'ho fermato. Riprova (browser chiuso, Chrome chiuso).",
+          });
         }
       },
       3 * 60 * 1000,
@@ -246,11 +261,16 @@ export async function lanciaRobot(job: JobRobot): Promise<EsitoRobot> {
       chiudi({
         ok: false,
         stato: "senza-esito",
-        messaggio: out.trim().slice(-300) || `Robot terminato (codice ${code}) senza esito leggibile.`,
+        messaggio:
+          out.trim().slice(-300) || `Robot terminato (codice ${code}) senza esito leggibile.`,
       }),
     );
     child.on("error", (e) =>
-      chiudi({ ok: false, stato: "avvio-fallito", messaggio: `Non riesco ad avviare il robot: ${e.message}` }),
+      chiudi({
+        ok: false,
+        stato: "avvio-fallito",
+        messaggio: `Non riesco ad avviare il robot: ${e.message}`,
+      }),
     );
   });
 }

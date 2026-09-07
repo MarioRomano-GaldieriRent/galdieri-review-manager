@@ -34,6 +34,8 @@ type Job = {
   nome: string;
   testo: string;
   nomeGoogle: string;
+  /** Testo della recensione dal database: serve alla coda per riconoscerla. */
+  testoRecensione: string;
 };
 const AZIONI = ["test", "pubblica", "cerca", "prova-coda"] as const;
 
@@ -48,6 +50,7 @@ function leggiJob(): Job {
     nome: j.nome.trim(),
     testo: (j.testo || "Grazie.").trim(),
     nomeGoogle: (j.nomeGoogle || "").trim(),
+    testoRecensione: (j.testoRecensione || "").trim(),
   };
 }
 
@@ -79,7 +82,11 @@ const AVVIO = Date.now();
     ctx = await apriContesto(false);
   } catch (e) {
     // Quasi sempre: "Chrome è aperto". Messaggio corto e azionabile sulla card.
-    esito({ ok: false, stato: "chrome-aperto", messaggio: e instanceof Error ? e.message : String(e) });
+    esito({
+      ok: false,
+      stato: "chrome-aperto",
+      messaggio: e instanceof Error ? e.message : String(e),
+    });
     process.exit(1);
   }
 
@@ -94,7 +101,11 @@ const AVVIO = Date.now();
   try {
     const page0 = ctx.pages()[0] ?? (await ctx.newPage());
     if (!(await sessioneAttiva(page0))) {
-      esito({ ok: false, stato: "non-loggato", messaggio: "Robot non loggato su Google. Lancia: npm run robot:sessione" });
+      esito({
+        ok: false,
+        stato: "non-loggato",
+        messaggio: "Robot non loggato su Google. Lancia: npm run robot:sessione",
+      });
       return;
     }
 
@@ -107,7 +118,8 @@ const AVVIO = Date.now();
         esito({
           ok: false,
           stato: "sede-non-mappata",
-          messaggio: "Questa sede non è mappata su Google (Impostazioni → Mapping): serve il nome esatto dell'attività per aprirla direttamente.",
+          messaggio:
+            "Questa sede non è mappata su Google (Impostazioni → Mapping): serve il nome esatto dell'attività per aprirla direttamente.",
           log: diario,
         });
         return;
@@ -121,6 +133,7 @@ const AVVIO = Date.now();
       const radice = sede.root ?? page0;
       const prova = await provaCodaIgnora(radice, job.nome, job.testo, {
         log: traccia,
+        testoRecensione: job.testoRecensione,
         // Si torna con l'esito PRIMA che chi aspetta vada in timeout muto:
         // meglio un passo-passo leggibile che «ci sta mettendo troppo».
         scadenza: AVVIO + 200_000,
@@ -130,7 +143,11 @@ const AVVIO = Date.now();
         .catch(() => {});
       esito({
         ok: prova.trovata,
-        stato: prova.trovata ? (prova.scritto ? "prova-scritta" : "prova-trovata-non-scritta") : "prova-non-trovata",
+        stato: prova.trovata
+          ? prova.scritto
+            ? "prova-scritta"
+            : "prova-trovata-non-scritta"
+          : "prova-non-trovata",
         trovata: prova.trovata,
         scritto: prova.scritto,
         messaggio: prova.dettaglio,
@@ -158,6 +175,7 @@ const AVVIO = Date.now();
       const ps = await rispondiPerSede(page0, job.nomeGoogle, job.nome, job.testo, {
         log: traccia,
         scadenza: AVVIO + 90_000,
+        testoRecensione: job.testoRecensione,
       });
       dettaglio = ps.dettaglio;
       if (ps.trovata) {
@@ -173,7 +191,10 @@ const AVVIO = Date.now();
 
     // 2) FALLBACK: ricerca IN AMPIEZZA fra i gruppi (pag. 1 di tutti, poi 2, …).
     if (!trovata) {
-      const ric = await cercaNeiGruppiPerPagina(ctx, job.nome, job.testo, { maxPagine: 5, log: traccia });
+      const ric = await cercaNeiGruppiPerPagina(ctx, job.nome, job.testo, {
+        maxPagine: 5,
+        log: traccia,
+      });
       dettaglio = ric.dettaglio;
       if (ric.trovata && ric.page) {
         trovata = true;
@@ -188,11 +209,21 @@ const AVVIO = Date.now();
     if (!trovata || !root) {
       // "cerca": anche se non l'ho trovata, lascio Google APERTO per l'operatore.
       if (job.azione === "cerca") {
-        esito({ ok: true, stato: "aperta-non-trovata", trovata: false, messaggio: `Non ho trovato «${job.nome}» da solo: ho lasciato Google aperto, cercala tu nella finestra.` });
+        esito({
+          ok: true,
+          stato: "aperta-non-trovata",
+          trovata: false,
+          messaggio: `Non ho trovato «${job.nome}» da solo: ho lasciato Google aperto, cercala tu nella finestra.`,
+        });
         await attendiChiusura();
         return;
       }
-      esito({ ok: false, stato: "non-trovata", trovata: false, messaggio: `«${job.nome}» non trovata. ${dettaglio}` });
+      esito({
+        ok: false,
+        stato: "non-trovata",
+        trovata: false,
+        messaggio: `«${job.nome}» non trovata. ${dettaglio}`,
+      });
       return;
     }
 
@@ -204,18 +235,38 @@ const AVVIO = Date.now();
     // "cerca": si FERMA sulla recensione (risposta già pronta nel riquadro) e
     // LASCIA il browser aperto: procede l'operatore.
     if (job.azione === "cerca") {
-      esito({ ok: true, stato: "aperta", trovata: true, scritto, gruppo: dove, messaggio: `Fermo sulla recensione di «${job.nome}» in ${dove}. Procedi tu nella finestra.` });
+      esito({
+        ok: true,
+        stato: "aperta",
+        trovata: true,
+        scritto,
+        gruppo: dove,
+        messaggio: `Fermo sulla recensione di «${job.nome}» in ${dove}. Procedi tu nella finestra.`,
+      });
       await attendiChiusura();
       return;
     }
 
     if (!scritto) {
-      esito({ ok: false, stato: "trovata-non-scritta", trovata: true, gruppo: dove, messaggio: `Trovata in ${dove} ma non ho potuto scrivere: ${dettaglio}` });
+      esito({
+        ok: false,
+        stato: "trovata-non-scritta",
+        trovata: true,
+        gruppo: dove,
+        messaggio: `Trovata in ${dove} ma non ho potuto scrivere: ${dettaglio}`,
+      });
       return;
     }
 
     if (job.azione === "test") {
-      esito({ ok: true, stato: "scritta", trovata: true, scritto: true, gruppo: dove, messaggio: `Trovata in ${dove} e scritto «${job.testo}». NON pubblicata (test).` });
+      esito({
+        ok: true,
+        stato: "scritta",
+        trovata: true,
+        scritto: true,
+        gruppo: dove,
+        messaggio: `Trovata in ${dove} e scritto «${job.testo}». NON pubblicata (test).`,
+      });
       return;
     }
 
@@ -228,9 +279,22 @@ const AVVIO = Date.now();
       await paginaAperta
         .screenshot({ path: path.join(SCREENSHOT_DIR, "esegui-pubblicata.png") })
         .catch(() => {});
-      esito({ ok: true, stato: "pubblicata", trovata: true, scritto: true, gruppo: dove, messaggio: `Pubblicata su Google in ${dove}.` });
+      esito({
+        ok: true,
+        stato: "pubblicata",
+        trovata: true,
+        scritto: true,
+        gruppo: dove,
+        messaggio: `Pubblicata su Google in ${dove}.`,
+      });
     } catch (err) {
-      esito({ ok: false, stato: "pubblica-errore", trovata: true, gruppo: dove, messaggio: `Trovata e scritta, ma l'invio è fallito: ${err instanceof Error ? err.message : String(err)}` });
+      esito({
+        ok: false,
+        stato: "pubblica-errore",
+        trovata: true,
+        gruppo: dove,
+        messaggio: `Trovata e scritta, ma l'invio è fallito: ${err instanceof Error ? err.message : String(err)}`,
+      });
     }
   } catch (e) {
     esito({ ok: false, stato: "errore", messaggio: e instanceof Error ? e.message : String(e) });
