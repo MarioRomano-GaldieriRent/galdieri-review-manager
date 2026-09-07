@@ -1024,21 +1024,26 @@ export type EsitoCodaIgnora = {
   dettaglio: string;
   /** Un rigo per passo: cosa ha trovato/cliccato, in ordine. Sempre presente,
    * anche quando fallisce — è la diagnostica che serve per calibrare i
-   * selettori (nomi esatti dei controlli «Rispondi alle recensioni»/«Ignora»,
-   * che qui non erano ancora documentati). */
+   * selettori senza dover leggere gli screenshot sul server. */
   passi: string[];
 };
 
 /**
- * METODO ALTERNATIVO, da calibrare dal vivo: invece di scorrere/cercare nella
- * lista intera della sede, usa la coda di Google «Rispondi alle recensioni»
- * (le sole recensioni ancora SENZA risposta, una alla volta) e il tasto
- * «Ignora» per saltare alla successiva finché non compare quella cercata. Può
- * essere molto più diretto in una sede con tante recensioni.
+ * METODO ALTERNATIVO: invece di scorrere/cercare nella lista intera della
+ * sede, usa la coda di Google «Rispondere a recensioni» (le sole recensioni
+ * ancora SENZA risposta, una alla volta, col contatore «N di TOT recensioni»)
+ * e il tasto «Ignora» per saltare alla successiva finché non compare quella
+ * cercata. Può essere molto più diretto in una sede con tante recensioni.
+ *
+ * Vista CONFERMATA dal vivo (screenshot reali): qui il campo «Risposta
+ * pubblica» è GIÀ APERTO per la recensione mostrata — non c'è un «Rispondi»
+ * da cliccare prima per aprirlo, a differenza dell'overlay per-sede. Il
+ * «Rispondi» in basso è invece il pulsante che INVIA (disabilitato finché il
+ * campo è vuoto): qui NON va MAI cliccato. Per uscire senza pubblicare si
+ * svuota il campo e si preme «Ignora», che salta alla successiva.
  *
  * Presuppone la sede GIÀ APERTA (root = quello che ha restituito
- * apriSedePerNome). NON pubblica MAI: trovato il cliente scrive la bozza (se
- * `testo` non è vuoto) e chiude su «Annulla», come rispondiAllaRecensione.
+ * apriSedePerNome). NON pubblica MAI, qualunque cosa succeda.
  */
 export async function provaCodaIgnora(
   root: Radice,
@@ -1056,7 +1061,26 @@ export async function provaCodaIgnora(
     log(m);
   };
 
-  const etichettaCoda = /rispondi alle recensioni|reply to reviews|gestisci le risposte|manage responses/i;
+  /** Diagnostica: i controlli VERI visibili ora, per calibrare senza screenshot. */
+  const dumpControlli = async (etichetta: string) => {
+    const bottoni = await root
+      .locator("button, [role=button], a")
+      .evaluateAll((els) =>
+        els
+          .filter((e) => (e as HTMLElement).offsetParent !== null)
+          .map((e) =>
+            (e.textContent || e.getAttribute("aria-label") || "").replace(/\s+/g, " ").trim(),
+          )
+          .filter((t) => t && t.length < 50),
+      )
+      .catch(() => [] as string[]);
+    annota(`${etichetta}: ${JSON.stringify([...new Set(bottoni)].slice(0, 30))}`);
+  };
+
+  // L'etichetta VERA osservata è «Rispondere a recensioni» (non «Rispondi
+  // alle…», che era solo una supposizione iniziale non calibrata dal vivo).
+  const etichettaCoda =
+    /rispondere a recensioni|rispondi alle recensioni|reply to reviews|gestisci le risposte|manage responses/i;
   let inCoda = false;
   for (const loc of [
     root.getByRole("button", { name: etichettaCoda }),
@@ -1069,25 +1093,31 @@ export async function provaCodaIgnora(
     if (!(await c.isVisible().catch(() => false))) continue;
     await c.scrollIntoViewIfNeeded().catch(() => {});
     await c.click({ timeout: 6000 }).catch(() => {});
-    annota('cliccato «Rispondi alle recensioni».');
+    annota("cliccato «Rispondere a recensioni».");
     inCoda = true;
     break;
   }
   await pg.waitForTimeout(1800);
 
   if (!inCoda) {
+    await dumpControlli("controlli visibili (nessuno corrisponde a «Rispondere a recensioni»)");
     return {
       trovata: false,
       scritto: false,
       passi,
-      dettaglio: "Nessun controllo «Rispondi alle recensioni» trovato: il metodo non è applicabile qui, o l'etichetta di Google è diversa da quella prevista.",
+      dettaglio:
+        "Nessun controllo per aprire la coda trovato: guarda i «controlli visibili» nel log per calibrare l'etichetta esatta.",
     };
   }
 
   const etichettaIgnora = /^ignora$|^ignore$|^salta$|^skip$/i;
   let trovatoCliente = false;
   for (let i = 0; i <= maxIgnora; i++) {
-    const presente = (await root.getByText(nome, { exact: false }).count().catch(() => 0)) > 0;
+    const presente =
+      (await root
+        .getByText(nome, { exact: false })
+        .count()
+        .catch(() => 0)) > 0;
     if (presente) {
       trovatoCliente = true;
       annota(`«${nome}» trovato dopo ${i} «Ignora».`);
@@ -1107,6 +1137,7 @@ export async function provaCodaIgnora(
     }
     if (!cliccato) {
       annota(`nessun «Ignora» al passo ${i}: mi fermo qui.`);
+      await dumpControlli("controlli visibili");
       break;
     }
     await pg.waitForTimeout(900);
@@ -1121,36 +1152,71 @@ export async function provaCodaIgnora(
     };
   }
 
-  const rispondi = root.getByRole("button", { name: /^rispondi$/i }).first();
-  if ((await rispondi.count().catch(() => 0)) === 0) {
+  if (!testo.trim()) {
     return {
       trovata: true,
       scritto: false,
       passi,
-      dettaglio: `Trovato «${nome}» ma senza «Rispondi» (forse ha già risposta).`,
+      dettaglio: `Trovato «${nome}»: il campo «Risposta pubblica» è già pronto — non ho scritto niente (test senza testo).`,
     };
   }
-  await rispondi.click({ timeout: 6000 }).catch(() => {});
-  annota('cliccato «Rispondi».');
-  await pg.waitForTimeout(1200);
 
-  if (!testo.trim()) {
-    return { trovata: true, scritto: false, passi, dettaglio: "Riquadro aperto — non ho scritto niente (test senza testo)." };
+  // Il campo è GIÀ APERTO per la recensione mostrata (nessun «Rispondi» da
+  // cliccare prima): lo si individua per placeholder, con qualche ripiego.
+  const campo = [
+    ["placeholder «Risposta pubblica»", root.getByPlaceholder(/Risposta pubblica/i)],
+    ["placeholder «La tua risposta»", root.getByPlaceholder(/La tua risposta/i)],
+    ["textbox per nome", root.getByRole("textbox", { name: /rispost/i })],
+    ["textarea", root.locator("textarea")],
+    ["contenteditable", root.locator('[contenteditable="true"]')],
+  ] as const;
+  let campoAttivo: Locator | null = null;
+  for (const [via, loc] of campo) {
+    const n = await loc.count().catch(() => 0);
+    if (n === 0) continue;
+    await loc
+      .first()
+      .click({ timeout: 4000 })
+      .catch(() => {});
+    await pg.keyboard.type(testo, { delay: 15 }).catch(() => {});
+    annota(`scritto nel campo (${via}).`);
+    campoAttivo = loc.first();
+    break;
   }
+  if (!campoAttivo) {
+    await dumpControlli("controlli visibili (nessun campo di risposta trovato)");
+    return {
+      trovata: true,
+      scritto: false,
+      passi,
+      dettaglio: `Trovato «${nome}» ma non ho trovato il campo «Risposta pubblica».`,
+    };
+  }
+  await pg.waitForTimeout(400);
 
-  const r = await scriviRisposta(root, testo);
-  annota(`scritto (${r.via}); «Pubblica» abilitato: ${r.abilitato}.`);
-  await pg.waitForTimeout(600);
-  await annulla(root);
-  annota('«Annulla» cliccato: NON pubblicato.');
+  // «Rispondi» qui è il pulsante che INVIA: si guarda solo se si è abilitato
+  // (prova che il testo è stato accettato), NON lo si clicca mai.
+  const submit = root.getByRole("button", { name: /^rispondi$/i }).first();
+  const abilitato =
+    (await submit.count().catch(() => 0)) > 0 ? await submit.isEnabled().catch(() => false) : false;
+  annota(`bottone «Rispondi» (invio) abilitato: ${abilitato}. NON lo clicco: è solo un test.`);
+
+  // Si esce senza pubblicare: si svuota lo STESSO campo appena scritto, poi
+  // «Ignora» (salta alla successiva senza inviare) — qui non c'è un «Annulla».
+  await campoAttivo.click({ timeout: 3000 }).catch(() => {});
+  await pg.keyboard.press("Control+A").catch(() => {});
+  await pg.keyboard.press("Delete").catch(() => {});
+  const ignoraFinale = root.getByRole("button", { name: /^ignora$/i }).first();
+  if ((await ignoraFinale.count().catch(() => 0)) > 0) {
+    await ignoraFinale.click({ timeout: 4000 }).catch(() => {});
+    annota("campo svuotato e «Ignora» cliccato: uscito senza pubblicare.");
+  }
 
   return {
     trovata: true,
-    scritto: r.scritto,
+    scritto: true,
     passi,
-    dettaglio: r.scritto
-      ? `Trovato «${nome}» con la coda «Ignora» e testo SCRITTO nel riquadro — NON pubblicato.`
-      : `Trovato «${nome}» con la coda «Ignora» ma non sono riuscito a scrivere nel riquadro.`,
+    dettaglio: `Trovato «${nome}» con la coda «Ignora», scritto nel campo (bottone d'invio abilitato: ${abilitato}) — NON pubblicato.`,
   };
 }
 

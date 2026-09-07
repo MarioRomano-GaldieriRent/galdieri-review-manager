@@ -50,7 +50,9 @@ export function BottoneProvaCoda({ chiave }: { chiave: string }) {
             {esito.messaggio}
           </span>
           {esito.log && esito.log.length > 0 && (
-            <details className="hint">
+            // Aperto SUBITO quando non è andata a buon fine: è lì che sta la
+            // diagnostica (i controlli visti davvero), non serve doverla aprire.
+            <details className="hint" open={!esito.ok}>
               <summary>Passo-passo ({esito.log.length})</summary>
               <ol>
                 {esito.log.map((riga, i) => (
