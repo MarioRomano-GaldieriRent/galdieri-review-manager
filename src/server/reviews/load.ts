@@ -127,12 +127,13 @@ function raggruppa(messaggi: MailDetail[], label: Label) {
 }
 
 // Cache in memoria dell'ULTIMO caricamento (per label + finestra). Il carico è
-// pesante — legge fino a 200 email da Graph col corpo, traduce e salva su Mongo —
-// e la home si ricarica di continuo: ogni click, ogni ritorno sulla scheda,
-// l'auto-refresh ogni 3 min. Senza cache ripagava tutto ogni volta. TTL breve: i
-// dati possono avere fino a ~90s, accettabile per una coda. Il tasto «Aggiorna» e
-// l'auto-refresh passano `forza: true` e ricaricano davvero. Vive nel processo
-// del server: si azzera solo a un riavvio.
+// pesante — legge fino a `top` email da Graph col corpo (100 dalla home, 200 di
+// default per le automazioni), traduce e salva su Mongo — e la home si ricarica
+// di continuo: ogni click, ogni ritorno sulla scheda, l'auto-refresh ogni 3 min.
+// Senza cache ripagava tutto ogni volta. TTL breve: i dati possono avere fino a
+// ~90s, accettabile per una coda. Solo il tasto «Aggiorna» (fresh=1) passa
+// `forza: true` e ricarica davvero; l'auto-refresh (AutoAggiorna.tsx) è morbido
+// e cavalca la cache. Vive nel processo del server: si azzera solo a un riavvio.
 type CaricoRecensioni = { recensioni: Recensione[]; analizzate: number };
 const cacheCarico = new Map<string, { at: number; dati: CaricoRecensioni }>();
 const TTL_CARICO_MS = 90_000;

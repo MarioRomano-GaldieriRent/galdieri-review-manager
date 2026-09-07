@@ -1,8 +1,8 @@
 import Link from "next/link";
 import { testoPerRecensione } from "@/server/automation/connectors";
 import { caricaRegole, conBeta, regolaPer } from "@/server/automation/rules";
-import { caricaEsecuzioni } from "@/server/automation/runs";
-import type { Azione, Regola } from "@/server/automation/types";
+import { caricaEsecuzione } from "@/server/automation/runs";
+import type { Azione, Esecuzione, Regola } from "@/server/automation/types";
 import { isGraphConfigured } from "@/server/graph/client";
 import {
   elencoTicketRecenti,
@@ -231,7 +231,7 @@ export default async function HomePage({
   let nApprovare: number | null = null;
   /** Proposte AI già salvate, per chiave recensione (le mancanti se le chiede la card). */
   let suggeritiAI = new Map<string, { testo: string }>();
-  let runAperta: ReturnType<typeof trovaRun> = undefined;
+  let runAperta: Esecuzione | undefined;
   let archiviate: RecensioneArchiviata[] = [];
   let inAttesa: Escalation[] = [];
   let nAttesa: number | null = null;
@@ -240,26 +240,54 @@ export default async function HomePage({
   let erroreFreshdesk: string | null = null;
 
   if (step === "approvare") {
-    const [regoleBase, esecuzioni, graphConf] = await Promise.all([
+    graphOk = await isGraphConfigured();
+    const forza = sp.fresh === "1"; // «Aggiorna»: posta e ticket riletti davvero
+
+    // Tutto ciò che non dipende dalla posta parte INSIEME e si sovrappone
+    // all'ingest Graph, il pezzo lento: regole, chiavi già pubblicate/archiviate
+    // e l'eventuale esecuzione da mostrare sono letture Mongo da ~25 ms l'una,
+    // che prima stavano in fila una dietro l'altra. Le promise nascono qui e si
+    // consumano subito nel Promise.all (o hanno già il loro catch): un errore
+    // non resta mai senza gestore. La lista delle recensioni si legge DOPO
+    // l'ingest, perché è lui a portare in archivio i nuovi arrivi.
+    //
+    // INGEST leggero: da Graph si scarica solo una finestra piccola (le ~100
+    // email più recenti), giusto per portare nell'archivio i NUOVI arrivi — non
+    // più 200 email a ogni caricamento. La cache breve (90 s) resta: solo
+    // «Aggiorna» (fresh=1) rifa l'ingest davvero; l'auto-refresh la cavalca.
+    const pIngest: Promise<string | null> =
+      graphOk && label
+        ? caricaRecensioni(label, { top: 100, forza }).then(
+            () => null,
+            (e) => (e instanceof Error ? e.message : "Errore sconosciuto"),
+          )
+        : Promise.resolve(null);
+    // ESCALATION «In attesa»: cerca le risposte del customer care arrivate (le
+    // voci passano da «attesa» a «pronta»). Parla con Graph, quindi va in
+    // parallelo all'ingest; si attende più sotto, prima di leggere attese e
+    // pronte. Best-effort.
+    const pAttese: Promise<void> = graphOk
+      ? aggiornaAttese().then(
+          () => undefined,
+          (e) =>
+            console.warn("[attese] recupero risposte saltato:", e instanceof Error ? e.message : e),
+        )
+      : Promise.resolve();
+
+    const [regoleBase, pubblicate, archiviateChiavi, run, erroreIngest] = await Promise.all([
       caricaRegole(),
-      caricaEsecuzioni(),
-      isGraphConfigured(),
+      chiaviPubblicate(),
+      chiaviArchiviate(),
+      // L'esecuzione appena conclusa da mostrare in cima (feedback dopo
+      // l'approvazione): una findOne per id, solo se richiesta.
+      sp.run ? caricaEsecuzione(sp.run) : Promise.resolve(undefined),
+      pIngest,
     ]);
     // Per questa persona le sue regole in anteprima contano come attive.
     const regole = conBeta(regoleBase, regoleBeta);
-    graphOk = graphConf;
+    runAperta = run;
+    erroreGraph = erroreIngest;
 
-    // INGEST leggero: da Graph si scarica solo una finestra piccola (le ~100
-    // email più recenti), giusto per portare nell'archivio i NUOVI arrivi — non
-    // più 200 email a ogni caricamento. La cache breve resta: solo «Aggiorna» e
-    // l'auto-refresh (fresh=1) rifanno l'ingest davvero.
-    if (graphOk && label) {
-      try {
-        await caricaRecensioni(label, { top: 100, forza: sp.fresh === "1" });
-      } catch (e) {
-        erroreGraph = e instanceof Error ? e.message : "Errore sconosciuto";
-      }
-    }
     // La LISTA viene dall'ARCHIVIO Mongo (query indicizzata, veloce), non dalla
     // finestra della posta: ha TUTTO l'arretrato recente e non perde ciò che è
     // scivolato oltre la finestra (era il caso di Arthur). Funziona anche se
@@ -271,10 +299,6 @@ export default async function HomePage({
     // "approvata" ma non ancora pubblicate (robot non riuscito) restano qui per
     // riprovare col Play. Guidata dalle regole ATTIVE: oggi solo "5★ senza
     // commento", accendendone altre in Impostazioni compaiono anche le loro.
-    const [pubblicate, archiviateChiavi] = await Promise.all([
-      chiaviPubblicate(),
-      chiaviArchiviate(),
-    ]);
     daApprovare = recensioni
       // Fuori dall'elenco:
       //  - ciò che abbiamo già pubblicato noi (stato pubblicata/verificata);
@@ -291,20 +315,13 @@ export default async function HomePage({
       // Occhio acceso: TUTTE, anche quelle senza regola (regola === null).
       .filter((x) => tutte || x.regola !== null);
 
-    // ESCALATION «In attesa»: cerca le risposte del customer care arrivate (le
-    // voci passano da «attesa» a «pronta»), poi separa. Le ATTESE (inoltrate,
-    // nessuna risposta) ESCONO dalla lista → vanno nel tab «In attesa». Le PRONTE
-    // (risposta arrivata) RESTANO, precompilate col testo, e SALTANO i filtri
-    // Freshdesk (devono comparire per essere pubblicate). Tutto best-effort.
+    // ESCALATION «In attesa»: finito il recupero delle risposte (avviato sopra,
+    // in parallelo), si separa. Le ATTESE (inoltrate, nessuna risposta) ESCONO
+    // dalla lista → vanno nel tab «In attesa». Le PRONTE (risposta arrivata)
+    // RESTANO, precompilate col testo, e SALTANO i filtri Freshdesk (devono
+    // comparire per essere pubblicate). Tutto best-effort.
     let prontaMap = new Map<string, string | null>();
-    // Riempita più sotto: proposte AI già salvate, per chiave recensione.
-    if (graphOk) {
-      try {
-        await aggiornaAttese();
-      } catch (e) {
-        console.warn("[attese] recupero risposte saltato:", e instanceof Error ? e.message : e);
-      }
-    }
+    await pAttese;
     try {
       const [attese, pronte] = await Promise.all([elencoInAttesa(), elencoPronte()]);
       nAttesa = attese.length;
@@ -359,7 +376,6 @@ export default async function HomePage({
         .filter((x) => conInoltro(x) && !prontaMap.has(x.r.chiave))
         .map(perFd);
       const resto = daApprovare.filter((x) => !conInoltro(x)).map(perFd);
-      const forza = sp.fresh === "1"; // «Aggiorna» rinfresca anche i ticket
       // Lista ticket (col corpo) scaricata UNA volta e CONDIVISA fra le due
       // sweep: con forza la cache non le farebbe riusare (sarebbero 12 GET
       // invece di 6). Senza lista non si verifica nulla: tutte restano in vista.
@@ -433,8 +449,6 @@ export default async function HomePage({
         console.warn("[ai] lettura suggerimenti non riuscita:", e);
       }
     }
-
-    runAperta = sp.run ? trovaRun(esecuzioni, sp.run) : undefined;
   }
 
   if (step === "archiviati") {
@@ -1020,11 +1034,4 @@ function BottoneArchivia({ chiave }: { chiave: string }) {
       🗄 Archivia
     </button>
   );
-}
-
-type Esec = Awaited<ReturnType<typeof caricaEsecuzioni>>[number];
-
-/** L'esecuzione appena conclusa da mostrare in cima (feedback dopo l'approvazione). */
-function trovaRun(esecuzioni: Esec[], id: string): Esec | undefined {
-  return esecuzioni.find((e) => e.id === id);
 }

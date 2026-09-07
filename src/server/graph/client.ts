@@ -1,8 +1,10 @@
 import { activeMailbox, resolveGraph, type GraphConfig } from "@/server/settings";
 
 // Client Microsoft Graph in modalità "app-only" (client credentials).
-// La configurazione viene letta a ogni chiamata: le modifiche fatte in
-// Impostazioni hanno effetto immediato, senza riavviare l'app.
+// La configurazione si chiede a loadSettings a ogni chiamata (memoria di
+// processo di dieci secondi, invalidata a ogni salvataggio dal pannello): le
+// modifiche fatte in Impostazioni hanno effetto subito, un ritocco a mano a
+// data/segreti.json entro dieci secondi, in ogni caso senza riavviare l'app.
 
 export async function isGraphConfigured(): Promise<boolean> {
   const cfg = await resolveGraph();

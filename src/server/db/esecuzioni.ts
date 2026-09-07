@@ -84,6 +84,16 @@ export async function leggiEsecuzioni(limite = 200): Promise<Esecuzione[]> {
   return righe.map(componi);
 }
 
+/** Una sola esecuzione per id (fra quelle vive: non annullate né archiviate). */
+export async function leggiEsecuzione(id: string): Promise<Esecuzione | null> {
+  const d = await (await coll<DocEsecuzione>("esecuzioni")).findOne({
+    _id: id,
+    annullata: false,
+    archiviata: false,
+  });
+  return d ? componi(d) : null;
+}
+
 export async function ultimePerChiave(): Promise<Map<string, Esecuzione>> {
   const righe = await (await coll<DocEsecuzione>("esecuzioni"))
     .aggregate<DocEsecuzione>([

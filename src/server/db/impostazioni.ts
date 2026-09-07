@@ -33,15 +33,13 @@ async function correnti(): Promise<DocCorrenti | null> {
 
 // ------------------------------------------------------------ valori normali
 
-export async function leggiValori(): Promise<Record<string, string>> {
-  const doc = await correnti();
+function valoriDi(doc: DocCorrenti | null): Record<string, string> {
   const out: Record<string, string> = {};
   for (const v of doc?.valori ?? []) out[v.chiave] = v.valore;
   return out;
 }
 
-export async function leggiEtichette(): Promise<Etichetta[]> {
-  const doc = await correnti();
+function etichetteDi(doc: DocCorrenti | null): Etichetta[] {
   // L'ordine dell'array è quello semantico: etichette[0] è la principale.
   return (doc?.etichette ?? []).map((e) => ({
     id: e.id,
@@ -49,6 +47,24 @@ export async function leggiEtichette(): Promise<Etichetta[]> {
     subjectContains: e.oggettoContiene ?? "",
     fromContains: e.mittenteContiene ?? "",
   }));
+}
+
+/**
+ * Valori ed etichette in UNA lettura: stanno nello stesso documento, e leggerlo
+ * due volte (una per i valori, una per le etichette) raddoppiava i giri su
+ * Atlas a ogni loadSettings.
+ */
+export async function leggiCorrenti(): Promise<{
+  valori: Record<string, string>;
+  etichette: Etichetta[];
+}> {
+  const doc = await correnti();
+  return { valori: valoriDi(doc), etichette: etichetteDi(doc) };
+}
+
+/** I soli valori: serve a scriviImpostazioni per lo storico dei cambiamenti. */
+export async function leggiValori(): Promise<Record<string, string>> {
+  return valoriDi(await correnti());
 }
 
 /**

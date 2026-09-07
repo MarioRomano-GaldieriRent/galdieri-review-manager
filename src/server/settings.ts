@@ -1,9 +1,4 @@
-import {
-  leggiEtichette,
-  leggiSegreti,
-  leggiValori,
-  scriviImpostazioni,
-} from "@/server/db/impostazioni";
+import { leggiCorrenti, leggiSegreti, scriviImpostazioni } from "@/server/db/impostazioni";
 
 // Impostazioni persistite nel database MongoDB (galdieri_recensioni).
 // Precedenza invariata: valore salvato qui > variabile d'ambiente del .env.
@@ -125,12 +120,71 @@ function sezione(valori: Record<string, string>, nome: string): Record<string, s
   return out;
 }
 
+// Le impostazioni si leggono UNA volta ogni pochi secondi, non a ogni chiamata.
+//
+// Prima ogni loadSettings faceva due letture su Atlas (~25 ms l'una), e la home
+// la chiamava 20-60 volte per render senza accorgersene: page.tsx, i controlli
+// isGraphConfigured/isFreshdeskConfigured, ctx() di Graph a ogni chiamata, e
+// fdFetch a OGNI GET Freshdesk. Con questa memoria di processo la prima costa
+// come prima, le altre nulla. TTL corto e invalidazione esplicita al salvataggio
+// (saveSettings): il pannello Impostazioni vede subito le proprie modifiche, e
+// un ritocco a mano a data/segreti.json arriva entro dieci secondi. In
+// produzione gira un solo processo, quindi non c'è un'altra istanza da avvisare.
+//
+// Si conserva lo snapshot e si restituisce sempre una COPIA: le action del
+// pannello mutano l'oggetto che ricevono prima di risalvarlo (vedi sotto), e
+// una mutazione sullo snapshot condiviso sarebbe una modifica non salvata che
+// tutti vedrebbero.
+const TTL_IMPOSTAZIONI_MS = 10_000;
+let memoImpostazioni: { at: number; valore: Settings } | null = null;
+// Numero di generazione: cresce a ogni invalidazione. Una lettura partita PRIMA
+// di un salvataggio e finita DOPO porta i valori vecchi: va restituita a chi
+// l'ha chiesta, ma non deve diventare lo snapshot condiviso, altrimenti per
+// dieci secondi tutti vedrebbero la modalità (o la casella) precedente.
+let generazione = 0;
+// Una sola lettura in volo per volta: allo scadere della memoria la home ne
+// lancerebbe decine insieme (una per ogni GET Freshdesk e Graph), tutte uguali.
+let letturaInCorso: Promise<Settings | null> | null = null;
+
+/** Da chiamare dopo ogni scrittura: la prossima lettura ripassa dal database. */
+export function invalidaImpostazioni(): void {
+  memoImpostazioni = null;
+  letturaInCorso = null;
+  generazione++;
+}
+
 export async function loadSettings(): Promise<Settings> {
+  const memo = memoImpostazioni;
+  if (memo && Date.now() - memo.at < TTL_IMPOSTAZIONI_MS) return structuredClone(memo.valore);
+
+  const gen = generazione;
+  let lettura = letturaInCorso;
+  if (!lettura) {
+    const p = leggiImpostazioniDalDb(); // non rigetta mai: null se il database non risponde
+    letturaInCorso = p;
+    const fine = () => {
+      if (letturaInCorso === p) letturaInCorso = null;
+    };
+    void p.then(fine, fine);
+    lettura = p;
+  }
+  const valore = await lettura;
+  // Non si memorizza: il ripiego ai default (database irraggiungibile: la
+  // richiesta successiva deve riprovare, non insistere sui default) e una
+  // lettura scavalcata da un'invalidazione nel frattempo.
+  if (valore && gen === generazione) memoImpostazioni = { at: Date.now(), valore };
+  return structuredClone(valore ?? DEFAULT_SETTINGS);
+}
+
+/** Lettura vera: null se il database non risponde (il chiamante ripiega ai default). */
+async function leggiImpostazioniDalDb(): Promise<Settings | null> {
   try {
     // I segreti arrivano dal file dedicato e si sovrappongono ai valori del
-    // database, dove per costruzione non possono esistere.
-    const valori = { ...(await leggiValori()), ...leggiSegreti() };
-    const labels = await leggiEtichette();
+    // database, dove per costruzione non possono esistere. Valori ed etichette
+    // vengono dallo stesso documento: una lettura sola.
+    const correnti = await leggiCorrenti();
+    const valori = { ...correnti.valori, ...leggiSegreti() };
+    const labels = correnti.etichette;
 
     return {
       mailbox: valori.mailbox ?? "",
@@ -153,15 +207,12 @@ export async function loadSettings(): Promise<Settings> {
     };
   } catch (e) {
     // Database irraggiungibile: si lavora sui default e sul .env invece di
-    // lasciare tutta l'applicazione senza impostazioni.
-    //
-    // structuredClone e non la costante: se il database resta irraggiungibile
-    // ogni lettura ripassa di qui, e un'action che avesse mutato l'oggetto
-    // ricevuto — per esempio scrivendo modo = "reale" — lascerebbe quel valore
-    // incollato al ripiego, facendo passare scritture vere senza che da
-    // nessuna parte risulti la modalità reale.
+    // lasciare tutta l'applicazione senza impostazioni. loadSettings ne fa
+    // comunque una copia (structuredClone): un'action che mutasse l'oggetto
+    // ricevuto — per esempio scrivendo modo = "reale" — non lo lascerebbe
+    // incollato ai default per tutti.
     console.error("[impostazioni] lettura non riuscita:", e);
-    return structuredClone(DEFAULT_SETTINGS);
+    return null;
   }
 }
 
@@ -183,7 +234,14 @@ export async function saveSettings(settings: Settings): Promise<void> {
       if (typeof valore === "string") valori[`${nome}.${chiave}`] = valore;
     }
   }
-  await scriviImpostazioni(valori, settings.labels ?? []);
+  try {
+    await scriviImpostazioni(valori, settings.labels ?? []);
+  } finally {
+    // Anche se la scrittura è fallita a metà (storico sì, correnti no): meglio
+    // rileggere dal database che servire uno snapshot che potrebbe non
+    // corrispondere più.
+    invalidaImpostazioni();
+  }
 }
 
 /** Casella effettivamente in uso: override dalle impostazioni, altrimenti .env */

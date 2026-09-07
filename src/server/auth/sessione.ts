@@ -1,3 +1,4 @@
+import { cache } from "react";
 import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { coll } from "@/server/db/connessione";
@@ -103,8 +104,17 @@ async function leggiSessione(): Promise<SessioneDoc | null> {
   return s;
 }
 
-/** L'operatore loggato (solo sessioni complete), con il profilo aggiornato. */
-export async function operatoreCorrente(): Promise<OperatoreDoc | null> {
+/**
+ * L'operatore loggato (solo sessioni complete), con il profilo aggiornato.
+ *
+ * Memoizzato PER RICHIESTA con cache() di React: il layout lo chiede per il
+ * gate di sessione e la pagina lo richiede subito dopo per le sue preferenze;
+ * dentro lo stesso render sono due letture identiche (sessione + operatore, due
+ * giri su Atlas) che ora si fanno una volta sola. Fuori da un render (server
+ * action, route handler, script) cache() non memorizza nulla e la funzione si
+ * comporta come prima.
+ */
+export const operatoreCorrente = cache(async (): Promise<OperatoreDoc | null> => {
   const s = await leggiSessione();
   if (!s || s.statoAutenticazione !== "completa") return null;
   const op = (await (await coll("operatori")).findOne({
@@ -112,7 +122,7 @@ export async function operatoreCorrente(): Promise<OperatoreDoc | null> {
     attivo: true,
   })) as unknown as OperatoreDoc | null;
   return op ?? null;
-}
+});
 
 /** Come operatoreCorrente, ma rimanda a /login se non c'è nessuno. */
 export async function richiediOperatore(): Promise<OperatoreDoc> {

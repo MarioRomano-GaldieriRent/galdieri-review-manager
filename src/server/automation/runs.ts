@@ -2,6 +2,7 @@ import {
   annullaEsecuzione,
   archiviaTutte,
   inserisciEsecuzione,
+  leggiEsecuzione,
   leggiEsecuzioni,
   ultimePerChiave,
   type Scostamento,
@@ -29,6 +30,20 @@ export async function caricaEsecuzioni(limite = 200): Promise<Esecuzione[]> {
   } catch (e) {
     console.error("[esecuzioni] lettura non riuscita:", e);
     return [];
+  }
+}
+
+/**
+ * Una sola esecuzione, per id: serve alla home per il riquadro «appena
+ * eseguita» (?run=). Prima si caricavano le ultime 200 per esteso, coi corpi
+ * delle chiamate, per trovarne una.
+ */
+export async function caricaEsecuzione(id: string): Promise<Esecuzione | undefined> {
+  try {
+    return (await leggiEsecuzione(id)) ?? undefined;
+  } catch (e) {
+    console.error("[esecuzioni] lettura non riuscita:", e);
+    return undefined;
   }
 }
 
