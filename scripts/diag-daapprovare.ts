@@ -74,20 +74,30 @@ async function main() {
     console.log(`Dopo «negative già risolte (thread)»: ${lista.length} (nascoste ${primaRis - lista.length})`);
 
   if (await isFreshdeskConfigured()) {
-    const risolte = await recensioniConTicketRisolto(
+    const sweepRisolte = await recensioniConTicketRisolto(
       lista.map((x) => ({ chiave: x.r.chiave, oggetto: x.r.oggetto, ricevutaIl: x.r.ricevutaIl, nome: x.r.nome })),
     );
+    const risolte = sweepRisolte.nascoste;
     lista = lista.filter((x) => !risolte.has(x.r.chiave));
-    console.log(`Dopo il filtro ticket Freshdesk risolto: ${lista.length}`);
+    console.log(
+      `Dopo il filtro ticket Freshdesk risolto: ${lista.length}${
+        sweepRisolte.nonVerificate ? ` (NON verificate ${sweepRisolte.nonVerificate}: ${sweepRisolte.errore})` : ""
+      }`,
+    );
 
     // Negative già inoltrate (regola con inoltro + ticket già aperto).
     const daInoltrare = lista.filter((x) => x.regola!.azioni.some((a) => a.tipo === "email.inoltra"));
     if (daInoltrare.length > 0) {
-      const inoltrate = await recensioniConTicket(
+      const sweepInoltrate = await recensioniConTicket(
         daInoltrare.map((x) => ({ chiave: x.r.chiave, oggetto: x.r.oggetto, ricevutaIl: x.r.ricevutaIl, nome: x.r.nome })),
       );
+      const inoltrate = sweepInoltrate.nascoste;
       lista = lista.filter((x) => !inoltrate.has(x.r.chiave));
-      console.log(`Dopo «negative già inoltrate»: ${lista.length} (nascoste ${inoltrate.size})`);
+      console.log(
+        `Dopo «negative già inoltrate»: ${lista.length} (nascoste ${inoltrate.size}${
+          sweepInoltrate.nonVerificate ? `, NON verificate ${sweepInoltrate.nonVerificate}: ${sweepInoltrate.errore}` : ""
+        })`,
+      );
     }
     console.log("");
   }

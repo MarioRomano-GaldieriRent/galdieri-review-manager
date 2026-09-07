@@ -44,7 +44,7 @@ async function main() {
 
   const { coll } = await import("@/server/db/connessione");
   const { chiaviPubblicate } = await import("@/server/db/pubblicazioni");
-  const { cercaTicketPerRecensione, getTicket, STATO, isFreshdeskConfigured, recensioniConTicketRisolto } =
+  const { cercaTicketPerRecensione, STATO, isFreshdeskConfigured, recensioniConTicketRisolto } =
     await import("@/server/integrations/freshdesk");
 
   const rec = await coll("recensioni");
@@ -95,9 +95,10 @@ async function main() {
         d.nomeCliente,
       );
       if (ticket) {
-        const t = await getTicket(ticket.id);
-        risolto = t.status === 4 || t.status === 5;
-        statoTicket = `#${t.id} · ${STATO[t.status] ?? t.status}`;
+        // Il ticket arriva dalla lista appena scaricata, con stato e corpo:
+        // rileggerlo costerebbe un credito a nome per niente.
+        risolto = ticket.status === 4 || ticket.status === 5;
+        statoTicket = `#${ticket.id} · ${STATO[ticket.status] ?? ticket.status}`;
       } else {
         statoTicket = `nessun ticket agganciato (${motivo})`;
       }
@@ -119,10 +120,12 @@ async function main() {
     console.log("\n" + "═".repeat(70));
     console.log("Filtro «Da approvare» (recensioniConTicketRisolto) — chi verrebbe NASCOSTO:");
     try {
-      const risolte = await recensioniConTicketRisolto(perSweep);
+      const sweep = await recensioniConTicketRisolto(perSweep);
       for (const r of perSweep) {
-        console.log(`  ${risolte.has(r.chiave) ? "NASCOSTA ✓" : "resta in lista"} — ${r.nome}`);
+        console.log(`  ${sweep.nascoste.has(r.chiave) ? "NASCOSTA ✓" : "resta in lista"} — ${r.nome}`);
       }
+      if (sweep.nonVerificate > 0)
+        console.log(`  (NON verificate ${sweep.nonVerificate}: ${sweep.errore})`);
     } catch (e) {
       console.log(`  (sweep fallita: ${e instanceof Error ? e.message : e})`);
     }

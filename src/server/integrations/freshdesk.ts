@@ -99,6 +99,13 @@ export type FdTicket = {
   requesterEmail: string;
   responderId: number | null;
   descriptionHtml: string;
+  /**
+   * true se il corpo (descriptionHtml) è stato davvero letto da Freshdesk: la
+   * lista lo porta solo se chiesto con include=description, e un ticket senza
+   * corpo caricato NON va confrontato per nome (descriptionHtml sarebbe "" per
+   * costruzione, non perché il ticket è vuoto).
+   */
+  corpoCaricato: boolean;
 };
 
 type RawTicket = {
@@ -115,7 +122,7 @@ type RawTicket = {
   requester?: { name?: string; email?: string };
 };
 
-function toTicket(t: RawTicket): FdTicket {
+function toTicket(t: RawTicket, conCorpo: boolean): FdTicket {
   return {
     id: t.id,
     subject: t.subject?.trim() || "(senza oggetto)",
@@ -129,22 +136,44 @@ function toTicket(t: RawTicket): FdTicket {
     requesterEmail: t.requester?.email ?? "",
     responderId: t.responder_id ?? null,
     descriptionHtml: t.description ?? "",
+    // Chiave assente = corpo NON arrivato (ripiego getTicket in conCorpo);
+    // "" = corpo letto e davvero vuoto. Così, se mai la lista arrivasse senza
+    // corpi, le sweep tornerebbero alle GET (e al banner) invece di far
+    // riapparire in silenzio le recensioni già gestite.
+    corpoCaricato: conCorpo && t.description !== undefined,
   };
 }
 
-/** Elenco ticket più recenti (paginato). */
-export async function listTickets(opts: { page?: number; perPage?: number } = {}): Promise<{
+/** Cosa far includere a Freshdesk nell'elenco: ogni voce costa 1 credito in più per pagina. */
+export type IncludiTicket = "requester" | "description";
+
+/**
+ * Elenco ticket più recenti (paginato).
+ *
+ * `includi`: "requester" porta nome/email di chi ha aperto il ticket (pagina
+ * Ticket); "description" porta il CORPO di ogni ticket già nella lista, così
+ * chi deve confrontare i corpi (sweep di «Da approvare», aggancio del ticket)
+ * non fa più una GET per ticket. Misurato sul tenant: una pagina da 100 costa
+ * 1 credito + 1 per ogni include (sul limite di 100 chiamate al minuto), e con
+ * i corpi pesa ~1 MB invece di ~140 KB, senza essere più lenta.
+ */
+export async function listTickets(
+  opts: { page?: number; perPage?: number; includi?: IncludiTicket[] } = {},
+): Promise<{
   tickets: FdTicket[];
   hasMore: boolean;
 }> {
   const perPage = Math.min(opts.perPage ?? 30, 100);
   const page = Math.max(1, opts.page ?? 1);
+  const includi = opts.includi ?? ["requester"];
+  const conCorpo = includi.includes("description");
+  const include = includi.length > 0 ? `&include=${includi.join(",")}` : "";
   const res = await fdFetch(
-    `/tickets?per_page=${perPage}&page=${page}&order_by=created_at&order_type=desc&include=requester`,
+    `/tickets?per_page=${perPage}&page=${page}&order_by=created_at&order_type=desc${include}`,
   );
   if (!res.ok) throw new Error(`Freshdesk ${res.status}: elenco ticket non disponibile.`);
   const raw = (await res.json()) as RawTicket[];
-  return { tickets: raw.map(toTicket), hasMore: raw.length === perPage };
+  return { tickets: raw.map((t) => toTicket(t, conCorpo)), hasMore: raw.length === perPage };
 }
 
 /** Ricerca per stato usando l'API di ricerca (conteggio affidabile). */
@@ -156,13 +185,15 @@ export async function searchTicketsByStatus(
   const res = await fdFetch(`/search/tickets?query=${query}&page=${Math.max(1, page)}`);
   if (!res.ok) throw new Error(`Freshdesk ${res.status}: ricerca non disponibile.`);
   const data = (await res.json()) as { results?: RawTicket[]; total?: number };
-  return { tickets: (data.results ?? []).map(toTicket), total: data.total ?? 0 };
+  return { tickets: (data.results ?? []).map((t) => toTicket(t, false)), total: data.total ?? 0 };
 }
 
-// Cache breve dei singoli ticket letti col corpo: le due sweep (risolti / già
-// inoltrati) e i ricaricamenti ravvicinati rileggono spesso gli stessi ticket.
-// TTL corto per non servire a lungo uno stato vecchio dopo una chiusura;
-// «Aggiorna» (forza) la salta comunque.
+// Cache breve dei singoli ticket letti col corpo. In app oggi quasi nessuno la
+// legge: la pagina del ticket e la chiusura passano forza=true (vogliono lo
+// stato fresco) e il ripiego di conCorpo non scatta finché le liste arrivano
+// con include=description. Resta per gli script diag/chiudi-ticket e come rete
+// di sicurezza se una lista senza corpi finisse in una sweep. TTL corto per non
+// servire a lungo uno stato vecchio dopo una chiusura.
 const cacheGetTicket = new Map<number, { at: number; ticket: FdTicket }>();
 const TTL_GET_TICKET_MS = 60_000;
 
@@ -172,9 +203,27 @@ export async function getTicket(id: number, forza = false): Promise<FdTicket> {
   const res = await fdFetch(`/tickets/${id}?include=requester`);
   if (res.status === 404) throw new Error("Ticket non trovato.");
   if (!res.ok) throw new Error(`Freshdesk ${res.status}: ticket non disponibile.`);
-  const ticket = toTicket((await res.json()) as RawTicket);
+  const ticket = toTicket((await res.json()) as RawTicket, true);
   cacheGetTicket.set(id, { at: Date.now(), ticket });
   return ticket;
+}
+
+/**
+ * Il ticket COL CORPO: quello della lista se la lista lo portava già
+ * (include=description), altrimenti lo si legge — ripiego che costa una GET e
+ * un credito, da tenere raro.
+ */
+async function conCorpo(t: FdTicket, forza?: boolean): Promise<FdTicket> {
+  return t.corpoCaricato ? t : getTicket(t.id, forza);
+}
+
+/** Un errore di Freshdesk per limite di chiamate (HTTP 429)? */
+function eLimiteChiamate(e: unknown): boolean {
+  return e instanceof Error && /\b429\b/.test(e.message);
+}
+
+function messaggio(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
 }
 
 export type FdConversation = {
@@ -277,6 +326,10 @@ function perConfronto(s: string): string {
  * Se nessun ticket soddisfa tutte e tre, si restituisce null con il motivo:
  * meglio saltare i passaggi su Freshdesk che lavorare il ticket sbagliato.
  *
+ * Il ticket restituito viene dalla lista col corpo ma SENZA il richiedente
+ * (requesterName/requesterEmail vuoti): nessun chiamante li legge, e ogni
+ * include costa un credito a pagina. Chi ne avesse bisogno faccia getTicket.
+ *
  * Sola lettura: solo GET, non modifica nulla.
  */
 export async function cercaTicketPerRecensione(
@@ -302,7 +355,9 @@ export async function cercaTicketPerRecensione(
   const pagine = opts.pagine ?? 6;
 
   for (let page = 1; page <= pagine; page++) {
-    const { tickets, hasMore } = await listTickets({ page, perPage: 100 });
+    // Solo il corpo (niente requester, vedi sopra): il confronto per nome più
+    // sotto non fa GET. Due crediti a pagina.
+    const { tickets, hasMore } = await listTickets({ page, perPage: 100, includi: ["description"] });
     esaminati += tickets.length;
     for (const t of tickets) {
       if (normalizzaOggetto(t.subject) !== atteso) continue;
@@ -312,6 +367,13 @@ export async function cercaTicketPerRecensione(
       candidati.push({ t, distanza: creato - soglia });
     }
     if (!hasMore) break;
+    // La lista è dal più recente: se l'ultimo di questa pagina è già più vecchio
+    // della soglia, le pagine dopo non possono contenere candidati (creato >=
+    // soglia). Fermarsi qui non cambia l'esito, e per il ticket appena nato da
+    // un'escalation basta la prima pagina: 2 crediti invece di 12, per ognuno
+    // dei tentativi di trovaTicket.
+    const ultimo = tickets[tickets.length - 1];
+    if (ultimo && new Date(ultimo.createdAt).getTime() < soglia) break;
   }
 
   if (candidati.length === 0) {
@@ -327,8 +389,9 @@ export async function cercaTicketPerRecensione(
   // recensione), ma se ne controllano PARECCHI: un ticket può essere creato
   // anche un giorno dopo (es. Arthur, recensione del 31 → ticket del 1°), e col
   // vecchio limite di 5 restava fuori. Il nome nel corpo è un forte
-  // disambiguatore, quindi leggerne di più non aggancia il ticket sbagliato — al
-  // più costa qualche GET in più (e il ciclo si ferma al primo match).
+  // disambiguatore, quindi leggerne di più non aggancia il ticket sbagliato — e
+  // i corpi sono già nella lista, non costano nulla (il ciclo si ferma al primo
+  // match).
   candidati.sort((a, b) => a.distanza - b.distanza);
   const daControllare = candidati.slice(0, opts.candidatiMax ?? 25);
 
@@ -341,7 +404,7 @@ export async function cercaTicketPerRecensione(
 
   const nomeConfr = perConfronto(nomeRecensore);
   for (const { t } of daControllare) {
-    const completo = await getTicket(t.id, opts.forza);
+    const completo = await conCorpo(t, opts.forza);
     // Confronto senza accenti/entità e a confine di parola: «Lavallée» aggancia
     // anche «Lavallee», ma un nome corto non aggancia una parola qualsiasi.
     if (nomeNelCorpo(perConfronto(soloTesto(completo.descriptionHtml)), nomeConfr)) {
@@ -355,9 +418,13 @@ export async function cercaTicketPerRecensione(
   };
 }
 
-// Elenco dei ticket recenti in cache (60s). La sweep di 6 pagine è la parte più
-// cara del filtro «Da approvare», e la home la ripagava a ogni caricamento: qui
-// la si riusa fra render ravvicinati. Sola lettura; si azzera a un riavvio.
+// Elenco dei ticket recenti in cache (60s), COL CORPO: la sweep di 6 pagine è la
+// parte più cara del filtro «Da approvare», e la home la ripagava a ogni
+// caricamento: qui la si riusa fra render ravvicinati. Con i corpi già dentro,
+// le sweep non fanno più una GET per ticket — era quel grappolo (fino a 25 per
+// ogni negativa) a esaurire le 100 chiamate al minuto e a far saltare tutto il
+// filtro. Costo fisso: 2 crediti a pagina, 12 per sweep; in memoria ~5 MB.
+// Sola lettura; si azzera a un riavvio.
 let cacheTicket: { at: number; pagine: number; tickets: FdTicket[] } | null = null;
 const TTL_TICKET_MS = 60_000;
 
@@ -367,13 +434,33 @@ export async function elencoTicketRecenti(pagine: number, forza = false): Promis
   }
   const tutti: FdTicket[] = [];
   for (let page = 1; page <= pagine; page++) {
-    const { tickets, hasMore } = await listTickets({ page, perPage: 100 });
+    const { tickets, hasMore } = await listTickets({ page, perPage: 100, includi: ["description"] });
     tutti.push(...tickets);
     if (!hasMore) break;
   }
   cacheTicket = { at: Date.now(), pagine, tickets: tutti };
   return tutti;
 }
+
+/**
+ * Esito di una sweep. Le sweep NON sollevano: se Freshdesk si ferma a metà,
+ * ciò che era già CONFERMATO resta in `nascoste` e il resto si conta in
+ * `nonVerificate`. Si nasconde solo il provato: una recensione non verificata
+ * resta visibile, mai il contrario.
+ *
+ * Con la lista col corpo (elencoTicketRecenti) il ciclo non chiama Freshdesk,
+ * quindi oggi l'unico errore possibile è quello della lista stessa: tutto o
+ * niente. Il «fermarsi a metà» copre il ripiego getTicket di una lista passata
+ * senza corpi (corpoCaricato=false).
+ */
+export type EsitoSweep = {
+  /** Chiavi delle recensioni confermate (risolte / già inoltrate): da nascondere. */
+  nascoste: Set<string>;
+  /** Recensioni che non si è riusciti a verificare: restano visibili. */
+  nonVerificate: number;
+  /** L'ultimo errore incontrato, per dirlo a chi guarda la lista. */
+  errore: string | null;
+};
 
 /**
  * Delle recensioni date, quali hanno il ticket GIÀ risolto/chiuso su Freshdesk.
@@ -385,63 +472,83 @@ export async function elencoTicketRecenti(pagine: number, forza = false): Promis
  *  - se qualcuno è ancora APERTO, non si arrende: trova il ticket SPECIFICO
  *    della recensione leggendone il corpo (match per nome, senza accenti) e
  *    guarda LO STATO DI QUELLO. Così una recensione risolta sparisce anche se la
- *    stessa sede ha altri ticket aperti (es. Bari, molto attiva). I corpi si
- *    leggono SOLO quando serve, dal ticket più vicino nel tempo, fermandosi al
- *    primo che contiene il nome. Senza nome (o nessun match) resta prudente e la
- *    tiene. Sola lettura.
+ *    stessa sede ha altri ticket aperti (es. Bari, molto attiva). I corpi sono
+ *    già nella lista: si confrontano dal ticket più vicino nel tempo, fermandosi
+ *    al primo che contiene il nome. Senza nome (o nessun match) resta prudente e
+ *    la tiene. Sola lettura; non solleva (vedi EsitoSweep).
  */
 export async function recensioniConTicketRisolto(
   recensioni: { chiave: string; oggetto: string; ricevutaIl: string; nome: string }[],
   opts: { pagine?: number; candidatiMax?: number; forza?: boolean; tickets?: FdTicket[] } = {},
-): Promise<Set<string>> {
-  const risolte = new Set<string>();
-  if (recensioni.length === 0) return risolte;
+): Promise<EsitoSweep> {
+  const esito: EsitoSweep = { nascoste: new Set(), nonVerificate: 0, errore: null };
+  if (recensioni.length === 0) return esito;
 
   // La lista può essere condivisa dal chiamante (scaricata UNA volta per le due
-  // sweep); altrimenti la si prende dalla cache/da Freshdesk.
-  const tutti = opts.tickets ?? (await elencoTicketRecenti(opts.pagine ?? 6, opts.forza));
+  // sweep); altrimenti la si prende dalla cache/da Freshdesk. Senza lista non si
+  // verifica nulla: tutte restano visibili.
+  let tutti: FdTicket[];
+  try {
+    tutti = opts.tickets ?? (await elencoTicketRecenti(opts.pagine ?? 6, opts.forza));
+  } catch (e) {
+    return { ...esito, nonVerificate: recensioni.length, errore: messaggio(e) };
+  }
   const risolto = (t: FdTicket) => t.status === 4 || t.status === 5;
 
-  for (const r of recensioni) {
-    const atteso = normalizzaOggetto(r.oggetto);
-    if (!atteso) continue;
-    const soglia = new Date(r.ricevutaIl).getTime() - 5 * 60 * 1000;
-    const candidati = tutti.filter(
-      (t) => normalizzaOggetto(t.subject) === atteso && new Date(t.createdAt).getTime() >= soglia,
-    );
-    if (candidati.length === 0) continue;
+  for (let i = 0; i < recensioni.length; i++) {
+    const r = recensioni[i];
+    try {
+      const atteso = normalizzaOggetto(r.oggetto);
+      if (!atteso) continue;
+      const soglia = new Date(r.ricevutaIl).getTime() - 5 * 60 * 1000;
+      const candidati = tutti.filter(
+        (t) => normalizzaOggetto(t.subject) === atteso && new Date(t.createdAt).getTime() >= soglia,
+      );
+      if (candidati.length === 0) continue;
 
-    // Casella tutta risolta: gratis, nessun corpo da leggere.
-    if (candidati.every(risolto)) {
-      risolte.add(r.chiave);
-      continue;
-    }
-
-    // Se NESSUN candidato è risolto, questa recensione non può essere «già
-    // gestita» tramite loro: inutile leggere i corpi. Taglia il caso pesante
-    // delle 5★ ancora da pubblicare in una sede con soli ticket negativi aperti
-    // (nome mai presente in quei corpi → letture a vuoto).
-    if (!candidati.some(risolto)) continue;
-
-    // Qualcuno risolto e qualcuno aperto: trova il ticket SPECIFICO della
-    // recensione (per nome) e guarda lo stato di QUELLO. I corpi non stanno nella
-    // lista: si leggono uno a uno, dal più vicino nel tempo, al primo match.
-    const nomeConfr = perConfronto(r.nome || "");
-    if (!nomeConfr) continue; // senza nome non disambiguo: prudente, la tengo
-    const perTempo = [...candidati].sort(
-      (a, b) =>
-        Math.abs(new Date(a.createdAt).getTime() - soglia) -
-        Math.abs(new Date(b.createdAt).getTime() - soglia),
-    );
-    for (const t of perTempo.slice(0, opts.candidatiMax ?? 25)) {
-      const completo = await getTicket(t.id, opts.forza);
-      if (nomeNelCorpo(perConfronto(soloTesto(completo.descriptionHtml)), nomeConfr)) {
-        if (risolto(completo)) risolte.add(r.chiave);
-        break; // trovato il suo ticket: lo stato di quello è la risposta
+      // Casella tutta risolta: gratis, nessun corpo da guardare.
+      if (candidati.every(risolto)) {
+        esito.nascoste.add(r.chiave);
+        continue;
       }
+
+      // Se NESSUN candidato è risolto, questa recensione non può essere «già
+      // gestita» tramite loro: inutile guardare i corpi. Taglia il caso delle 5★
+      // ancora da pubblicare in una sede con soli ticket negativi aperti.
+      if (!candidati.some(risolto)) continue;
+
+      // Qualcuno risolto e qualcuno aperto: trova il ticket SPECIFICO della
+      // recensione (per nome) e guarda lo stato di QUELLO, dal più vicino nel
+      // tempo, al primo match.
+      const nomeConfr = perConfronto(r.nome || "");
+      if (!nomeConfr) continue; // senza nome non disambiguo: prudente, la tengo
+      const perTempo = [...candidati].sort(
+        (a, b) =>
+          Math.abs(new Date(a.createdAt).getTime() - soglia) -
+          Math.abs(new Date(b.createdAt).getTime() - soglia),
+      );
+      for (const t of perTempo.slice(0, opts.candidatiMax ?? 25)) {
+        const completo = await conCorpo(t, opts.forza);
+        if (nomeNelCorpo(perConfronto(soloTesto(completo.descriptionHtml)), nomeConfr)) {
+          if (risolto(completo)) esito.nascoste.add(r.chiave);
+          break; // trovato il suo ticket: lo stato di quello è la risposta
+        }
+      }
+    } catch (e) {
+      // Questa non si è potuta verificare: resta visibile. Al limite di chiamate
+      // è inutile insistere (ogni tentativo aspetterebbe e fallirebbe): ci si
+      // ferma e si contano le rimanenti come non verificate. Scatta solo col
+      // ripiego getTicket (lista senza corpi): con elencoTicketRecenti il ciclo
+      // non fa chiamate.
+      esito.errore = messaggio(e);
+      if (eLimiteChiamate(e)) {
+        esito.nonVerificate += recensioni.length - i;
+        break;
+      }
+      esito.nonVerificate += 1;
     }
   }
-  return risolte;
+  return esito;
 }
 
 /**
@@ -456,48 +563,65 @@ export async function recensioniConTicketRisolto(
  * Quindi si guardano tutti i ticket con lo stesso oggetto (sede) nella finestra,
  * i più vicini nel tempo per primi, e a decidere è il NOME nel corpo. Senza nome
  * (o nessun match) resta prudente e NON la considera agganciata, così non si
- * nasconde per errore una non ancora inoltrata. Sola lettura.
+ * nasconde per errore una non ancora inoltrata. Sola lettura; non solleva (vedi
+ * EsitoSweep).
  */
 export async function recensioniConTicket(
   recensioni: { chiave: string; oggetto: string; ricevutaIl: string; nome: string }[],
   opts: { pagine?: number; candidatiMax?: number; forza?: boolean; tickets?: FdTicket[] } = {},
-): Promise<Set<string>> {
-  const agganciate = new Set<string>();
-  if (recensioni.length === 0) return agganciate;
+): Promise<EsitoSweep> {
+  const esito: EsitoSweep = { nascoste: new Set(), nonVerificate: 0, errore: null };
+  if (recensioni.length === 0) return esito;
 
-  const tutti = opts.tickets ?? (await elencoTicketRecenti(opts.pagine ?? 6, opts.forza));
+  let tutti: FdTicket[];
+  try {
+    tutti = opts.tickets ?? (await elencoTicketRecenti(opts.pagine ?? 6, opts.forza));
+  } catch (e) {
+    return { ...esito, nonVerificate: recensioni.length, errore: messaggio(e) };
+  }
 
-  for (const r of recensioni) {
-    const atteso = normalizzaOggetto(r.oggetto);
-    if (!atteso) continue;
+  for (let i = 0; i < recensioni.length; i++) {
+    const r = recensioni[i];
+    try {
+      const atteso = normalizzaOggetto(r.oggetto);
+      if (!atteso) continue;
 
-    const nomeConfr = perConfronto(r.nome || "");
-    if (!nomeConfr) continue; // senza nome non disambiguo: prudente, la tengo
+      const nomeConfr = perConfronto(r.nome || "");
+      if (!nomeConfr) continue; // senza nome non disambiguo: prudente, la tengo
 
-    // Tutti i ticket della stessa sede, a QUALSIASI ora; i più vicini nel tempo
-    // alla recensione per primi (efficienza). Il match giusto lo fa il nome.
-    const rif = new Date(r.ricevutaIl).getTime();
-    const candidati = tutti
-      .filter((t) => normalizzaOggetto(t.subject) === atteso)
-      .sort(
-        (a, b) =>
-          Math.abs(new Date(a.createdAt).getTime() - rif) -
-          Math.abs(new Date(b.createdAt).getTime() - rif),
-      );
+      // Tutti i ticket della stessa sede, a QUALSIASI ora; i più vicini nel tempo
+      // alla recensione per primi (efficienza). Il match giusto lo fa il nome.
+      const rif = new Date(r.ricevutaIl).getTime();
+      const candidati = tutti
+        .filter((t) => normalizzaOggetto(t.subject) === atteso)
+        .sort(
+          (a, b) =>
+            Math.abs(new Date(a.createdAt).getTime() - rif) -
+            Math.abs(new Date(b.createdAt).getTime() - rif),
+        );
 
-    // Fino a 25 come le altre funzioni: qui il ticket dell'INOLTRO TARDIVO è
-    // lontano nel tempo (finisce in fondo all'ordinamento), quindi un cap basso
-    // lo tagliava fuori (falso «da inoltrare» → doppione). Il ciclo si ferma al
-    // primo match: il costo pieno si paga solo se il ticket NON c'è.
-    for (const t of candidati.slice(0, opts.candidatiMax ?? 25)) {
-      const completo = await getTicket(t.id, opts.forza);
-      if (nomeNelCorpo(perConfronto(soloTesto(completo.descriptionHtml)), nomeConfr)) {
-        agganciate.add(r.chiave); // il suo ticket esiste: è già stata inoltrata
+      // Fino a 25 come le altre funzioni: qui il ticket dell'INOLTRO TARDIVO è
+      // lontano nel tempo (finisce in fondo all'ordinamento), quindi un cap basso
+      // lo tagliava fuori (falso «da inoltrare» → doppione). I corpi sono già
+      // nella lista: guardarne 25 non costa chiamate.
+      for (const t of candidati.slice(0, opts.candidatiMax ?? 25)) {
+        const completo = await conCorpo(t, opts.forza);
+        if (nomeNelCorpo(perConfronto(soloTesto(completo.descriptionHtml)), nomeConfr)) {
+          esito.nascoste.add(r.chiave); // il suo ticket esiste: è già stata inoltrata
+          break;
+        }
+      }
+    } catch (e) {
+      // Come sopra: solo col ripiego getTicket; al 429 ci si ferma.
+      esito.errore = messaggio(e);
+      if (eLimiteChiamate(e)) {
+        esito.nonVerificate += recensioni.length - i;
         break;
       }
+      esito.nonVerificate += 1;
     }
   }
-  return agganciate;
+  return esito;
 }
 
 // Elenco agenti in cache: serve solo a mostrare un nome al posto di un id.

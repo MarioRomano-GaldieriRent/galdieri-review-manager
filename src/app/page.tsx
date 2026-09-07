@@ -8,6 +8,8 @@ import {
   elencoTicketRecenti,
   recensioniConTicket,
   recensioniConTicketRisolto,
+  type EsitoSweep,
+  type FdTicket,
 } from "@/server/integrations/freshdesk";
 import { caricaRecensioni, haTesto, testoRecensione, type Recensione } from "@/server/reviews/load";
 import {
@@ -233,6 +235,9 @@ export default async function HomePage({
   let archiviate: RecensioneArchiviata[] = [];
   let inAttesa: Escalation[] = [];
   let nAttesa: number | null = null;
+  /** Recensioni che Freshdesk non ha fatto in tempo a verificare (restano in lista). */
+  let nonVerificate = 0;
+  let erroreFreshdesk: string | null = null;
 
   if (step === "approvare") {
     const [regoleBase, esecuzioni, graphConf] = await Promise.all([
@@ -337,7 +342,11 @@ export default async function HomePage({
     //    QUALSIASI stato e a QUALSIASI ora — «ha un ticket» = «già inoltrata». Il
     //    tempo non conta: la mail può essere un inoltro tardivo. Quelle SENZA
     //    ticket (e non ancora risolte) restano, da inoltrare.
-    // Best-effort: se Freshdesk non risponde, non si nasconde nulla.
+    // Best-effort: se Freshdesk non risponde, non si nasconde nulla e lo si
+    // dice (banner). Oggi le sweep non chiamano Freshdesk (i corpi sono già
+    // nella lista): un 429 può arrivare solo dall'elenco, ed è tutto o niente.
+    // Se una sweep dovesse fermarsi a metà (ripiego getTicket), ciò che ha già
+    // CONFERMATO resta nascosto: si nasconde solo il provato, mai al contrario.
     if (fdOk && daApprovare.length > 0) {
       const perFd = (x: (typeof daApprovare)[number]) => ({
         chiave: x.r.chiave,
@@ -350,30 +359,39 @@ export default async function HomePage({
         .filter((x) => conInoltro(x) && !prontaMap.has(x.r.chiave))
         .map(perFd);
       const resto = daApprovare.filter((x) => !conInoltro(x)).map(perFd);
+      const forza = sp.fresh === "1"; // «Aggiorna» rinfresca anche i ticket
+      // Lista ticket (col corpo) scaricata UNA volta e CONDIVISA fra le due
+      // sweep: con forza la cache non le farebbe riusare (sarebbero 12 GET
+      // invece di 6). Senza lista non si verifica nulla: tutte restano in vista.
+      let tickets: FdTicket[] | null = null;
       try {
-        const forza = sp.fresh === "1"; // «Aggiorna» rinfresca anche i ticket
-        // Lista ticket scaricata UNA volta e CONDIVISA fra le due sweep: con
-        // forza la cache non le farebbe riusare (sarebbero 12 GET invece di 6).
-        const tickets = await elencoTicketRecenti(6, forza);
+        tickets = await elencoTicketRecenti(6, forza);
+      } catch (e) {
+        // Freshdesk non raggiungibile o a rate-limit (429): NON è un errore
+        // bloccante — le negative già RISOLTE sono comunque nascoste (dal segnale
+        // d'archivio, sopra). console.warn (non error) per non far scattare
+        // l'overlay.
+        erroreFreshdesk = e instanceof Error ? e.message : String(e);
+        nonVerificate = resto.length + negativi.length;
+        console.warn("[da-approvare] elenco ticket Freshdesk non disponibile:", erroreFreshdesk);
+      }
+      if (tickets) {
+        // Le sweep non sollevano: ognuna riporta le CONFERMATE e quante non è
+        // riuscita a verificare. Si applicano entrambe, anche se una è parziale.
         const nascoste = new Set<string>();
-        if (resto.length > 0)
-          for (const c of await recensioniConTicketRisolto(resto, { forza, tickets }))
-            nascoste.add(c);
-        if (negativi.length > 0)
-          for (const c of await recensioniConTicket(negativi, { forza, tickets })) nascoste.add(c);
+        const applica = (e: EsitoSweep) => {
+          for (const c of e.nascoste) nascoste.add(c);
+          nonVerificate += e.nonVerificate;
+          if (e.errore) erroreFreshdesk = e.errore;
+        };
+        if (resto.length > 0) applica(await recensioniConTicketRisolto(resto, { forza, tickets }));
+        if (negativi.length > 0) applica(await recensioniConTicket(negativi, { forza, tickets }));
         const prima = daApprovare.length;
         daApprovare = daApprovare.filter((x) => !nascoste.has(x.r.chiave));
         console.log(
-          `[da-approvare] filtro Freshdesk: nascoste ${prima - daApprovare.length} su ${prima} (risolte o già inoltrate).`,
-        );
-      } catch (e) {
-        // Best-effort: Freshdesk non raggiungibile o a rate-limit (429). NON è un
-        // errore bloccante — le negative già RISOLTE sono comunque nascoste (dal
-        // segnale d'archivio, sopra); qui al più restano visibili le inoltrate ma
-        // ancora aperte. console.warn (non error) per non far scattare l'overlay.
-        console.warn(
-          "[da-approvare] filtro Freshdesk saltato (best-effort):",
-          e instanceof Error ? e.message : e,
+          `[da-approvare] filtro Freshdesk: nascoste ${prima - daApprovare.length} su ${prima} (risolte o già inoltrate)${
+            nonVerificate > 0 ? `, non verificate ${nonVerificate} (${erroreFreshdesk})` : ""
+          }.`,
         );
       }
     } else {
@@ -434,6 +452,13 @@ export default async function HomePage({
     inAttesa = await elencoInAttesa();
     nAttesa = inAttesa.length;
   }
+
+  // Per chi legge: niente codici HTTP. Il messaggio grezzo resta nei log.
+  const motivoFreshdesk = !erroreFreshdesk
+    ? ""
+    : /\b429\b/.test(erroreFreshdesk)
+      ? " (troppe richieste in questo minuto)"
+      : " (non risponde)";
 
   return (
     <main className="pipeline">
@@ -575,6 +600,18 @@ export default async function HomePage({
           {erroreGraph && (
             <section className="card">
               <p className="form-error">Errore nella lettura della posta: {erroreGraph}</p>
+            </section>
+          )}
+          {nonVerificate > 0 && (
+            <section className="card">
+              <p className="notice">
+                ⚠{" "}
+                {nonVerificate === 1
+                  ? "1 recensione non verificata"
+                  : `${nonVerificate} recensioni non verificate`}{" "}
+                su Freshdesk{motivoFreshdesk}: se qualcuna è già stata gestita, per ora resta in
+                lista. Fra un minuto premi «Aggiorna».
+              </p>
             </section>
           )}
 
