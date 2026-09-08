@@ -105,7 +105,12 @@ async function trovaTicket(ctx: Contesto): Promise<RisultatoNodo> {
         ctx.recensione.oggetto,
         ctx.recensione.ricevutaIl,
         ctx.recensione.nome,
-        { forza: attendiCreazione }, // reale: cerca il ticket appena creato, fresco
+        {
+          forza: attendiCreazione, // reale: cerca il ticket appena creato, fresco
+          // Il testo della recensione: aggancia anche i nomi corti («D»), che
+          // per prudenza il solo nome non aggancia mai.
+          testoRecensione: ctx.recensione.originale,
+        },
       );
     } catch (e) {
       // Errore Freshdesk (tipico: 429 rate-limit): NON deve far fallire l'intera

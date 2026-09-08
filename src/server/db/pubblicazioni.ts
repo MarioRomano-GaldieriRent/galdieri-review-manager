@@ -338,6 +338,26 @@ export async function segnalaSparita(
 
 // --------------------------------------------------- esito chiusura Freshdesk
 
+/**
+ * Aggancia (o riaggancia) il ticket alla pubblicazione.
+ *
+ * L'id del ticket si prende di norma dal nodo «Trova il ticket» al momento
+ * della pubblicazione, ma quella ricerca può andare a vuoto — tipicamente per
+ * un 429 di Freshdesk, o perché il ticket non era ancora nato. Quando la
+ * chiusura lo ritrova più tardi lo si scrive qui: senza, ogni ritentativo
+ * ripartirebbe da capo e il numero non comparirebbe mai nello storico.
+ */
+export async function collegaTicket(chiave: string, ticketId: number): Promise<void> {
+  await (
+    await coll("pubblicazioni")
+  ).updateOne({ _id: chiave }, { $set: { ticketId, aggiornataIl: new Date() } });
+  await registraAttivita("pubblicazione.ticketAgganciato", {
+    oggettoTipo: "recensione",
+    oggettoId: chiave,
+    dettaglio: `Ticket #${ticketId} ritrovato e agganciato alla pubblicazione.`,
+  });
+}
+
 /** Registra come è andata la chiusura del ticket. Non cambia lo stato della coda. */
 export async function segnaEsitoFreshdesk(
   chiave: string,

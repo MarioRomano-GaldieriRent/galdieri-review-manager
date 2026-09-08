@@ -1,5 +1,6 @@
 import {
   codaDaRicontrollare,
+  collegaTicket,
   leggiPubblicazione,
   segnaEsitoFreshdesk,
   type VocePubblicazione,
@@ -9,6 +10,9 @@ import {
   chiudiTicketPubblicato,
   testoNotaPubblicazione,
 } from "@/server/integrations/freshdeskChiusura";
+import { cercaTicketPerRecensione } from "@/server/integrations/freshdesk";
+import { leggiRecensione } from "@/server/db/recensioni";
+import { ticketDiEscalation } from "@/server/db/escalation";
 import { tagSede } from "@/server/automation/sedi";
 
 // Orchestrazione della chiusura Freshdesk per una risposta pubblicata a mano.
@@ -55,6 +59,40 @@ function prossimoTentativo(tentativi: number): Date {
 }
 
 /**
+ * Ritrova il ticket di una pubblicazione che ne è rimasta senza.
+ *
+ * Prima l'escalation: il customer care risponde citando «ticket N», e quel
+ * numero è già salvato lì — per «D» c'era (59358) e nessuno lo guardava. Poi
+ * Freshdesk, con gli stessi criteri del nodo «Trova il ticket» e in più il
+ * TESTO della recensione, che aggancia anche i nomi corti. Se lo trova lo
+ * scrive sulla pubblicazione, così vale anche per i tentativi successivi e
+ * compare nello storico. Non solleva: null vuol dire «non ancora».
+ */
+async function ritrovaTicket(voce: VocePubblicazione): Promise<number | null> {
+  try {
+    const daEscalation = await ticketDiEscalation(voce.chiave);
+    if (daEscalation != null) {
+      await collegaTicket(voce.chiave, daEscalation);
+      return daEscalation;
+    }
+    const r = await leggiRecensione(voce.chiave);
+    if (!r) return null;
+    const { ticket } = await cercaTicketPerRecensione(r.oggetto, r.ricevutaIl, r.nome, {
+      forza: true,
+      // Il testo della recensione: aggancia anche i nomi corti («D»).
+      testoRecensione: r.originale,
+    });
+    if (!ticket) return null;
+    await collegaTicket(voce.chiave, ticket.id);
+    return ticket.id;
+  } catch {
+    // Freshdesk non raggiungibile (tipico: 429): non è un fallimento definitivo,
+    // si riproverà al prossimo giro come per ogni altro errore di chiusura.
+    return null;
+  }
+}
+
+/**
  * Chiude il ticket collegato a una pubblicazione e registra come è andata.
  * Non solleva: l'esito finisce sul documento, la coda di retry fa il resto.
  */
@@ -62,11 +100,18 @@ export async function chiudiFreshdeskPer(
   voce: VocePubblicazione,
   operatoreNome = "Sistema",
 ): Promise<void> {
-  if (voce.ticketId == null) {
-    await segnaEsitoFreshdesk(voce.chiave, "fallito", {
-      errore: "nessun ticket collegato alla recensione",
-      tentativi: voce.freshdeskTentativi,
-      prossimoTentativoIl: null,
+  // Senza ticket agganciato non si dichiara fallimento: prima lo si cerca —
+  // nell'escalation, poi su Freshdesk dal testo della recensione. Era qui che
+  // «D» restava col ticket aperto per sempre: «fallito» senza prossimo
+  // tentativo, e nessuno rifaceva mai la ricerca, nemmeno premendo «Riprova».
+  const ticketId = voce.ticketId ?? (await ritrovaTicket(voce));
+  if (ticketId == null) {
+    const tentativi = voce.freshdeskTentativi + 1;
+    const esaurito = tentativi >= MAX_TENTATIVI_FRESHDESK;
+    await segnaEsitoFreshdesk(voce.chiave, esaurito ? "fallito" : "inattesa", {
+      errore: "nessun ticket collegato alla recensione: non ancora trovato su Freshdesk",
+      tentativi,
+      prossimoTentativoIl: esaurito ? null : prossimoTentativo(tentativi),
     });
     return;
   }
@@ -76,7 +121,7 @@ export async function chiudiFreshdeskPer(
     voce.pubblicataIl ? new Date(voce.pubblicataIl) : new Date(),
     voce.testoRisposta,
   );
-  const esito = await chiudiTicketPubblicato(voce.ticketId, {
+  const esito = await chiudiTicketPubblicato(ticketId, {
     tagSede: tagSede(voce.sedeNome),
     nota,
     stelle: voce.stelle,

@@ -15,7 +15,12 @@ import {
 } from "@/server/db/pubblicazioni";
 import { chiudiFreshdeskPer, programmaChiusuraFreshdesk } from "@/server/pubblicazione";
 import { archiviaRecensione, leggiRecensione, ripristinaRecensione } from "@/server/db/recensioni";
-import { registraInoltro, segnaChiusa } from "@/server/db/escalation";
+import {
+  leggiEscalation,
+  registraInoltro,
+  segnaChiusa,
+  ticketDiEscalation,
+} from "@/server/db/escalation";
 import { normalizzaSede } from "@/server/db/seed";
 import { nomeGoogleDiSede } from "@/server/db/sedi";
 import { modoOperativo } from "@/server/settings";
@@ -116,7 +121,11 @@ async function accodaSePubblicabile(
 
   const nodoTicket = esecuzione.nodi.find((n) => n.tipo === "freshdesk.trovaTicket");
   const idTicket = nodoTicket?.messaggio.match(/#(\d+)/);
-  const ticketId = idTicket ? Number(idTicket[1]) : null;
+  // Il ticket: dal nodo «Trova il ticket» di questa esecuzione; se non l'ha
+  // agganciato (nome corto, 429), dall'escalation — il customer care risponde
+  // citando «ticket N», e quel numero è già salvato lì. Per «D» c'era, e la
+  // chiusura partiva lo stesso con «nessun ticket collegato».
+  const ticketId = idTicket ? Number(idTicket[1]) : await ticketDiEscalation(recensione.chiave);
 
   await approvaPerPubblicazione({
     chiave: recensione.chiave,
@@ -326,9 +335,17 @@ export async function playAction(formData: FormData): Promise<void> {
   //   • google.rispondi (a6): già fatto dal robot (l'API è bloccata, quota 0);
   //   • freshdesk.stato (a7): il ticket lo mette Risolto chiudiFreshdeskPer, che
   //     aggiunge anche tag sede e nota con la risposta pubblicata.
+  // Se la recensione è già passata dall'escalation (inoltro fatto, risposta
+  // del customer care arrivata), questa è la FASE 2: si eseguono solo i nodi
+  // DOPO «attendi la risposta». Rifare tutta la regola voleva dire inoltrare
+  // di nuovo la recensione a Cherubina e ricercare il ticket da capo — è
+  // quello che è successo su «D» alla pubblicazione.
+  const daFase2 = (await leggiEscalation(recensione.chiave)) != null;
+  const iAttesa = regola.azioni.findIndex((a) => a.tipo === "sistema.attendiRisposta");
+  const azioniDaFare = daFase2 && iAttesa >= 0 ? regola.azioni.slice(iAttesa + 1) : regola.azioni;
   const regolaDopoGoogle = {
     ...regola,
-    azioni: regola.azioni.filter(
+    azioni: azioniDaFare.filter(
       (a) => a.tipo !== "google.rispondi" && a.tipo !== "freshdesk.stato",
     ),
   };

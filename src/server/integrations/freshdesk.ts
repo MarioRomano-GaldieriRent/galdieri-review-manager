@@ -81,6 +81,67 @@ function nomeNelCorpo(corpoConfr: string, nomeConfr: string): boolean {
   return new RegExp(`(^|[^a-z0-9])${esc}([^a-z0-9]|$)`).test(corpoConfr);
 }
 
+/** Solo lettere, cifre e spazi singoli: per cercare un testo dentro un altro senza badare a punteggiatura ed entità. */
+function alfanumerico(s: string): string {
+  return perConfronto(s).replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+}
+
+/**
+ * L'inizio del testo della recensione, ridotto: abbastanza lungo da non poter
+ * capitare per caso in un altro ticket. Vuoto se la recensione è troppo corta
+ * per fare da prova.
+ */
+function improntaTesto(testo: string): string {
+  const r = alfanumerico(testo).slice(0, 60);
+  return r.length >= 20 ? r : "";
+}
+
+/**
+ * «Nome:D Commento:…» — nel corpo il nome sta subito dopo l'etichetta, e lì
+ * anche un nome di una lettera è un aggancio esatto.
+ */
+function nomeEtichettato(corpoConfr: string, nomeConfr: string): boolean {
+  if (!nomeConfr) return false;
+  const esc = nomeConfr.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`nome\\s*:\\s*${esc}\\s*(commento|punteggio|id)\\s*:`).test(corpoConfr);
+}
+
+/**
+ * Il ticket è quello di questa recensione? Si guarda il CORPO, con tre prove:
+ *  1. il nome a confine di parola — mai per i nomi sotto le 3 lettere, per
+ *     prudenza: ma così il ticket di «D» non si agganciava MAI, e restava
+ *     aperto anche dopo la risposta;
+ *  2. il TESTO della recensione: il corpo la porta per intero («Commento:…»),
+ *     ed è la prova che regge anche coi nomi corti. Quando il testo c'è ed è
+ *     abbastanza lungo, decide LUI: un altro «D» con un'altra recensione non
+ *     si aggancia;
+ *  3. senza testo, il nome etichettato («Nome:D Commento:»), esatto anche se
+ *     corto.
+ * Esportata per il banco di prova (npm run banco:aggancio).
+ */
+export function agganciaPerCorpo(
+  corpoHtml: string,
+  nomeRecensore: string,
+  testoRecensione = "",
+): { ok: boolean; come: string } {
+  const corpo = perConfronto(soloTesto(corpoHtml));
+  const nomeConfr = perConfronto(nomeRecensore);
+  if (nomeNelCorpo(corpo, nomeConfr)) {
+    return { ok: true, come: `nome «${nomeRecensore}» trovato nel corpo` };
+  }
+  const impronta = improntaTesto(testoRecensione);
+  if (impronta) {
+    if (alfanumerico(corpo).includes(impronta)) {
+      return { ok: true, come: `testo della recensione trovato nel corpo (recensore «${nomeRecensore}»)` };
+    }
+    return { ok: false, come: "" };
+  }
+  if (nomeEtichettato(corpo, nomeConfr)) {
+    return { ok: true, come: `nome «${nomeRecensore}» trovato nel corpo come «Nome:…»` };
+  }
+  return { ok: false, come: "" };
+}
+
 export async function ticketUrl(id: number): Promise<string> {
   const cfg = await resolveFreshdesk();
   return `https://${cleanDomain(cfg.domain)}/a/tickets/${id}`;
@@ -336,7 +397,7 @@ export async function cercaTicketPerRecensione(
   oggetto: string,
   ricevutaIl: string,
   nomeRecensore: string,
-  opts: { pagine?: number; candidatiMax?: number; forza?: boolean } = {},
+  opts: { pagine?: number; candidatiMax?: number; forza?: boolean; testoRecensione?: string } = {},
 ): Promise<{ ticket: FdTicket | null; motivo: string }> {
   const atteso = normalizzaOggetto(oggetto);
   if (!atteso) return { ticket: null, motivo: "oggetto vuoto" };
@@ -402,19 +463,19 @@ export async function cercaTicketPerRecensione(
     };
   }
 
-  const nomeConfr = perConfronto(nomeRecensore);
   for (const { t } of daControllare) {
     const completo = await conCorpo(t, opts.forza);
-    // Confronto senza accenti/entità e a confine di parola: «Lavallée» aggancia
-    // anche «Lavallee», ma un nome corto non aggancia una parola qualsiasi.
-    if (nomeNelCorpo(perConfronto(soloTesto(completo.descriptionHtml)), nomeConfr)) {
-      return { ticket: completo, motivo: `nome «${nomeRecensore}» trovato nel corpo` };
-    }
+    // Nome a confine di parola, TESTO della recensione, o nome etichettato:
+    // vedi agganciaPerCorpo. Il testo è quello che aggancia anche «D».
+    const prova = agganciaPerCorpo(completo.descriptionHtml, nomeRecensore, opts.testoRecensione);
+    if (prova.ok) return { ticket: completo, motivo: prova.come };
   }
 
   return {
     ticket: null,
-    motivo: `${daControllare.length} ticket con oggetto e data compatibili, ma in nessuno compare «${nomeRecensore}»`,
+    motivo: `${daControllare.length} ticket con oggetto e data compatibili, ma in nessuno compare «${nomeRecensore}»${
+      opts.testoRecensione ? " né il testo della recensione" : ""
+    }`,
   };
 }
 

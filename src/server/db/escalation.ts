@@ -118,6 +118,19 @@ export async function leggiEscalation(chiave: string): Promise<Escalation | null
   return d ? componi(d) : null;
 }
 
+/**
+ * Il numero del ticket che l'escalation conosce: quello citato dal customer
+ * care nella risposta («Ciao Stefania, ticket N …»), altrimenti quello
+ * agganciato all'inoltro. null se non c'è un'escalation o nessuno dei due è
+ * noto. Per «D» il primo c'era (59358) e nessuno lo guardava: il ticket è
+ * rimasto aperto dopo la risposta.
+ */
+export async function ticketDiEscalation(chiave: string): Promise<number | null> {
+  const e = await leggiEscalation(chiave);
+  if (!e) return null;
+  return e.rispostaTicket ?? e.ticketId ?? null;
+}
+
 /** In attesa della risposta (tab «In attesa»), dalla più recente. */
 export async function elencoInAttesa(): Promise<Escalation[]> {
   const righe = await (await escalations())
