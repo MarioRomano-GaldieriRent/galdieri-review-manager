@@ -118,7 +118,7 @@ function corpoHtml(opts: {
         </td></tr>
 
         <tr><td style="padding:22px 24px 24px" align="center">
-          <a href="${esc(link)}" style="display:inline-block;background:${C.blu};color:#ffffff;text-decoration:none;font-size:15px;font-weight:600;padding:12px 28px;border-radius:980px">Apri Supervisione e risolvila</a>
+          <a href="${esc(link)}" style="display:inline-block;background:${C.blu};color:#ffffff;text-decoration:none;font-size:15px;font-weight:600;padding:12px 36px;border-radius:980px">Apri</a>
           <div style="font-size:12px;color:${C.testoSoft};margin-top:12px">
             Da lì puoi segnarla come risolta o rimetterla nella coda di ${esc(daChi)}.
           </div>
