@@ -296,114 +296,254 @@ export async function annulla(root: Radice): Promise<void> {
 
 // --- Match della recensione specifica -------------------------------------
 
-/** Il «Rispondi» (bottone o link) più vicino SOTTO l'elemento del nome (stessa card). */
-async function rispondiVicinoA(root: Radice, nomeEl: Locator): Promise<Locator | null> {
-  const nameBox = await nomeEl.boundingBox().catch(() => null);
-  if (!nameBox) return null;
-  const buttons = root
-    .getByRole("button", { name: /rispondi/i })
-    .or(root.getByRole("link", { name: /rispondi/i }));
-  const count = await buttons.count().catch(() => 0);
-  let best: Locator | null = null;
-  let bestDy = Infinity;
-  for (let i = 0; i < count; i++) {
-    const b = buttons.nth(i);
-    const box = await b.boundingBox().catch(() => null);
-    if (box && box.y >= nameBox.y - 30) {
-      const dy = box.y - nameBox.y;
-      if (dy < bestDy) {
-        bestDy = dy;
-        best = b;
+/**
+ * Versione del riconoscimento sulla LISTA (per sede e gruppi): stampata nel
+ * passo-passo, così una build vecchia sul server si vede subito.
+ */
+export const VERSIONE_LISTA = "lista-1";
+
+/** Una card di recensione letta dalla lista (pagina o iframe). */
+export type CardLetta = {
+  /** Indice con cui la card (e il suo «Rispondi») sono marcati nel DOM. */
+  i: number;
+  /** L'autore, dal link al profilo del recensore; "" se la vista non lo espone. */
+  autore: string;
+  /** Tutto il testo della card, icone escluse. */
+  testo: string;
+  stelle: string;
+  /** Ha un «Rispondi» suo (cioè non ha ancora una risposta). */
+  haRispondi: boolean;
+};
+
+/**
+ * Legge le CARD delle recensioni in vista. Ogni card parte dal LINK AL PROFILO
+ * del recensore (è lì che sta il nome) e sale agli antenati finché il
+ * sottoalbero ne contiene uno solo — e un solo «Rispondi», e una sola riga di
+ * stelle: quella è la sua card. Se la vista non ha link ai profili, si parte
+ * dai controlli «Rispondi» (testo ESATTO, non «Rispondere a recensioni») e
+ * l'autore resta vuoto: si potrà riconoscere solo dal testo.
+ * Marca ogni card con `data-robot-card` e il suo «Rispondi» con
+ * `data-robot-rispondi-di`: il click lo fa poi Playwright, coi suoi controlli.
+ */
+async function leggiCards(root: Radice): Promise<{ cards: CardLetta[]; errore: string }> {
+  try {
+    const cards = await root.evaluate(() => {
+      // ATTENZIONE: NIENTE funzioni con nome qui dentro (`const f = () => …`):
+      // tsx/esbuild le avvolge in `__name(…)`, che nel browser non esiste, e
+      // la evaluate salta. Era il motivo per cui il vecchio aggancio «per
+      // card» falliva in silenzio e lasciava il posto a quello per geometria.
+      document.querySelectorAll("[data-robot-card]").forEach((e) => e.removeAttribute("data-robot-card"));
+      document
+        .querySelectorAll("[data-robot-rispondi-di]")
+        .forEach((e) => e.removeAttribute("data-robot-rispondi-di"));
+
+      // I «Rispondi» veri e VISIBILI. Quello accanto ad «Annulla» è il submit
+      // di un riquadro già aperto, non quello di una card: fuori.
+      const rispondi: Element[] = [];
+      for (const el of Array.from(document.querySelectorAll("button, a, [role=button]"))) {
+        const box = el.getBoundingClientRect();
+        if (box.width < 2 || box.height < 2) continue;
+        const t = (el.textContent || "").replace(/\s+/g, " ").trim().toLowerCase();
+        const a = (el.getAttribute("aria-label") || "").replace(/\s+/g, " ").trim().toLowerCase();
+        if (!(t === "rispondi" || /^rispondi\b/.test(a))) continue;
+        let accantoAdAnnulla = false;
+        const riga = el.parentElement;
+        if (riga) {
+          for (const b of Array.from(riga.querySelectorAll("button, [role=button]"))) {
+            if ((b.textContent || "").replace(/\s+/g, " ").trim().toLowerCase() === "annulla") accantoAdAnnulla = true;
+          }
+        }
+        if (!accantoAdAnnulla) rispondi.push(el);
       }
-    }
+
+      // I link ai profili, VISIBILI. Si contano per profilo (href), perché in
+      // una card lo stesso link può comparire due volte (foto + nome).
+      const link: Element[] = [];
+      for (const el of Array.from(document.querySelectorAll('a[href*="/maps/contrib/"], a[jsname="xs1xe"]'))) {
+        const box = el.getBoundingClientRect();
+        if (box.width >= 2 && box.height >= 2) link.push(el);
+      }
+      const stelle: Element[] = Array.from(
+        document.querySelectorAll('[role="img"][aria-label*="stell" i], [role="img"][aria-label*="star" i]'),
+      );
+
+      // Da dove si parte: dai link (autore leggibile) o, se non ce ne sono,
+      // dai «Rispondi» (autore vuoto).
+      const semi: Element[] = link.length > 0 ? link : rispondi;
+      const esito: { i: number; autore: string; testo: string; stelle: string; haRispondi: boolean }[] = [];
+      const gia: Element[] = [];
+      for (const seme of semi) {
+        let card: Element = seme;
+        for (let salite = 0; salite < 14; salite++) {
+          const su = card.parentElement;
+          if (!su || su === document.body) break;
+          const profili: string[] = [];
+          for (const l of link) {
+            if (!su.contains(l)) continue;
+            const h = l.getAttribute("href") || "";
+            if (profili.indexOf(h) < 0) profili.push(h);
+          }
+          let quantiRispondi = 0;
+          for (const r of rispondi) if (su.contains(r)) quantiRispondi++;
+          let quanteStelle = 0;
+          for (const s of stelle) if (su.contains(s)) quanteStelle++;
+          if (profili.length > 1 || quantiRispondi > 1 || quanteStelle > 1) break;
+          card = su;
+        }
+        if (card === seme) continue; // nessun contenitore: non è una card
+        if (gia.indexOf(card) >= 0) continue; // stessa card raggiunta da due semi
+        gia.push(card);
+
+        const copia = card.cloneNode(true) as HTMLElement;
+        copia
+          .querySelectorAll('i, svg, [aria-hidden="true"], .google-symbols, .notranslate')
+          .forEach((e) => e.remove());
+        const linkAutore = copia.querySelector('a[href*="/maps/contrib/"], a[jsname="xs1xe"]');
+        const autore = (linkAutore ? linkAutore.textContent || "" : "").replace(/\s+/g, " ").trim();
+        const testo = (copia.textContent || "").replace(/\s+/g, " ").trim();
+        let etichettaStelle = "";
+        for (const s of stelle) {
+          if (card.contains(s)) {
+            etichettaStelle = (s.getAttribute("aria-label") || "").trim();
+            break;
+          }
+        }
+        let suoRispondi: Element | null = null;
+        for (const r of rispondi) {
+          if (card.contains(r)) {
+            suoRispondi = r;
+            break;
+          }
+        }
+        const i = esito.length;
+        card.setAttribute("data-robot-card", String(i));
+        if (suoRispondi) suoRispondi.setAttribute("data-robot-rispondi-di", String(i));
+        esito.push({ i, autore, testo, stelle: etichettaStelle, haRispondi: suoRispondi !== null });
+      }
+      return esito;
+    });
+    return { cards, errore: "" };
+  } catch (e) {
+    return { cards: [], errore: e instanceof Error ? e.message.split("\n")[0] : String(e) };
   }
-  return bestDy < 380 ? best : null; // stessa card: il Rispondi è appena sotto il nome
 }
 
 /**
- * Il «Rispondi» DELLA CARD del recensore indicato — legato al SUO riquadro, non
- * un «Rispondi» a caso della lista. Individua l'elemento-nome del recensore, poi
- * SALE ai suoi antenati finché uno contiene un controllo «Rispondi»: quella è la
- * sua card, e quel «Rispondi» è il suo. Lo marca con un attributo così Playwright
- * lo clicca con i suoi controlli (visibilità, scroll…). Robusto anche quando la
- * lista NON è filtrata e mostra più recensioni insieme (il caso che rispondeva a
- * uno «quasi a caso»). Ritorna loc=null se il recensore non ha un «Rispondi»
- * (es. ha già una risposta) o se il nome non si individua.
+ * Fra le card lette, QUELLA del cliente — con le stesse regole della coda
+ * (`stessoContenuto`, `eSuaLaRecensione`), MAI per sottostringa del nome:
+ *  - se c'è il testo della recensione comanda il testo: dev'esserci UNA card
+ *    che lo contiene. Se nessuna lo contiene, non ci si fida del solo nome
+ *    (con «D» vorrebbe dire scegliere un altro «D»);
+ *  - senza testo (5★ secche), l'autore dev'essere IDENTICO e UNICO: due
+ *    omonimi senza niente per distinguerli non si toccano.
+ * Chi non è sicuro non sceglie: meglio «non trovata» che pubblicare sotto la
+ * recensione di un estraneo.
  */
-async function rispondiDellaCard(
+function scegliCard(
+  cards: CardLetta[],
+  nome: string,
+  testoRecensione: string,
+): { card: CardLetta | null; motivo: string } {
+  const testo = testoRecensione.trim();
+  const conTesto = ridotto(testo).length >= 12;
+  const suoAutore = (c: CardLetta) => c.autore !== "" && eSuaLaRecensione(c.autore, nome);
+  // Per autore contano solo le card ANCORA SENZA risposta: a quelle con la
+  // risposta non si potrebbe comunque rispondere, e la coda di Google mostra
+  // solo le prime. Così una sua recensione vecchia, già risposta, non rende
+  // «ambigua» quella nuova.
+  const perAutore = cards.filter((c) => c.haRispondi && suoAutore(c));
+  const perAutoreTutte = cards.filter(suoAutore);
+  const giaRisposte = perAutoreTutte.length - perAutore.length;
+  if (conTesto) {
+    const perTesto = cards.filter((c) => stessoContenuto(c.testo, testo));
+    if (perTesto.length === 1) {
+      const c = perTesto[0];
+      const autoreOk = c.autore ? eSuaLaRecensione(c.autore, nome) : combaciaNome(c.testo, nome);
+      return {
+        card: c,
+        motivo: autoreOk
+          ? "combacia il testo della recensione e l'autore"
+          : `combacia il testo della recensione (l'autore a schermo è «${c.autore || "?"}», non «${nome}»: mi fido del testo)`,
+      };
+    }
+    if (perTesto.length > 1) {
+      return { card: null, motivo: `${perTesto.length} card contengono lo stesso testo: non scelgo` };
+    }
+    return {
+      card: null,
+      motivo: `nessuna card col testo della recensione${
+        perAutoreTutte.length > 0
+          ? ` (${perAutoreTutte.length} con l'autore «${nome}» ma un testo diverso: non mi fido del solo nome)`
+          : ""
+      }`,
+    };
+  }
+  if (perAutore.length === 1) {
+    return {
+      card: perAutore[0],
+      motivo: `combacia l'autore (nessun testo da confrontare)${
+        giaRisposte > 0 ? `; un'altra sua ha già la risposta` : ""
+      }`,
+    };
+  }
+  if (perAutore.length > 1) {
+    return {
+      card: null,
+      motivo: `${perAutore.length} recensioni senza risposta con l'autore «${nome}» e nessun testo per distinguerle: non scelgo`,
+    };
+  }
+  if (giaRisposte > 0) {
+    return {
+      card: null,
+      motivo: `l'unica recensione con l'autore «${nome}» ha già una risposta`,
+    };
+  }
+  const simili = cards.filter((c) => combaciaNome(c.autore, nome) || combaciaNome(c.testo, nome)).length;
+  return {
+    card: null,
+    motivo: `nessuna card con l'autore «${nome}»${
+      simili > 0 ? ` (${simili} lo contengono o gli somigliano, ma non è lo stesso nome)` : ""
+    }`,
+  };
+}
+
+/**
+ * La card del cliente nella vista corrente: legge le card, sceglie con
+ * `scegliCard`, la porta in vista. `rispondi` è il locator del SUO «Rispondi»
+ * (null se la card ha già una risposta, o se non è stata scelta).
+ */
+async function cardDelCliente(
   root: Radice,
   nome: string,
-): Promise<{ loc: Locator | null; dettaglio: string }> {
-  const esito = await root
-    .evaluate((nomeCliente: string) => {
-      const norm = (s: string | null) =>
-        (s || "").replace(/ /g, " ").replace(/\s+/g, " ").trim();
-      // I nomi dei recensori sono link con l'icona "open_in_new": la si toglie.
-      const senzaIcona = (s: string | null) =>
-        norm(s).replace(/open_in_new/gi, "").replace(/\s+/g, " ").trim();
-      const bassa = (s: string | null) => senzaIcona(s).toLowerCase();
-      const target = bassa(nomeCliente);
-      if (!target) return { ok: false, motivo: "nome vuoto", nomi: 0 };
-      const visibile = (el: Element) =>
-        (el as HTMLElement).offsetParent !== null || el.getClientRects().length > 0;
-
-      // Elemento-nome del recensore: testo (senza icona) UGUALE al nome e corto
-      // (il link del nome, non un contenitore che ingloba tutta la recensione).
-      const candidati = Array.from(
-        document.querySelectorAll("a, [role=link], [role=button], span, div, h1, h2, h3"),
-      ).filter(
-        (el) =>
-          visibile(el) &&
-          bassa(el.textContent) === target &&
-          senzaIcona(el.textContent).length <= nomeCliente.trim().length + 3,
-      );
-      if (candidati.length === 0) return { ok: false, motivo: "nome-recensore non individuato", nomi: 0 };
-      candidati.sort((a, b) => (a.textContent || "").length - (b.textContent || "").length);
-      const nomeEl = candidati[0];
-
-      // Un controllo «Rispondi» vero: testo ESATTO «Rispondi» (non «Rispondere a
-      // recensioni», non «Segnala recensione») o aria-label che inizia con esso.
-      const isRispondi = (el: Element) => {
-        if (!el.matches("button, a, [role=button]")) return false;
-        if (!visibile(el)) return false;
-        const t = norm(el.textContent).toLowerCase();
-        const a = norm(el.getAttribute("aria-label")).toLowerCase();
-        return t === "rispondi" || /^rispondi\b/.test(a);
-      };
-
-      let card: Element | null = nomeEl;
-      let rispondi: Element | null = null;
-      for (let i = 0; i < 8 && card; i++, card = card.parentElement) {
-        const trovati = Array.from(card.querySelectorAll("button, a, [role=button]")).filter(isRispondi);
-        if (trovati.length > 0) {
-          rispondi = trovati[0];
-          break;
-        }
-      }
-      if (!rispondi)
-        return {
-          ok: false,
-          motivo: "il recensore non ha «Rispondi» nella sua card (forse ha già risposta)",
-          nomi: candidati.length,
-        };
-
-      document
-        .querySelectorAll("[data-robot-rispondi]")
-        .forEach((e) => e.removeAttribute("data-robot-rispondi"));
-      rispondi.setAttribute("data-robot-rispondi", "1");
-      return { ok: true, motivo: "", nomi: candidati.length };
-    }, nome)
-    .catch((e) => ({
-      ok: false,
-      motivo: "evaluate fallito: " + (e instanceof Error ? e.message : String(e)),
-      nomi: 0,
-    }));
-
-  if (!esito.ok) return { loc: null, dettaglio: esito.motivo };
-  return {
-    loc: root.locator('[data-robot-rispondi="1"]').first(),
-    dettaglio: `«Rispondi» della card di «${nome}» (${esito.nomi} elementi-nome corrispondenti)`,
-  };
+  testoRecensione: string,
+  log: (m: string) => void,
+): Promise<{ card: CardLetta | null; rispondi: Locator | null; dettaglio: string }> {
+  const { cards, errore } = await leggiCards(root);
+  if (errore) return { card: null, rispondi: null, dettaglio: `lettura delle card fallita: ${errore}` };
+  log(
+    `card in vista (${VERSIONE_LISTA}): ${cards.length}${
+      cards.length > 0
+        ? " — " +
+          cards
+            .slice(0, 12)
+            .map((c) => `«${c.autore || "?"}»${c.haRispondi ? "" : " (già risposta)"}`)
+            .join(", ")
+        : ""
+    }`,
+  );
+  const scelta = scegliCard(cards, nome, testoRecensione);
+  if (!scelta.card) return { card: null, rispondi: null, dettaglio: scelta.motivo };
+  const c = scelta.card;
+  log(
+    `card di «${nome}»: autore «${c.autore || "?"}»${c.stelle ? " · " + c.stelle : ""} · «${c.testo.slice(0, 120)}…» — ${scelta.motivo}.`,
+  );
+  await root
+    .locator(`[data-robot-card="${c.i}"]`)
+    .first()
+    .scrollIntoViewIfNeeded()
+    .catch(() => {});
+  const rispondi = c.haRispondi ? root.locator(`[data-robot-rispondi-di="${c.i}"]`).first() : null;
+  return { card: c, rispondi, dettaglio: scelta.motivo };
 }
 
 /** Scorre il contenitore scrollabile più grande (o la finestra) verso il basso. */
@@ -483,48 +623,51 @@ async function radiceConRecensioni(page: Page): Promise<Radice> {
  * scroll corto per far rendere le card di questa pagina. Trovata la card, vi
  * individua il «Rispondi» (recensione senza risposta), clicca e scrive il testo.
  */
-async function cercaInPaginaCorrente(
+export async function cercaInPaginaCorrente(
   page: Page,
   nome: string,
   testo: string,
+  opts: { testoRecensione?: string; log?: (m: string) => void } = {},
 ): Promise<EsitoMatch> {
+  const log = opts.log ?? (() => {});
   await page
     .getByRole("button", { name: /Rispondi/i })
     .first()
     .waitFor({ timeout: 12000 })
     .catch(() => {});
 
+  // Per card, con le regole della coda. Prima si prendeva la PRIMA occorrenza
+  // del nome come sottostringa e il «Rispondi» più vicino sotto: con «D»
+  // combaciava con mezza pagina e si rispondeva a un altro — in modalità
+  // reale, pubblicando.
+  let ultimo = "";
   for (let s = 0; s < 3; s++) {
-    const nomeLoc = page.getByText(nome, { exact: false });
-    if ((await nomeLoc.count().catch(() => 0)) > 0) {
-      const primo = nomeLoc.first();
-      await primo.scrollIntoViewIfNeeded().catch(() => {});
-      await page.waitForTimeout(400);
-      const rispondi = await rispondiVicinoA(page, primo);
-      if (!rispondi) {
+    const c = await cardDelCliente(page, nome, opts.testoRecensione ?? "", log);
+    if (c.card) {
+      if (!c.rispondi) {
         return {
           trovata: true,
           scritto: false,
-          dettaglio: `«${nome}» trovato, ma senza «Rispondi» (forse ha già risposta).`,
+          dettaglio: `«${nome}» trovato (${c.dettaglio}), ma la sua card non ha «Rispondi»: ha già una risposta.`,
         };
       }
-      await rispondi.scrollIntoViewIfNeeded().catch(() => {});
-      await rispondi.click({ timeout: 6000 }).catch(() => {});
+      await c.rispondi.click({ timeout: 6000 }).catch(() => {});
       await page.waitForTimeout(1200);
       const r = await scriviRisposta(page, testo);
       return {
         trovata: true,
         scritto: r.scritto,
-        dettaglio: `campo: ${r.via} · «Pubblica» abilitato: ${r.abilitato}`,
+        dettaglio: `${c.dettaglio} · campo: ${r.via} · «Pubblica» abilitato: ${r.abilitato}`,
       };
     }
+    ultimo = c.dettaglio;
     // Non ancora: scroll corto per far rendere il resto di QUESTA pagina.
     if (s < 2) {
       await scrollaGiu(page, 900);
       await page.waitForTimeout(600);
     }
   }
-  return { trovata: false, scritto: false, dettaglio: "non in questa pagina" };
+  return { trovata: false, scritto: false, dettaglio: `non in questa pagina (${ultimo})` };
 }
 
 export type EsitoRicerca = {
@@ -555,7 +698,7 @@ export async function cercaNeiGruppiPerPagina(
   ctx: BrowserContext,
   nomeCliente: string,
   testo: string,
-  opts: { maxPagine?: number; log?: (m: string) => void } = {},
+  opts: { maxPagine?: number; log?: (m: string) => void; testoRecensione?: string } = {},
 ): Promise<EsitoRicerca> {
   const maxPagine = opts.maxPagine ?? 5;
   const log = opts.log ?? (() => {});
@@ -589,7 +732,10 @@ export async function cercaNeiGruppiPerPagina(
       vive++;
       await s.page.bringToFront().catch(() => {});
       log(`«${s.gr.nome}» · pagina ${pagina}: cerco «${nome}»…`);
-      const e = await cercaInPaginaCorrente(s.page, nome, testo);
+      const e = await cercaInPaginaCorrente(s.page, nome, testo, {
+        testoRecensione: opts.testoRecensione,
+        log,
+      });
       if (e.trovata) {
         await s.page.bringToFront().catch(() => {});
         return {
@@ -820,7 +966,7 @@ export type EsitoTrovaLista = { trovata: boolean; dettaglio: string };
 export async function trovaRecensioneNellaLista(
   root: Radice,
   nomeCliente: string,
-  opts: { maxPassi?: number; log?: (m: string) => void } = {},
+  opts: { maxPassi?: number; log?: (m: string) => void; testoRecensione?: string } = {},
 ): Promise<EsitoTrovaLista> {
   const maxPassi = opts.maxPassi ?? 60;
   const log = opts.log ?? (() => {});
@@ -835,18 +981,18 @@ export async function trovaRecensioneNellaLista(
 
   let fermo = 0;
   for (let s = 0; s <= maxPassi; s++) {
-    const nomeLoc = root.getByText(nome, { exact: false });
-    const nName = await nomeLoc.count().catch(() => 0);
     const nRisp = await contaRispondi(root);
-    log(`passo ${s + 1}: «${nome}» = ${nName} · recensioni visibili = ${nRisp}`);
+    // Per card, con le regole della coda. MAI «il nome compare da qualche
+    // parte»: con un recensore chiamato «D» quel conteggio era sempre > 0 e
+    // si dichiarava «trovato» al primo passo, su chiunque.
+    const c = await cardDelCliente(root, nome, opts.testoRecensione ?? "", log);
+    log(`passo ${s + 1}: ${c.card ? "trovata" : c.dettaglio} · recensioni visibili = ${nRisp}`);
 
-    if (nName > 0) {
-      const primo = nomeLoc.first();
-      await primo.scrollIntoViewIfNeeded().catch(() => {});
+    if (c.card) {
       await pg.waitForTimeout(400);
       return {
         trovata: true,
-        dettaglio: `«${nome}» trovato al passo ${s + 1} e portato in vista (non toccato).`,
+        dettaglio: `«${nome}» trovato al passo ${s + 1} (${c.dettaglio}) e portato in vista (non toccato).`,
       };
     }
 
@@ -879,7 +1025,7 @@ export async function trovaRecensioneNellaLista(
 export async function cercaClienteNelleRecensioni(
   root: Radice,
   nomeCliente: string,
-  opts: { log?: (m: string) => void } = {},
+  opts: { log?: (m: string) => void; testoRecensione?: string } = {},
 ): Promise<EsitoTrovaLista> {
   const log = opts.log ?? (() => {});
   const nome = nomeCliente.trim();
@@ -940,7 +1086,7 @@ export async function cercaClienteNelleRecensioni(
 
   if (!campo) {
     log("nessun campo «cerca recensioni»: ripiego sullo scroll…");
-    return trovaRecensioneNellaLista(root, nome, { log });
+    return trovaRecensioneNellaLista(root, nome, { log, testoRecensione: opts.testoRecensione });
   }
 
   await campo.click().catch(() => {});
@@ -951,24 +1097,21 @@ export async function cercaClienteNelleRecensioni(
   await pg.waitForTimeout(3000);
   await scatto("6-cerca-cliente");
 
-  const nName = await root.getByText(nome, { exact: false }).count().catch(() => 0);
   const nRisp = await contaRispondi(root);
-  if (nName > 0) {
-    await root
-      .getByText(nome, { exact: false })
-      .first()
-      .scrollIntoViewIfNeeded()
-      .catch(() => {});
+  // Fra i risultati, la SUA card con le regole della coda — non «il nome
+  // compare da qualche parte», che con «D» era vero su qualunque pagina.
+  const c = await cardDelCliente(root, nome, opts.testoRecensione ?? "", log);
+  if (c.card) {
     await scatto("7-cliente");
     return {
       trovata: true,
-      dettaglio: `«${nome}» filtrato con la ricerca delle recensioni (${nRisp} risultati visibili).`,
+      dettaglio: `«${nome}» filtrato con la ricerca delle recensioni (${nRisp} risultati visibili): ${c.dettaglio}.`,
     };
   }
   await scatto("7-cliente");
   return {
     trovata: false,
-    dettaglio: `Ho cercato «${nome}» nelle recensioni ma non compare (${nRisp} risultati). Vedi gli screenshot 6 e 7.`,
+    dettaglio: `Ho cercato «${nome}» nelle recensioni: ${c.dettaglio} (${nRisp} risultati). Vedi gli screenshot 6 e 7.`,
   };
 }
 
@@ -987,7 +1130,7 @@ export async function rispondiAllaRecensione(
   root: Radice,
   nomeCliente: string,
   testo: string,
-  opts: { log?: (m: string) => void } = {},
+  opts: { log?: (m: string) => void; testoRecensione?: string } = {},
 ): Promise<EsitoRisposta> {
   const log = opts.log ?? (() => {});
   const nome = nomeCliente.trim();
@@ -998,16 +1141,17 @@ export async function rispondiAllaRecensione(
     log(`screenshot: ${p}`);
   };
 
-  const nomeLoc = root.getByText(nome, { exact: false }).first();
-  if ((await nomeLoc.count().catch(() => 0)) === 0) {
+  // La SUA card, con le regole della coda (testo della recensione, o autore
+  // identico e unico): mai per sottostringa del nome.
+  const suaCard = await cardDelCliente(root, nome, opts.testoRecensione ?? "", log);
+  if (!suaCard.card) {
     return {
       scritto: false,
       via: "nessun-nome",
       abilitato: false,
-      dettaglio: `«${nome}» non è nella lista: va cercato prima.`,
+      dettaglio: `«${nome}» non è nella lista (${suaCard.dettaglio}): va cercato prima.`,
     };
   }
-  await nomeLoc.scrollIntoViewIfNeeded().catch(() => {});
   await pg.waitForTimeout(400);
   await scatto("8a-prima-rispondi");
 
@@ -1026,30 +1170,20 @@ export async function rispondiAllaRecensione(
     .catch(() => [] as string[]);
   log(`bottoni: ${JSON.stringify([...new Set(bottoni)].slice(0, 30))}`);
 
-  // Il «Rispondi» DELLA CARD di questo recensore, non uno a caso della lista:
-  //   1) per parentela DOM (rispondiDellaCard): risale dal nome alla sua card e
-  //      prende il «Rispondi» che sta lì dentro — robusto anche con più
-  //      recensioni visibili insieme (la lista qui NON è filtrata);
-  //   2) se non ci riesce, ripiego per GEOMETRIA (il «Rispondi» appena sotto il
-  //      nome), comunque legato alla posizione del nome.
-  // NIENTE più «primo Rispondi in vista»: era quello che rispondeva alla
-  // recensione sbagliata quando la lista mostra tanti recensori insieme.
-  const perCard = await rispondiDellaCard(root, nome);
-  let rispondi = perCard.loc;
-  if (rispondi) {
-    log(`aggancio ${perCard.dettaglio}.`);
-  } else {
-    log(`card DOM non agganciata (${perCard.dettaglio}); provo per geometria (Rispondi sotto il nome)…`);
-    rispondi = await rispondiVicinoA(root, nomeLoc);
-  }
+  // Il «Rispondi» DELLA SUA card, marcato dalla lettura delle card. Niente più
+  // ripiego «per geometria» (il «Rispondi» più vicino sotto la prima
+  // occorrenza del nome): con un nome di una lettera agganciava la card di un
+  // altro, e in modalità reale ci si pubblicava sopra.
+  const rispondi = suaCard.rispondi;
   if (!rispondi) {
     return {
       scritto: false,
       via: "nessun-rispondi",
       abilitato: false,
-      dettaglio: `Trovato «${nome}» ma non ho saputo collegare con certezza il SUO «Rispondi» (${perCard.dettaglio}). NON ho cliccato niente, per non rispondere alla recensione sbagliata. Guarda 8a e la riga «bottoni».`,
+      dettaglio: `Trovato «${nome}» (${suaCard.dettaglio}) ma la sua card non ha «Rispondi»: ha già una risposta. NON ho cliccato niente. Guarda 8a e la riga «bottoni».`,
     };
   }
+  log(`aggancio il «Rispondi» della card di «${nome}» (${suaCard.dettaglio}).`);
   await rispondi.scrollIntoViewIfNeeded().catch(() => {});
   await rispondi.click({ timeout: 6000 }).catch(() => {});
   log("cliccato «Rispondi».");
@@ -2260,12 +2394,18 @@ export async function rispondiPerSede(
   }
 
   // 2) Ripiego: la lista della sede, come si è sempre fatto.
-  const t = await cercaClienteNelleRecensioni(root, nomeCliente, { log });
+  const t = await cercaClienteNelleRecensioni(root, nomeCliente, {
+    log,
+    testoRecensione: opts.testoRecensione,
+  });
   if (!t.trovata) {
     return { trovata: false, scritto: false, root, dettaglio: `sede «${nomeGoogle}»: ${t.dettaglio}` };
   }
 
-  const r = await rispondiAllaRecensione(root, nomeCliente, testo, { log });
+  const r = await rispondiAllaRecensione(root, nomeCliente, testo, {
+    log,
+    testoRecensione: opts.testoRecensione,
+  });
   return {
     trovata: true,
     scritto: r.scritto,

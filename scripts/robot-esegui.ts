@@ -206,6 +206,9 @@ const AVVIO = Date.now();
     // 2) FALLBACK: ricerca IN AMPIEZZA fra i gruppi (pag. 1 di tutti, poi 2, …).
     if (!trovata) {
       const ric = await cercaNeiGruppiPerPagina(ctx, job.nome, job.testo, {
+        // Il testo della recensione: anche nei gruppi si riconosce la card
+        // dal contenuto, non dal nome come sottostringa.
+        testoRecensione: job.testoRecensione,
         maxPagine: 5,
         log: traccia,
       });
