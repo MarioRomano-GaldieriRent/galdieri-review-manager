@@ -45,6 +45,7 @@ import {
 import { VediMail } from "./VediMail";
 import { BottoneSegnala } from "./BottoneSegnala";
 import { segnalaAction } from "./supervisione/actions";
+import { inoltraAlCustomerCareAction } from "./dashboard/inoltro";
 import { chiaviSegnalate } from "@/server/db/segnalazioni";
 import { CampoRispostaAI } from "./CampoRispostaAI";
 import { suggerimentiPer } from "@/server/db/suggerimenti";
@@ -816,14 +817,20 @@ export default async function HomePage({
               const mostraOriginale = Boolean(
                 r.originale && !r.giaItaliano && r.originale !== testo,
               );
-              // La proposta la scrive l'AI SOLO sulle positive con commento: le
-              // 5★ senza testo hanno «Grazie.» di default e le negative passano
-              // dal customer care (e lì il box porta la risposta di Cherubina).
+              // La proposta la scrive l'AI sulle recensioni CON commento dalle 3★
+              // in su: le 5★ senza testo hanno «Grazie.» di default, le 1-2★
+              // passano dal customer care (e lì il box porta la risposta di
+              // Cherubina). Le 3★ sono l'ibrido: proposta AI E tasto d'inoltro.
               const conAI =
                 Boolean(suggerito) &&
                 !rispostaPronta &&
-                (r.stelle ?? 0) >= 4 &&
+                (r.stelle ?? 0) >= 3 &&
                 Boolean((r.originale || "").trim());
+              // Sotto la soglia delle positive (stesso confine di «positiva» in
+              // playAction) la card col box offre ANCHE l'inoltro al customer
+              // care: oggi sono le 3★ — le 1-2★ arrivano qui col box solo
+              // «pronte», quando l'inoltro è già stato fatto.
+              const offriInoltro = Boolean(suggerito) && !rispostaPronta && (r.stelle ?? 0) < 4;
               const suggerimentoAI = conAI ? suggeritiAI.get(r.chiave) : undefined;
 
               return (
@@ -851,6 +858,18 @@ export default async function HomePage({
                   <form id={`segn-${r.chiave}`} action={segnalaAction} className="dash-arch-form">
                     <input type="hidden" name="chiave" value={r.chiave} />
                   </form>
+                  {/* Inoltro al customer care dalle card ibride (3★): il tasto sta
+                      fra le azioni, dentro il form «Rispondi», e invia QUESTO via
+                      attributo form= — non la regola della recensione. */}
+                  {offriInoltro && (
+                    <form
+                      id={`inol-${r.chiave}`}
+                      action={inoltraAlCustomerCareAction}
+                      className="dash-arch-form"
+                    >
+                      <input type="hidden" name="chiave" value={r.chiave} />
+                    </form>
+                  )}
 
                   <header className="dash-card-testa">
                     <div className="dash-autore">
@@ -908,10 +927,10 @@ export default async function HomePage({
                       <input type="hidden" name="label" value={label?.id ?? ""} />
                       <input type="hidden" name="azioneId" value={nodo!.id} />
                       {conAI ? (
-                        // Positiva CON commento: la proposta la scrive l'AI sugli
+                        // CON commento (3-5★): la proposta la scrive l'AI sugli
                         // esempi veri di Stefania (pannello Memoria). Il campo si
-                        // carica da solo a pagina già visibile e porta con sé il
-                        // suo testoOriginale.
+                        // carica da solo a pagina già visibile; il testoOriginale
+                        // che porta è quello della regola (vedi CampoRispostaAI).
                         <CampoRispostaAI
                           chiave={r.chiave}
                           iniziale={suggerimentoAI?.testo ?? null}
@@ -932,6 +951,16 @@ export default async function HomePage({
                       <div className="dash-azioni">
                         <BottoneRispondi />
                         {operatore?.ruolo === "admin" && <BottoneTest chiave={r.chiave} />}
+                        {offriInoltro && (
+                          <button
+                            type="submit"
+                            form={`inol-${r.chiave}`}
+                            className="btn-mini"
+                            title="Passa la recensione al customer care (Cherubina): apre il ticket e la sposta in «In attesa»; la risposta tornerà qui quando arriva."
+                          >
+                            Inoltra al customer care
+                          </button>
+                        )}
                         <AnteprimaFlusso titolo={`Cosa farà su «${r.nome || "questa recensione"}»`}>
                           <ol className="ap-lista">
                             {regola!.azioni.map((a) => (
@@ -939,7 +968,7 @@ export default async function HomePage({
                             ))}
                           </ol>
                         </AnteprimaFlusso>
-                        <VediMail id={r.messaggioId} className="btn-mini" />
+                        <VediMail id={r.messaggioId} icona />
                         <BottoneArchivia chiave={r.chiave} />
                         <BottoneSegnala chiave={r.chiave} />
                       </div>
@@ -961,7 +990,7 @@ export default async function HomePage({
                             Inoltra al customer care
                           </button>
                         </form>
-                        <VediMail id={r.messaggioId} className="btn-mini" />
+                        <VediMail id={r.messaggioId} icona />
                         <BottoneArchivia chiave={r.chiave} />
                         <BottoneSegnala chiave={r.chiave} />
                       </div>
@@ -984,7 +1013,7 @@ export default async function HomePage({
                       />
                       <div className="dash-azioni">
                         {operatore?.ruolo === "admin" && <BottoneTest chiave={r.chiave} />}
-                        <VediMail id={r.messaggioId} className="btn-mini" />
+                        <VediMail id={r.messaggioId} icona />
                         <BottoneArchivia chiave={r.chiave} />
                         <BottoneSegnala chiave={r.chiave} />
                       </div>
@@ -996,7 +1025,7 @@ export default async function HomePage({
                         <Link href="/impostazioni#automazioni">Impostazioni</Link>.
                       </p>
                       <div className="dash-azioni">
-                        <VediMail id={r.messaggioId} className="btn-mini" />
+                        <VediMail id={r.messaggioId} icona />
                         <BottoneArchivia chiave={r.chiave} />
                         <BottoneSegnala chiave={r.chiave} />
                       </div>
@@ -1272,20 +1301,43 @@ export default async function HomePage({
 
 // --- helper ----------------------------------------------------------------
 
+/** L'archivio: la classica scatola con coperchio e fessura. */
+function IconaArchivio() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="20"
+      height="20"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <rect x="3" y="4" width="18" height="4" rx="1" />
+      <path d="M5 8v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8" />
+      <line x1="10" y1="13" x2="14" y2="13" />
+    </svg>
+  );
+}
+
 /**
- * Bottone «Archivia» da mettere in fila con le azioni classiche (Rispondi, G,
- * Vedi mail). Non ha un form suo: invia — con un solo tocco, senza motivo — il
- * form nascosto `arch-<chiave>` che sta sulla card, tramite l'attributo form=.
+ * Bottone «Archivia» in fila con le azioni classiche (Vedi mail, Anteprima):
+ * stessa forma tonda a icona, sola. Non ha un form suo: invia — con un solo
+ * tocco, senza motivo — il form nascosto `arch-<chiave>` che sta sulla card,
+ * tramite l'attributo form=.
  */
 function BottoneArchivia({ chiave }: { chiave: string }) {
   return (
     <button
       type="submit"
       form={`arch-${chiave}`}
-      className="btn-mini btn-archivia"
+      className="btn-occhio"
       title="Mette da parte questa recensione: sparisce dall'elenco e va in Archiviati"
+      aria-label="Archivia"
     >
-      🗄 Archivia
+      <IconaArchivio />
     </button>
   );
 }

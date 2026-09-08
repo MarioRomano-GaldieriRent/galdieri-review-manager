@@ -48,8 +48,10 @@ export async function suggerisciAction(
 
     const commento = (r.originale || "").trim();
     if (!commento) return { ok: false, errore: "Recensione senza commento: vale «Grazie.»." };
-    if ((r.stelle ?? 0) < 4) {
-      return { ok: false, errore: "Le recensioni negative le gestisce il customer care." };
+    // Dalle 3★ in su: le 3★ sono l'ibrido (proposta AI o inoltro, sceglie chi
+    // lavora); le 1-2★ le risponde il customer care.
+    if ((r.stelle ?? 0) < 3) {
+      return { ok: false, errore: "Le recensioni a 1 e 2 stelle le gestisce il customer care." };
     }
 
     const s = await generaRispostaSuggerita(

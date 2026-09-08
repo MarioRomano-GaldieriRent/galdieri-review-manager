@@ -4,12 +4,14 @@ import { blocchiPerContesto, esempiPerContesto, type Esempio } from "@/server/db
 import { linguaRispostaIA } from "@/server/reviews/linguaNomeAI";
 
 // ---------------------------------------------------------------------------
-// Generazione della risposta SUGGERITA a una recensione positiva con commento.
+// Generazione della risposta SUGGERITA a una recensione con commento.
 //
-// Ambito (deciso con Mario): SOLO le positive con testo (4-5★ con commento).
-// Restano fuori le negative (le gestisce il customer care) e le 5★ senza
-// commento (hanno «Grazie.» di default). Il testo è sempre una PROPOSTA: viene
-// precompilato nel box e pubblicato solo dopo conferma umana.
+// Ambito (deciso con Mario): le positive con testo (4-5★ con commento) e, dall'8
+// settembre 2026, le 3★ con commento — l'ibrido in cui l'operatore sceglie fra
+// la proposta e l'inoltro al customer care. Restano fuori le 1-2★ (le gestisce
+// il customer care) e le recensioni senza commento (hanno «Grazie.» di
+// default). Il testo è sempre una PROPOSTA: viene precompilato nel box e
+// pubblicato solo dopo conferma umana.
 //
 // Il modello riceve:
 //   - i blocchi di contesto attivi del pannello Memoria (chi siamo, tono, regole)
@@ -100,6 +102,24 @@ Note: some past examples contain English mistakes (e.g. «positive valutation»,
 
 Reply with ONLY the text of the reply, no quotation marks and no comments.`;
 
+// Le 3★ non sono positive: Stefania le ha risposte così (11 casi su 37, gli
+// altri 26 li ha girati al customer care) — ringrazia per il riscontro,
+// riconosce il disagio in mezza frase senza giustificarsi, riprende ciò che è
+// piaciuto, chiude con «A presto.». Es. «il suo feedback è molto importante e
+// sarà certamente preso in considerazione … Siamo lieti che abbia apprezzato la
+// nostra professionalità.» Queste note si AGGIUNGONO alle istruzioni, sopra.
+const NOTA_3_STELLE_IT = `ATTENZIONE: questa è una recensione a 3 STELLE, un giudizio intermedio — NON una positiva.
+- Ringrazia per il riscontro, non per «la valutazione positiva».
+- Se il cliente segnala un disagio, riconoscilo in mezza frase, senza giustificarti e senza promettere nulla.
+- Se ha apprezzato qualcosa, riprendi quello.
+- Stessa brevità, stesso stile, stessa chiusura «A presto.». Gli esempi marcati [3★] sono i più vicini a questo caso.`;
+
+const NOTA_3_STELLE_EN = `NOTE: this is a 3-STAR review, a middling rating — NOT a positive one.
+- Thank them for the feedback, not for "the positive rating".
+- If the customer reports a problem, acknowledge it in half a sentence, without justifying and without promising anything.
+- If they appreciated something, pick that up.
+- Same brevity, same style, same closing "See you soon.". The examples marked [3★] are the closest to this case.`;
+
 function bloccoEsempi(esempi: Esempio[], italiano: boolean): string {
   const righe = esempi.map((e, i) => {
     const stelle = e.stelle ? `${e.stelle}★` : "—";
@@ -134,20 +154,30 @@ export async function generaRispostaSuggerita(
   const italiano = lingua !== "altra"; // "it" e "ignota" → italiano, come nel resto dell'app
   const linguaEsempi = italiano ? "it" : "en";
 
-  const [blocchi, esempi] = await Promise.all([
-    blocchiPerContesto(),
+  const treStelle = r.stelle === 3;
+  const esempiDi = (tipo: NonNullable<Parameters<typeof esempiPerContesto>[0]["tipo"]>) =>
     esempiPerContesto({
-      tipo: "positiva-con-testo",
+      tipo,
       lingua: linguaEsempi,
       limite: ESEMPI_NEL_PROMPT,
       escludi: opts.escludiEsempio ? [opts.escludiEsempio] : undefined,
-    }),
+    });
+  const [blocchi, esempi] = await Promise.all([
+    blocchiPerContesto(),
+    // Le 3★ vere di Stefania sono poche (11 in un anno): vanno per PRIME, e le
+    // positive completano il campione per lo stile. Fuori dalle 3★, solo positive.
+    treStelle
+      ? Promise.all([esempiDi("neutra"), esempiDi("positiva-con-testo")]).then(([n, p]) =>
+          [...n, ...p].slice(0, ESEMPI_NEL_PROMPT),
+        )
+      : esempiDi("positiva-con-testo"),
   ]);
 
   const contesto = blocchi.map((b) => `## ${b.titolo}\n${b.testo}`).join("\n\n");
   const system = [
     contesto,
     italiano ? ISTRUZIONI_IT : ISTRUZIONI_EN,
+    treStelle ? (italiano ? NOTA_3_STELLE_IT : NOTA_3_STELLE_EN) : "",
     esempi.length > 0 ? bloccoEsempi(esempi, italiano) : "",
   ]
     .filter((p) => p.trim())

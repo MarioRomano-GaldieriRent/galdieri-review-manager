@@ -109,7 +109,12 @@ export function CampoRispostaAI({ chiave, iniziale, ripiego }: Props) {
 
   return (
     <>
-      <input type="hidden" name="testoOriginale" value={testo} />
+      {/* Il testo «originale» per playAction è quello della REGOLA (ripiego),
+          non la proposta AI: confrontandolo col box decide se applicare la
+          riscrittura a TUTTI i nodi di risposta (Google ed email). Legarlo alla
+          textarea, com'era, li rendeva sempre uguali: l'email partiva col testo
+          della regola anche quando su Google andava quello dell'AI. */}
+      <input type="hidden" name="testoOriginale" value={ripiego} />
       <div className="ai-testa" ref={ancora}>
         {attesa ? (
           <span className="ai-badge ai-badge-carica">
