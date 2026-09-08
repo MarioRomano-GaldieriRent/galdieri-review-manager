@@ -470,6 +470,47 @@ export async function replyToMessage(
 }
 
 /**
+ * Manda una mail NUOVA (non una risposta né un inoltro): serve alle notifiche
+ * interne del gestionale, per esempio l'avviso all'amministratore quando un
+ * operatore segnala una recensione.
+ *
+ * Il corpo è HTML. `salvaNegliInviati: false` di default: sono avvisi di
+ * servizio e non devono sporcare la Posta inviata, dove l'importazione della
+ * memoria cerca le risposte vere di Stefania.
+ *
+ * ATTENZIONE: invia posta reale. Chi la chiama deve prima verificare la
+ * modalità operativa (scritturaConsentita).
+ */
+export async function sendMail(opts: {
+  destinatari: string[];
+  oggetto: string;
+  html: string;
+  mailbox?: string;
+  salvaNegliInviati?: boolean;
+}): Promise<void> {
+  if (opts.destinatari.length === 0) throw new Error("sendMail: nessun destinatario.");
+  const { fetchGraph } = await ctx(opts.mailbox);
+
+  const res = await fetchGraph(`/sendMail`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      message: {
+        subject: opts.oggetto,
+        body: { contentType: "HTML", content: opts.html },
+        toRecipients: opts.destinatari.map((address) => ({ emailAddress: { address } })),
+      },
+      saveToSentItems: opts.salvaNegliInviati ?? false,
+    }),
+  });
+
+  if (!res.ok) {
+    const json = (await res.json().catch(() => ({}))) as { error?: { message?: string } };
+    throw new Error(`Graph ${res.status}: ${json.error?.message ?? "mail non inviata"}`);
+  }
+}
+
+/**
  * Inoltra un messaggio a uno o più destinatari.
  *
  * ATTENZIONE: invia posta reale. Non va mai chiamata direttamente da una
