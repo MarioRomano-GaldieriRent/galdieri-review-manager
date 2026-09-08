@@ -100,6 +100,20 @@ export function BottoneGoogle({
             : `${iconaEsito(esito!)} ${esito!.messaggio}`}
         </span>
       )}
+
+      {/* Il passo-passo il robot lo manda già: qui veniva buttato via, e quando
+          la ricerca non concludeva non restava niente da guardare. Aperto da
+          solo quando è andata storta, che è quando serve. */}
+      {!cercando && esito?.log && esito.log.length > 0 && (
+        <details className="hint" open={!esito.ok}>
+          <summary>Passo-passo ({esito.log.length})</summary>
+          <ol className="prova-log">
+            {esito.log.map((riga, i) => (
+              <li key={i}>{riga}</li>
+            ))}
+          </ol>
+        </details>
+      )}
     </>
   );
 }

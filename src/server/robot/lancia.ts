@@ -198,7 +198,16 @@ export function avviaRobotConEsito(
   });
 }
 
-export async function lanciaRobot(job: JobRobot): Promise<EsitoRobot> {
+export async function lanciaRobot(
+  job: JobRobot,
+  /**
+   * Quanto si aspetta prima di ammazzare il robot. Dev'essere PIÙ LARGO della
+   * scadenza interna della coda: dare alla coda 200 secondi di salti dentro
+   * una finestra che chiude a 180 significa morire prima, e senza nemmeno
+   * arrivare ai ripieghi (lista, gruppi). Prima era fisso a 3 minuti.
+   */
+  { attesaMs = 3 * 60 * 1000 }: { attesaMs?: number } = {},
+): Promise<EsitoRobot> {
   if (robotInUso) return esitoOccupato();
   return new Promise((resolve) => {
     // shell:true → funziona sia con npm.cmd su Windows sia con npm su unix;
@@ -216,6 +225,19 @@ export async function lanciaRobot(job: JobRobot): Promise<EsitoRobot> {
     child.stdout?.on("data", (d) => (out += d.toString()));
     child.stderr?.on("data", (d) => (out += d.toString()));
 
+    /**
+     * I righi di traccia del robot ("   …" su stderr). Servono a far vedere i
+     * passi ANCHE quando l'esito non arriva mai — tempo scaduto o processo
+     * ammazzato — che è proprio il caso in cui l'operatore non capisce cosa
+     * sia successo. `avviaRobotConEsito` lo faceva già; qui mancava.
+     */
+    const diarioDiLancio = (): string[] =>
+      out
+        .split(/\r?\n/)
+        .filter((r) => /^ {3}\S/.test(r))
+        .map((r) => r.slice(3))
+        .slice(-60);
+
     // Rete di sicurezza: se il robot resta appeso, lo chiudo dopo 3 minuti.
     const timeout = setTimeout(
       () => {
@@ -229,12 +251,13 @@ export async function lanciaRobot(job: JobRobot): Promise<EsitoRobot> {
           resolve({
             ok: false,
             stato: "timeout",
+            log: diarioDiLancio(),
             messaggio:
               "Il robot ci ha messo troppo: l'ho fermato. Riprova (browser chiuso, Chrome chiuso).",
           });
         }
       },
-      3 * 60 * 1000,
+      attesaMs,
     );
 
     const chiudi = (fallback: EsitoRobot) => {
@@ -263,6 +286,7 @@ export async function lanciaRobot(job: JobRobot): Promise<EsitoRobot> {
         stato: "senza-esito",
         messaggio:
           out.trim().slice(-300) || `Robot terminato (codice ${code}) senza esito leggibile.`,
+        log: diarioDiLancio(),
       }),
     );
     child.on("error", (e) =>

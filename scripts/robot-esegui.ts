@@ -55,7 +55,11 @@ function leggiJob(): Job {
 }
 
 function esito(o: Record<string, unknown>): void {
-  console.log("__ESITO__ " + JSON.stringify(o));
+  // Il passo-passo lo infila l'esito stesso: prima ogni ramo doveva ricordarsi
+  // di aggiungerlo e infatti se lo ricordava solo quello di prova — il
+  // «Rispondi» arrivava sulla card muto, e non si capiva se la coda avesse
+  // finito i salti o fosse scaduta. Chi vuole può sempre sovrascriverlo.
+  console.log("__ESITO__ " + JSON.stringify({ log: [...diario], ...o }));
 }
 
 /**
@@ -180,7 +184,11 @@ const AVVIO = Date.now();
       // che ha sempre funzionato.
       const ps = await rispondiPerSede(page0, job.nomeGoogle, job.nome, job.testo, {
         log: traccia,
-        scadenza: AVVIO + 90_000,
+        // Lo stesso tempo del tasto di prova: era 90 secondi, e siccome si
+        // contano dall'avvio del processo (browser, sessione, apertura della
+        // sede: 30-40 secondi) alla coda ne restavano una manciata. È il
+        // motivo per cui la prova arrivava in fondo e il «Rispondi» no.
+        scadenza: AVVIO + 200_000,
         testoRecensione: job.testoRecensione,
       });
       dettaglio = ps.dettaglio;

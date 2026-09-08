@@ -252,7 +252,13 @@ export async function cercaSuGoogleAction(
 
   // Se la sede è mappata, il robot va dritto lì; altrimenti ripiega sui gruppi.
   const nomeGoogle = await nomeGoogleDiSede(r.sede);
-  return avviaRobotConEsito({ azione: "cerca", nome: r.nome, testo: risposta, nomeGoogle });
+  return avviaRobotConEsito({
+    azione: "cerca",
+    nome: r.nome,
+    testo: risposta,
+    nomeGoogle,
+    testoRecensione: r.originale,
+  });
 }
 
 /**
@@ -292,12 +298,21 @@ export async function playAction(formData: FormData): Promise<void> {
   // GOOGLE PER PRIMO (regola «5 stelle senza foto»): la pubblicazione su Google
   // è il passo che conta ed è il più fragile. Se il robot NON pubblica, non ha
   // senso fare il resto (email, ticket): il robot è il "cancello" iniziale.
-  const e = await lanciaRobot({
-    azione: modo === "reale" ? "pubblica" : "test",
-    nome: recensione.nome,
-    testo: testoPubblicazione,
-    nomeGoogle: await nomeGoogleDiSede(recensione.sede),
-  });
+  const e = await lanciaRobot(
+    {
+      azione: modo === "reale" ? "pubblica" : "test",
+      nome: recensione.nome,
+      testo: testoPubblicazione,
+      nomeGoogle: await nomeGoogleDiSede(recensione.sede),
+      // Il TESTO della recensione: senza, la coda può riconoscerla solo dal
+      // nome — e con un recensore che si chiama «D» non basta. È la vera
+      // differenza che c'era col tasto di prova, che il testo lo passava.
+      testoRecensione: recensione.originale,
+    },
+    // Più largo della scadenza interna della coda (200 s), altrimenti il
+    // robot viene ammazzato prima di arrivare ai ripieghi.
+    { attesaMs: 5 * 60 * 1000 },
+  );
 
   // Via libera: in Reale serve la pubblicazione vera; in simulazione basta che
   // il robot abbia trovato e scritto (test), così si prova il flusso a vuoto.

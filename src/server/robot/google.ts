@@ -1870,7 +1870,7 @@ export async function cercaNellaCoda(
       scritto: false,
       passi,
       root: coda,
-      dettaglio: `«${nome}» non trovato: ${salti} «Ignora» fatti su un massimo di ${maxIgnora}. Nel passo-passo c'è l'autore di ogni recensione vista, e il motivo per cui si è fermato.`,
+      dettaglio: `«${nome}» non trovato: ${salti} «Ignora» fatti su un massimo di ${maxIgnora}${scaduto() ? " — TEMPO SCADUTO, non è arrivato in fondo alla coda" : ""}. Nel passo-passo c'è l'autore di ogni recensione vista, e il motivo per cui si è fermato.`,
     };
   }
 
