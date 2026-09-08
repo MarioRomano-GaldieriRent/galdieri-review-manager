@@ -2803,13 +2803,6 @@ main.pipeline .pub-tabs {
 }
 /* «Archivia» in fila con le azioni: un tocco secondario, ancorato in fondo alla
    riga così resta distinto dalle azioni principali (Rispondi, G). */
-.btn-archivia {
-  margin-left: auto;
-  color: var(--text-soft);
-}
-.btn-archivia:hover {
-  color: var(--text);
-}
 /* Il motivo mostrato nella tab Archiviati. */
 .archivia-motivo-vista {
   margin: 8px 0 0;
@@ -3744,6 +3737,34 @@ main.pipeline .pub-tabs {
   box-shadow: 0 0 0 4px color-mix(in srgb, var(--brand-red) 15%, transparent);
 }
 
+/* La «×» che toglie i filtri: compare solo quando un filtro c'è davvero, in
+   fila con la barra di ricerca e il menu delle stelle, e ne ripete la forma a
+   pastiglia. Un tondo piccolo, non una parola: sta accanto ai campi, non è
+   un'azione della card. */
+.btn-azzera-filtro {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-soft);
+  cursor: pointer;
+  transition:
+    background 0.15s,
+    border-color 0.15s,
+    color 0.15s;
+}
+.btn-azzera-filtro:hover {
+  background: var(--surface-alt);
+  border-color: var(--text-soft);
+  color: var(--text);
+}
+
 .appr-conteggio {
   display: flex;
   align-items: center;
@@ -3802,23 +3823,31 @@ main.pipeline .pub-tabs {
    =========================================================================== */
 
 /* Il «?» cerchiato in rosso: in fila con le azioni, dopo «Archivia». */
+/* Stessa forma e stessa misura degli altri tondi della riga (occhio, letterina,
+   archivio: 40×40, sfondo pieno, bordo) — solo il colore resta rosso, per
+   restare riconoscibile come l'azione «diversa» della fila. */
 .btn-segnala {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
+  width: 40px;
+  height: 40px;
   padding: 0;
-  background: transparent;
-  border: none;
+  background: var(--surface);
+  border: 1px solid color-mix(in srgb, var(--brand-red) 35%, var(--border));
   border-radius: 999px;
   color: var(--brand-red);
   cursor: pointer;
-  transition: background 0.15s;
+  transition:
+    background 0.2s var(--ease),
+    border-color 0.2s var(--ease),
+    box-shadow 0.2s var(--ease);
 }
 .btn-segnala:hover,
 .btn-segnala.is-aperto {
-  background: color-mix(in srgb, var(--brand-red) 12%, transparent);
+  background: color-mix(in srgb, var(--brand-red) 10%, var(--surface));
+  border-color: var(--brand-red);
+  box-shadow: var(--shadow);
 }
 
 /* Il pannello della nota: va a capo sotto i bottoni, su tutta la riga. */
@@ -3870,6 +3899,15 @@ main.pipeline .pub-tabs {
 .supervisione-stelle {
   margin-top: 14px;
 }
+/* I sotto-blocchi dentro la card «Statistiche del periodo»: tiles, poi
+   segnalazioni, poi tabella — separati da un filo, non da un'altra card. */
+.supervisione-sottotitolo {
+  margin: 22px 0 0;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+  font-size: 0.95rem;
+  color: var(--text-soft);
+}
 .supervisione-totale td {
   font-weight: 700;
   border-top: 2px solid var(--border);
@@ -3908,4 +3946,111 @@ main.pipeline .pub-tabs {
 .segnalazione-riga {
   margin: 6px 0 0;
   font-size: 0.88rem;
+}
+
+/* ===========================================================================
+   SKELETON — placeholder istantaneo delle pagine lente (Da approvare parla con
+   la posta e con Freshdesk, Supervisione e Statistiche fanno più aggregazioni
+   Mongo in parallelo). Ogni cartella ha un loading.tsx: Next lo manda SUBITO,
+   prima ancora che il Server Component della pagina abbia finito di aspettare
+   — così lo schermo non resta bianco/fermo, e appena i dati arrivano lo
+   scambio è automatico (Suspense di React, nessun JS lato client).
+   =========================================================================== */
+/* Visibile solo agli screen reader (es. l'annuncio "Carico…" di un loading.tsx). */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+@keyframes skel-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+.skel {
+  background: var(--surface-alt);
+  border-radius: var(--radius-sm);
+  animation: skel-pulse 1.3s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .skel {
+    animation: none;
+    opacity: 0.7;
+  }
+}
+
+.skel-titolo {
+  width: 200px;
+  height: 30px;
+  margin-bottom: 22px;
+}
+
+.skel-tabs {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 18px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+.skel-tab {
+  width: 100px;
+  height: 16px;
+  margin: 10px 4px;
+}
+
+.skel-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 18px 20px;
+  margin-bottom: 20px;
+  box-shadow: var(--shadow);
+}
+.skel-card-testa {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  margin-bottom: 14px;
+}
+.skel-avatar {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+}
+.skel-riga {
+  height: 12px;
+}
+.skel-riga + .skel-riga {
+  margin-top: 8px;
+}
+.skel-azioni {
+  display: flex;
+  gap: 9px;
+  margin-top: 14px;
+}
+.skel-pill {
+  width: 96px;
+  height: 40px;
+  border-radius: 980px;
+}
+.skel-tondo {
+  width: 40px;
+  height: 40px;
+  border-radius: 999px;
+}
+
+.skel-tile {
+  height: 78px;
 }

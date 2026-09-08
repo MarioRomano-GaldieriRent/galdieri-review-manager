@@ -35,11 +35,16 @@ function perConfronto(s: string): string {
 export function FiltriDaApprovare() {
   const box = useRef<HTMLDivElement>(null);
   const parametri = useSearchParams();
-  // Si riparte dal `q` dell'indirizzo: è così che «Cerca fra tutte» ritrova la
-  // ricerca dopo essere passato dal server. Mentre si digita `q` non si tocca —
-  // scriverlo a ogni tasto vorrebbe dire navigare a ogni tasto.
+  // Si riparte da `q` e `stelle` dell'indirizzo: così un link condiviso, o un
+  // semplice ricarico della pagina, ritrova lo stesso filtro. Mentre si scrive
+  // o si cambia stella, l'indirizzo si riscrive da solo (vedi l'effetto più
+  // sotto) con history.replaceState — MAI col router: un giro dal server qui
+  // rifarebbe l'ingest della posta e la sweep Freshdesk a ogni tasto.
   const [cerca, setCerca] = useState(() => parametri?.get("q") ?? "");
-  const [stella, setStella] = useState<number | null>(null);
+  const [stella, setStella] = useState<number | null>(() => {
+    const n = Number(parametri?.get("stelle"));
+    return Number.isInteger(n) && n >= 1 && n <= 5 ? n : null;
+  });
   const [visibili, setVisibili] = useState(0);
   const [totali, setTotali] = useState(0);
   /** Le stelle che compaiono davvero nella lista: gli altri tasti non servono. */
@@ -97,23 +102,36 @@ export function FiltriDaApprovare() {
     return () => osservatore.disconnect();
   }, [cerca, stella]);
 
+  // Riflette cerca/stella nell'indirizzo: ricaricando la pagina, o mandando il
+  // link a qualcun altro, si ritrova lo stesso filtro. replaceState (non
+  // pushState): ogni tasto premuto non deve riempire la cronologia del
+  // browser di una voce «Indietro» propria — resta un solo passo per tornare
+  // alla vista da cui si era partiti. Gli altri parametri dell'indirizzo
+  // (step, sede, n, p…) restano intatti: qui si toccano solo q e stelle.
+  useEffect(() => {
+    const u = new URL(window.location.href);
+    const prima = `${u.pathname}${u.search}${u.hash}`;
+
+    const q = cerca.trim();
+    if (q) u.searchParams.set("q", q);
+    else u.searchParams.delete("q");
+
+    if (stella !== null) u.searchParams.set("stelle", String(stella));
+    else u.searchParams.delete("stelle");
+
+    const dopo = `${u.pathname}${u.search}${u.hash}`;
+    if (dopo !== prima) window.history.replaceState(null, "", dopo);
+  }, [cerca, stella]);
+
   const attivo = cerca.trim() !== "" || stella !== null;
 
   const azzera = () => {
     setCerca("");
     setStella(null);
-    // Via anche il `q` dall'indirizzo, altrimenti il prossimo «Aggiorna» (o un
-    // ricarico) ripescherebbe la ricerca appena azzerata. Si cambia solo la
-    // barra degli indirizzi, senza router: non c'è nulla da ricaricare, e un
-    // giro dal server qui costerebbe posta e Freshdesk per niente.
-    const u = new URL(window.location.href);
-    if (u.searchParams.has("q")) {
-      u.searchParams.delete("q");
-      window.history.replaceState(null, "", `${u.pathname}${u.search}${u.hash}`);
-    }
+    // q e stelle escono dall'indirizzo da soli, tramite l'effetto sopra.
   };
 
-  /** «Cerca fra tutte»: stessa vista, lista intera, ricerca già scritta. */
+  /** «Cerca fra tutte»: stessa vista, lista intera, stesso filtro già impostato. */
   const linkTutte = () => {
     const p = new URLSearchParams();
     for (const k of DA_CONSERVARE) {
@@ -125,6 +143,7 @@ export function FiltriDaApprovare() {
     p.set("n", "tutte");
     const q = cerca.trim();
     if (q) p.set("q", q);
+    if (stella !== null) p.set("stelle", String(stella));
     return `/?${p.toString()}`;
   };
 
@@ -149,7 +168,7 @@ export function FiltriDaApprovare() {
             onChange={(e) => setStella(e.target.value === "" ? null : Number(e.target.value))}
             aria-label="Filtra per stelle"
           >
-            <option value="">Tutte le stelle</option>
+            <option value="">Tutte</option>
             {disponibili.map((n) => (
               <option key={n} value={n} aria-label={n === 1 ? "1 stella" : `${n} stelle`}>
                 {/* ⭐ è un'emoji a colori (giallo fisso, non lo tocca il CSS);
@@ -162,8 +181,25 @@ export function FiltriDaApprovare() {
           </select>
         )}
         {attivo && (
-          <button type="button" className="btn-mini" onClick={azzera}>
-            Azzera
+          <button
+            type="button"
+            className="btn-azzera-filtro"
+            onClick={azzera}
+            title="Azzera i filtri"
+            aria-label="Azzera i filtri"
+          >
+            <svg
+              viewBox="0 0 24 24"
+              width="16"
+              height="16"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.2"
+              strokeLinecap="round"
+              aria-hidden="true"
+            >
+              <path d="M6 6l12 12M18 6 6 18" />
+            </svg>
           </button>
         )}
       </div>

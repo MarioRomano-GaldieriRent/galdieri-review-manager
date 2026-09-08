@@ -11,7 +11,40 @@ import { createPortal } from "react-dom";
 type DatiMail = { subject: string; from: string; data: string; srcDoc: string };
 type Stato = "idle" | "loading" | "ok" | "errore";
 
-export function VediMail({ id, className }: { id: string; className?: string }) {
+/** La letterina: stessa forma della busta, per il tasto tondo (variante `icona`). */
+function IconaLetterina() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="20"
+      height="20"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <rect x="2" y="4" width="20" height="16" rx="2" />
+      <path d="m22 6-10 7L2 6" />
+    </svg>
+  );
+}
+
+/**
+ * `icona`: variante tonda a sola icona (stesso stile dell'occhio dell'anteprima
+ * — sfondo bianco, bordo, 40×40), senza testo. Il tasto testuale resta il
+ * default per i contesti senza quella riga di icone (es. «In attesa»).
+ */
+export function VediMail({
+  id,
+  className,
+  icona,
+}: {
+  id: string;
+  className?: string;
+  icona?: boolean;
+}) {
   const [aperto, setAperto] = useState(false);
   const [stato, setStato] = useState<Stato>("idle");
   const [dati, setDati] = useState<DatiMail | null>(null);
@@ -46,8 +79,14 @@ export function VediMail({ id, className }: { id: string; className?: string }) 
 
   return (
     <>
-      <button type="button" className={className ?? "btn-mini"} onClick={apri}>
-        Vedi mail
+      <button
+        type="button"
+        className={icona ? "btn-occhio" : (className ?? "btn-mini")}
+        onClick={apri}
+        title={icona ? "Vedi mail" : undefined}
+        aria-label={icona ? "Vedi mail" : undefined}
+      >
+        {icona ? <IconaLetterina /> : "Vedi mail"}
       </button>
 
       {aperto &&
