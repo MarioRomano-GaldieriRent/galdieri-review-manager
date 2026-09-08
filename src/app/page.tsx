@@ -1,5 +1,8 @@
 import Link from "next/link";
-import { testoPerRecensione } from "@/server/automation/connectors";
+// La versione "con lingua già decisa": qui la lingua per le 5★ senza testo la
+// stabilisce l'IA (linguaRispostaIA), pre-calcolata in blocco più sotto.
+import { testoPerRecensioneConLingua } from "@/server/automation/connectors";
+import { linguaRispostaIA } from "@/server/reviews/linguaNomeAI";
 import { caricaRegole, conBeta, regolaPer } from "@/server/automation/rules";
 import { caricaEsecuzione } from "@/server/automation/runs";
 import type { Azione, Esecuzione, Regola } from "@/server/automation/types";
@@ -312,6 +315,8 @@ export default async function HomePage({
   let nApprovare: number | null = null;
   /** Proposte AI già salvate, per chiave recensione (le mancanti se le chiede la card). */
   let suggeritiAI = new Map<string, { testo: string }>();
+  /** Lingua decisa dall'IA per le 5★ senza testo (nessun altro segnale da cui riconoscerla). */
+  let linguaPerNome = new Map<string, "it" | "altra">();
   let runAperta: Esecuzione | undefined;
   let archiviate: RecensioneArchiviata[] = [];
   let inAttesa: Escalation[] = [];
@@ -560,6 +565,27 @@ export default async function HomePage({
         console.warn("[ai] lettura suggerimenti non riuscita:", e);
       }
     }
+
+    // Le 5★ SENZA testo non hanno nessun segnale da cui riconoscere la lingua:
+    // chi decide "Grazie." o "Thank you." è il NOME, chiesto all'IA (con
+    // cache: uno stesso nome non ripaga mai la domanda due volte) invece che
+    // da una lista scritta a mano — vedi reviews/linguaNomeAI.ts. Calcolato UNA
+    // volta qui, non dentro il map() di rendering più sotto, così una pagina
+    // con più card fa al massimo N domande nuove, non una per ogni render.
+    const senzaTesto = visibili.filter((x) => !x.rispostaPronta && !haTesto(x.r));
+    if (senzaTesto.length > 0) {
+      try {
+        const risultati = await Promise.all(
+          senzaTesto.map(
+            async (x) =>
+              [x.r.chiave, await linguaRispostaIA(x.r.lingua, x.r.originale, x.r.nome)] as const,
+          ),
+        );
+        linguaPerNome = new Map(risultati);
+      } catch (e) {
+        console.warn("[lingua] riconoscimento IA del nome non riuscito:", e);
+      }
+    }
   }
 
   if (step === "archiviati") {
@@ -760,7 +786,9 @@ export default async function HomePage({
           ) : (
             visibili.map(({ r, regola, rispostaPronta }) => {
               const nodo = regola ? nodoRisposta(regola) : null;
-              const proposta = nodo ? testoPerRecensione(nodo, r) : null;
+              const proposta = nodo
+                ? testoPerRecensioneConLingua(nodo, r, linguaPerNome.get(r.chiave) ?? null)
+                : null;
               // Se il customer care ha già rimandato la risposta (voce «pronta»),
               // il box è PRECOMPILATO con quel testo. Altrimenti: risposta "pronta"
               // solo se il nodo propone davvero un testo — le 1-2★ hanno un

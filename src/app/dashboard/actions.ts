@@ -3,12 +3,12 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { eseguiRegola } from "@/server/automation/engine";
-import { testoPerRecensione } from "@/server/automation/connectors";
+import { testoPerRecensione, testoPerRecensioneConLingua } from "@/server/automation/connectors";
 import { caricaRegole, conBeta, regolaPer, EMAIL_TICKETING } from "@/server/automation/rules";
 import { eliminaEsecuzione, registraEsecuzione } from "@/server/automation/runs";
 import type { Esecuzione, Regola } from "@/server/automation/types";
 import { haTesto, testoRecensione, type Recensione } from "@/server/reviews/load";
-import { linguaRisposta } from "@/server/reviews/lingua";
+import { linguaRispostaIA } from "@/server/reviews/linguaNomeAI";
 import {
   approvaPerPubblicazione,
   leggiPubblicazione,
@@ -117,7 +117,14 @@ async function accodaSePubblicabile(
   const nodoGoogle = regola.azioni.find((a) => a.tipo === "google.rispondi");
   if (!nodoGoogle) return;
 
-  const testoRisposta = testoForm || testoPerRecensione(nodoGoogle, recensione).testo;
+  // Il fallback (box svuotato dall'operatore) chiede la lingua all'IA come il
+  // resto del flusso — non alla whitelist sincrona, che qui non serve: questa
+  // funzione è già async.
+  const linguaSeVuoto = testoForm
+    ? null
+    : await linguaRispostaIA(recensione.lingua, recensione.originale, recensione.nome);
+  const testoRisposta =
+    testoForm || testoPerRecensioneConLingua(nodoGoogle, recensione, linguaSeVuoto).testo;
   if (!testoRisposta.trim()) return; // niente da pubblicare
 
   const nodoTicket = esecuzione.nodi.find((n) => n.tipo === "freshdesk.trovaTicket");
@@ -301,7 +308,9 @@ export async function playAction(formData: FormData): Promise<void> {
   // solo se l'operatore lo svuota. Senza testo da cui riconoscere la lingua,
   // decide il NOME — «Grazie.» per un nome italiano, «Thank you.» altrimenti.
   const positiva = (recensione.stelle ?? 0) >= 4;
-  const linguaFallback = linguaRisposta(recensione.lingua, recensione.originale, recensione.nome);
+  const linguaFallback = positiva
+    ? await linguaRispostaIA(recensione.lingua, recensione.originale, recensione.nome)
+    : "it";
   const testoPubblicazione =
     testo || (positiva ? (linguaFallback === "altra" ? "Thank you." : "Grazie.") : "");
   if (!testoPubblicazione.trim()) {

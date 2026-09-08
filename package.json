@@ -47,6 +47,7 @@
     "robot:banco-lista": "tsx --tsconfig tsconfig.json scripts/banco-lista.ts",
     "banco:aggancio": "tsx --tsconfig tsconfig.json scripts/banco-aggancio.ts",
     "banco:lingua": "tsx --tsconfig tsconfig.json scripts/banco-lingua.ts",
+    "diag:lingua-nome": "tsx --tsconfig tsconfig.json scripts/diag-lingua-nome.ts",
     "robot:esegui": "tsx --tsconfig tsconfig.json scripts/robot-esegui.ts",
     "robot:pubblica": "tsx --tsconfig tsconfig.json scripts/robot-pubblica.ts",
     "diag:recticket": "tsx --tsconfig tsconfig.json scripts/diag-recensioni-ticket.ts",

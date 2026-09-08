@@ -1,7 +1,7 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import { claude, consumoDi, modelloClaude, type Consumo } from "./claude";
 import { blocchiPerContesto, esempiPerContesto, type Esempio } from "@/server/db/memoria";
-import { linguaRisposta } from "@/server/reviews/lingua";
+import { linguaRispostaIA } from "@/server/reviews/linguaNomeAI";
 
 // ---------------------------------------------------------------------------
 // Generazione della risposta SUGGERITA a una recensione positiva con commento.
@@ -127,9 +127,10 @@ export async function generaRispostaSuggerita(
   const commento = (r.commento ?? "").trim();
   if (!commento) throw new Error("Nessun commento: per una recensione senza testo vale «Grazie.».");
 
-  // Il nome: ultimo ripiego quando il commento è troppo corto/neutro per
-  // riconoscere la lingua da solo (vedi reviews/lingua.ts).
-  const lingua = linguaRisposta(r.lingua ?? "", commento, r.nome);
+  // Il nome: ultimo ripiego, deciso dall'IA (con cache) invece che da una
+  // lista scritta a mano — scatta di rado qui, dato che un commento breve
+  // ma non vuoto quasi sempre basta da solo a riconoscere la lingua.
+  const lingua = await linguaRispostaIA(r.lingua ?? "", commento, r.nome);
   const italiano = lingua !== "altra"; // "it" e "ignota" → italiano, come nel resto dell'app
   const linguaEsempi = italiano ? "it" : "en";
 

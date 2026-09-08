@@ -63,6 +63,23 @@ export function testoPerRecensione(a: Azione, r: Recensione): { testo: string; l
   return { testo: interpola(scelto, r), lingua };
 }
 
+/**
+ * Come testoPerRecensione, ma con la lingua GIÀ DECISA da chi chiama — tipico:
+ * pre-calcolata in blocco con linguaRispostaIA (nome deciso dall'IA, non dalla
+ * whitelist) prima di renderizzare una lista di card, per non fare una
+ * chiamata a Claude per ogni riga a ogni render. `linguaForzata` null si
+ * comporta esattamente come testoPerRecensione.
+ */
+export function testoPerRecensioneConLingua(
+  a: Azione,
+  r: Recensione,
+  linguaForzata: Lingua | null,
+): { testo: string; lingua: Lingua } {
+  const lingua = linguaForzata ?? linguaRisposta(r.lingua, r.originale, r.nome);
+  const scelto = testoNellaLingua(lingua, a.parametri.testo ?? "", a.parametri.testoInglese ?? "");
+  return { testo: interpola(scelto, r), lingua };
+}
+
 /** Sostituisce i segnaposto con i dati della recensione. */
 export function interpola(testo: string, r: Recensione): string {
   const commento = testoRecensione(r);
