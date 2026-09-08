@@ -120,6 +120,19 @@ export async function contaAperte(): Promise<number> {
   return (await segnalazioni()).countDocuments({ stato: "aperta" });
 }
 
+/** Quante ne sono arrivate in una finestra [dal, al), a prescindere da come stanno ora. */
+export async function contaApertePeriodo(dal: Date, al: Date): Promise<number> {
+  return (await segnalazioni()).countDocuments({ segnalataIl: { $gte: dal, $lt: al } });
+}
+
+/** Quante sono state CHIUSE (risolte o rimesse in coda) in una finestra [dal, al). */
+export async function contaGestitePeriodo(dal: Date, al: Date): Promise<number> {
+  return (await segnalazioni()).countDocuments({
+    stato: { $in: ["risolta", "rimessa"] },
+    chiusaIl: { $gte: dal, $lt: al },
+  });
+}
+
 /** In carico all'admin, dalla più recente. */
 export async function elencoAperte(): Promise<Segnalazione[]> {
   const righe = await (await segnalazioni()).find({ stato: "aperta" }).sort({ segnalataIl: -1 }).toArray();

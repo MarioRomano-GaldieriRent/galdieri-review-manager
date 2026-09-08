@@ -421,34 +421,96 @@ export async function gestione(): Promise<Gestione> {
 
 export type RigaStelle = Gestione & { stelle: number | null };
 
+/** Una finestra temporale [dal, al). `dal: null` = da sempre (nessun filtro). */
+export type Intervallo = { dal: Date | null; al: Date };
+
+const LIVELLI_STELLE: (number | null)[] = [5, 4, 3, 2, 1, null];
+
 /**
  * La stessa gestione spaccata per punteggio, da 5★ a 1★ più la riga delle
  * recensioni senza punteggio (stelle null). Stesse tre misure e stesse
  * avvertenze di gestione(): «dal sistema» e «in totale» non si confrontano fra
  * loro, si rapportano entrambe alle ricevute.
+ *
+ * Con `periodo`, la popolazione è la COORTE delle recensioni RICEVUTE in quella
+ * finestra: «dal sistema» resta vero anche se la pubblicazione è arrivata dopo
+ * la fine della finestra (join su pubblicazioni per chiave, non per data
+ * dell'azione). Senza `periodo`: da sempre, come prima.
  */
-export async function gestionePerStelle(): Promise<RigaStelle[]> {
-  type Gruppo = { _id: number | null; n: number };
-  const perStelle = { $group: { _id: "$stelle", n: { $sum: 1 } } };
-  const [ricevute, conRisposta, dalSistema] = await Promise.all([
-    aggr<Gruppo>("recensioni", [perStelle]),
-    aggr<Gruppo>("recensioni", [{ $match: { haRisposta: true } }, perStelle]),
-    aggr<Gruppo>("pubblicazioni", [
-      { $match: { stato: { $in: ["pubblicata", "verificata"] } } },
-      perStelle,
-    ]),
+export async function gestionePerStelle(periodo?: Intervallo): Promise<RigaStelle[]> {
+  const match: Document = periodo?.dal ? { ricevutaIl: { $gte: periodo.dal, $lt: periodo.al } } : {};
+  const righe = await aggr<{ _id: number | null; ricevute: number; conRisposta: number; dalSistema: number }>(
+    "recensioni",
+    [
+      { $match: match },
+      { $lookup: { from: "pubblicazioni", localField: "_id", foreignField: "_id", as: "_pub" } },
+      {
+        $set: {
+          _dalSistema: {
+            $gt: [
+              {
+                $size: {
+                  $filter: {
+                    input: "$_pub",
+                    as: "p",
+                    cond: { $in: ["$$p.stato", ["pubblicata", "verificata"]] },
+                  },
+                },
+              },
+              0,
+            ],
+          },
+        },
+      },
+      {
+        $group: {
+          _id: "$stelle",
+          ricevute: { $sum: 1 },
+          conRisposta: { $sum: { $cond: ["$haRisposta", 1, 0] } },
+          dalSistema: { $sum: { $cond: ["$_dalSistema", 1, 0] } },
+        },
+      },
+    ],
+  );
+  const mappa = new Map(righe.map((r) => [r._id, r]));
+  return LIVELLI_STELLE.map((stelle) => {
+    const r = mappa.get(stelle);
+    return {
+      stelle,
+      ricevute: r?.ricevute ?? 0,
+      conRisposta: r?.conRisposta ?? 0,
+      dalSistema: r?.dalSistema ?? 0,
+    };
+  });
+}
+
+export type RigaModifiche = { stelle: number | null; eseguiti: number; modificati: number };
+
+/**
+ * Quante delle risposte ESEGUITE (flussi non annullati) sono state riscritte a
+ * mano rispetto alla proposta, per punteggio — la stessa misura di
+ * lavorazione().riscritture, spaccata per stelle e per finestra temporale
+ * (sul momento dell'esecuzione, non su quando è arrivata la recensione: sono
+ * praticamente lo stesso istante in questo flusso).
+ */
+export async function modifichePerStelle(periodo?: Intervallo): Promise<RigaModifiche[]> {
+  const match: Document = { annullata: false };
+  if (periodo?.dal) match.quando = { $gte: periodo.dal, $lt: periodo.al };
+  const righe = await aggr<{ _id: number | null; eseguiti: number; modificati: number }>("esecuzioni", [
+    { $match: match },
+    {
+      $group: {
+        _id: "$recensioneStelle",
+        eseguiti: { $sum: 1 },
+        modificati: { $sum: { $cond: ["$testoModificato", 1, 0] } },
+      },
+    },
   ]);
-  const mappa = (righe: Gruppo[]) => new Map(righe.map((x) => [x._id ?? null, x.n]));
-  const r = mappa(ricevute);
-  const c = mappa(conRisposta);
-  const s = mappa(dalSistema);
-  const livelli: (number | null)[] = [5, 4, 3, 2, 1, null];
-  return livelli.map((stelle) => ({
-    stelle,
-    ricevute: r.get(stelle) ?? 0,
-    conRisposta: c.get(stelle) ?? 0,
-    dalSistema: s.get(stelle) ?? 0,
-  }));
+  const mappa = new Map(righe.map((r) => [r._id, r]));
+  return LIVELLI_STELLE.map((stelle) => {
+    const r = mappa.get(stelle);
+    return { stelle, eseguiti: r?.eseguiti ?? 0, modificati: r?.modificati ?? 0 };
+  });
 }
 
 /**
