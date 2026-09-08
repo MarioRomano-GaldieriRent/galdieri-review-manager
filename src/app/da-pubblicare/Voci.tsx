@@ -189,12 +189,16 @@ export function VoceCoda({
 }
 
 /**
- * Voce dello STORICO: sola lettura, tutte le informazioni della risposta
- * pubblicata dal nostro sito. Nessun pulsante di flusso (Google/pubblicazione):
- * qui non si "lavora", si consulta. I badge di stato Freshdesk sono informativi
- * (niente "Riprova").
+ * Voce dello STORICO: tutte le informazioni della risposta pubblicata dal
+ * nostro sito. Qui non si "lavora" la recensione — nessun pulsante di flusso
+ * (Google, pubblicazione) — ma UNA cosa si può fare: chiudere il ticket rimasto
+ * indietro. Capita: se al momento della pubblicazione Freshdesk non risponde
+ * (429) il ticket non viene agganciato, e la risposta risulta pubblicata con il
+ * ticket ancora aperto. Il pulsante compare solo in quel caso, cioè quando
+ * l'esito NON è già «ok»: ricerca il ticket, lo risolve e lo classifica.
  */
 export function VoceStorico({ v, numero }: { v: VocePubblicazione; numero: number }) {
+  const daChiudere = v.freshdeskEsito !== "ok";
   return (
     <li className="card pub-card">
       <div className="pub-testa">
@@ -211,6 +215,9 @@ export function VoceStorico({ v, numero }: { v: VocePubblicazione; numero: numbe
           )}
           {v.ticketId != null && <span className="flag flag-gray">ticket #{v.ticketId}</span>}
           {v.freshdeskEsito === "ok" && <span className="flag flag-green">ticket chiuso</span>}
+          {v.freshdeskEsito === "noniniziato" && (
+            <span className="flag flag-gray">ticket non toccato (simulazione)</span>
+          )}
           {v.freshdeskEsito === "inattesa" && v.freshdeskTentativi === 0 && (
             <span className="flag flag-amber">risoluzione programmata</span>
           )}
@@ -231,6 +238,22 @@ export function VoceStorico({ v, numero }: { v: VocePubblicazione; numero: numbe
         <span className="pub-etichetta">Risposta pubblicata</span>
         <p className="pub-risposta-testo">{v.testoRisposta}</p>
       </div>
+
+      {daChiudere && (
+        <div className="pub-controlli">
+          <form action={riprovaFreshdeskAction}>
+            <input type="hidden" name="chiave" value={v.chiave} />
+            <button
+              type="submit"
+              className="btn-secondary"
+              title="Cerca il ticket di questa recensione su Freshdesk, lo mette a Risolto e lo classifica"
+            >
+              Chiudi il ticket
+            </button>
+          </form>
+          {v.freshdeskErrore && <p className="hint">Ultimo tentativo: {v.freshdeskErrore}</p>}
+        </div>
+      )}
     </li>
   );
 }

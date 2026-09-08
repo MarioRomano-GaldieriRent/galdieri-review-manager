@@ -147,11 +147,19 @@ export async function chiudiFreshdeskPer(
   });
 }
 
-/** Ritenta ora una singola chiusura in sospeso (dal pulsante "riprova"). */
+/**
+ * Chiude ORA il ticket di una pubblicazione, su richiesta esplicita: il
+ * pulsante «Riprova»/«Risolvi ora» della coda e «Chiudi il ticket» dello
+ * storico. Tutto tranne le già chiuse («ok»): se una persona lo chiede, il
+ * ticket va chiuso, quale che sia il motivo per cui era rimasto indietro.
+ *
+ * Il contatore dei tentativi riparte da zero: un clic manuale rimette in gioco
+ * anche i ritentativi automatici, che su una voce «fallito» erano esauriti.
+ */
 export async function ritentaChiusura(chiave: string, operatoreNome = "Sistema"): Promise<void> {
   const voce = await leggiPubblicazione(chiave);
-  if (voce && (voce.freshdeskEsito === "inattesa" || voce.freshdeskEsito === "fallito")) {
-    await chiudiFreshdeskPer(voce, operatoreNome);
+  if (voce && voce.freshdeskEsito !== "ok") {
+    await chiudiFreshdeskPer({ ...voce, freshdeskTentativi: 0 }, operatoreNome);
   }
 }
 
