@@ -156,7 +156,9 @@ export async function scriviRisposta(
     if (c > 0) {
       const campo = loc.last();
       await campo.click({ timeout: 4000 }).catch(() => {});
-      await pg.keyboard.type(testo, { delay: 15 }).catch(() => {});
+      // Dal form il testo arriva con «\r\n», e la tastiera batte Invio per
+      // ENTRAMBI i caratteri: righe vuote doppie nella risposta pubblicata.
+      await pg.keyboard.type(testo.replace(/\r\n?/g, "\n"), { delay: 15 }).catch(() => {});
       via = `${nome} (trovati ${c})`;
       break;
     }
@@ -244,8 +246,16 @@ async function bottoneInviaRisposta(root: Radice): Promise<Locator | null> {
     }
     return false;
   };
+  // Il campo della coda, dal vivo, NON ha un placeholder: ha un'etichetta
+  // flottante (aria-label «La tua risposta pubblica»). Pretendere il
+  // placeholder voleva dire non riconoscere MAI la coda vera al momento di
+  // inviare: la risposta veniva scritta e poi «bottone di invio non trovato».
+  const campoDellaCoda =
+    (await visibile(root.getByPlaceholder(/Risposta pubblica|La tua risposta/i))) ||
+    (await visibile(root.getByRole("textbox", { name: /rispost|risposta/i }))) ||
+    (await visibile(root.locator("textarea")));
   const segniDellaCoda =
-    (await visibile(root.getByPlaceholder(/Risposta pubblica|La tua risposta/i))) &&
+    campoDellaCoda &&
     (await visibile(root.getByRole("button", { name: /^Ignora$/i }))) &&
     (await visibile(root.getByText(/\d+\s*di\s*\d+/i)));
   if (!segniDellaCoda) return null;
@@ -1095,7 +1105,7 @@ export type EsitoCodaIgnora = {
  * vecchio (manca «npm run build» + restart dopo il git pull) e non serve
  * cercare il problema altrove.
  */
-export const VERSIONE_CODA = "coda-11";
+export const VERSIONE_CODA = "coda-12";
 
 /** Minuscolo, senza accenti, spazi normalizzati: per confrontare i nomi. */
 function senzaAccenti(x: string): string {
@@ -1885,10 +1895,24 @@ export async function cercaNellaCoda(
     };
   }
 
+  // --- Scrittura: UNA volta sola ---------------------------------------------
   // Il campo è GIÀ APERTO per la recensione mostrata (nessun «Rispondi» da
-  // cliccare prima): lo si individua per placeholder, con qualche ripiego. Dopo
-  // aver scritto si RILEGGE il campo: se il testo non è finito lì, quello non
-  // era il campo giusto e si prova il successivo (prima si dava per buono).
+  // cliccare prima). Prima si sceglie il campo, poi si scrive, poi si rilegge.
+  // Le regole vengono da un caso vero — la risposta a «D» scritta TRE volte:
+  //  1. i tasti vanno dove sta il FOCUS: prima di battere si controlla che il
+  //     focus sia su un campo di testo, e il contenuto si rilegge da lì, non da
+  //     un locator che nel frattempo può risolversi su un altro elemento;
+  //  2. si scrive SOLO in un campo vuoto: se c'è già qualcosa lo si svuota
+  //     prima, e se non si riesce non si scrive affatto (mai accodare);
+  //  3. i ritorni a capo si normalizzano: dal form il testo arriva con «\r\n»
+  //     e Playwright batte Invio per ENTRAMBI i caratteri — righe vuote doppie
+  //     nella risposta, e il confronto con quanto scritto non tornava più;
+  //  4. il confronto è a spazi normalizzati e conta QUANTE volte il testo
+  //     compare: dev'essere una. Altrimenti si svuota e si riscrive UNA volta;
+  //     se ancora non torna ci si arrende, senza pubblicare.
+  // Prima si scriveva e si rileggeva per ogni candidato: al primo confronto
+  // fallito si passava al successivo — che era lo STESSO campo — e si
+  // riscriveva. Tre candidati risolvevano sullo stesso <textarea>: tre volte.
   const campi = [
     ["placeholder «Risposta pubblica»", coda.getByPlaceholder(/Risposta pubblica/i)],
     ["placeholder «La tua risposta»", coda.getByPlaceholder(/La tua risposta/i)],
@@ -1897,11 +1921,65 @@ export async function cercaNellaCoda(
     ["contenteditable", coda.locator('[contenteditable="true"]')],
     ["un campo qualunque della coda", campiDiRisposta(coda)],
   ] as const;
-  const svuota = async () => {
+  const testoDaScrivere = testo.replace(/\r\n?/g, "\n").trim();
+  const ridotto = (s: string) => s.replace(/\s+/g, " ").trim();
+  const attesoRidotto = ridotto(testoDaScrivere);
+  const inizioAtteso = attesoRidotto.slice(0, 24);
+  const quante = (s: string, ago: string): number => (ago ? s.split(ago).length - 1 : 0);
+  const anteprima = (s: string) => ridotto(s).slice(0, 60);
+
+  type Fuoco =
+    | { ok: true; tag: string; editabile: boolean; valore: string; nome: string }
+    | { ok: false; errore: string };
+  /** Cosa c'è nel campo che ha il FOCUS. `ok: false` = non sono riuscito a guardare. */
+  const leggiFuoco = async (): Promise<Fuoco> => {
+    try {
+      const f = await coda.evaluate(() => {
+        // Tutto inline: niente funzioni con nome dentro evaluate (sotto tsx
+        // finiscono avvolte in __name, che nel browser non esiste).
+        let a: Element | null = document.activeElement;
+        // Se il focus sta in un iframe dello stesso dominio, si scende.
+        while (a && a.tagName.toLowerCase() === "iframe") {
+          const d = (a as HTMLIFrameElement).contentDocument;
+          if (!d) break;
+          a = d.activeElement;
+        }
+        if (!a || a === document.body) return { tag: "", editabile: false, valore: "", nome: "" };
+        const tag = a.tagName.toLowerCase();
+        const campo = tag === "textarea" || tag === "input";
+        const editabile = campo || (a as HTMLElement).isContentEditable === true;
+        const valore = campo ? (a as HTMLTextAreaElement).value : a.textContent || "";
+        const nome = a.getAttribute("aria-label") || a.getAttribute("placeholder") || "";
+        return { tag, editabile, valore, nome };
+      });
+      return { ok: true, ...f };
+    } catch (e) {
+      return { ok: false, errore: perche(e) };
+    }
+  };
+
+  let campoAttivo: Locator | null = null;
+  let viaCampo = "";
+  /** Legge il campo: dal focus se è un campo di testo, altrimenti dal locator scelto. */
+  const leggiCampo = async (): Promise<string> => {
+    const f = await leggiFuoco();
+    if (f.ok && f.editabile) return f.valore;
+    if (!campoAttivo) return "";
+    return (
+      (await campoAttivo.inputValue().catch(() => null)) ??
+      (await campoAttivo.innerText().catch(() => "")) ??
+      ""
+    );
+  };
+  /** Svuota il campo a fuoco (seleziona tutto + Canc) e dice cosa ci resta. */
+  const svuota = async (): Promise<string> => {
     await pg.keyboard.press("Control+A").catch(() => {});
     await pg.keyboard.press("Delete").catch(() => {});
+    await pg.waitForTimeout(150);
+    return leggiCampo();
   };
-  let campoAttivo: Locator | null = null;
+
+  // 1) Il campo: il primo candidato VISIBILE che, cliccato, prende il focus.
   for (const [via, loc] of campi) {
     if (
       await loc
@@ -1921,24 +1999,26 @@ export async function cercaNellaCoda(
       annota(`campo (${via}): click FALLITO — ${perche(e)}`);
       continue;
     }
-    await pg.keyboard.type(testo, { delay: 15 }).catch(() => {});
-    await pg.waitForTimeout(350);
-    const dentro = (
-      (await c.inputValue().catch(() => null)) ??
-      (await c.innerText().catch(() => "")) ??
-      ""
-    ).trim();
-    if (!dentro.includes(testo.slice(0, 10))) {
-      annota(`campo (${via}): scritto, ma il testo non è lì (letto «${dentro.slice(0, 40)}»). Provo il prossimo.`);
-      await svuota(); // non lasciare in giro mezzo testo
+    await pg.waitForTimeout(150);
+    const f = await leggiFuoco();
+    if (!f.ok) {
+      annota(`campo (${via}): non riesco a leggere dove sta il focus (${f.errore}); mi fido del click.`);
+      campoAttivo = c;
+      viaCampo = via;
+      break;
+    }
+    if (!f.editabile) {
+      annota(
+        `campo (${via}): cliccato, ma il focus non è su un campo di testo (${f.tag ? `<${f.tag}>` : "niente a fuoco"}): non ci scrivo. Provo il prossimo.`,
+      );
       continue;
     }
-    annota(`scritto nel campo (${via}).`);
+    annota(`campo (${via}): a fuoco <${f.tag}>${f.nome ? ` «${f.nome}»` : ""}.`);
     campoAttivo = c;
+    viaCampo = via;
     break;
   }
   if (!campoAttivo) {
-    await svuota();
     await fotografaControlli("controlli senza campo di risposta");
     return {
       trovata: true,
@@ -1949,6 +2029,62 @@ export async function cercaNellaCoda(
       dettaglio: `Trovato «${nome}» (autore «${autoreTrovato}») ma non ho trovato il campo «Risposta pubblica» dove scrivere.`,
     };
   }
+
+  // 2-4) Si scrive una volta e si rilegge; al massimo un secondo tentativo, e
+  //      solo dopo aver visto il campo vuoto.
+  let scrittoBene = false;
+  let letto = "";
+  for (let tentativo = 1; tentativo <= 2 && !scrittoBene; tentativo++) {
+    let dentro = (await leggiCampo()).trim();
+    if (dentro) {
+      annota(`nel campo c'è già del testo («${anteprima(dentro)}»): lo svuoto prima di scrivere.`);
+      await campoAttivo.click({ timeout: 3000 }).catch(() => {});
+      dentro = (await svuota()).trim();
+      if (dentro) {
+        annota(`non riesco a svuotarlo (resta «${anteprima(dentro)}»): NON scrivo, per non accodare.`);
+        break;
+      }
+    }
+    try {
+      await pg.keyboard.type(testoDaScrivere, { delay: 15 });
+    } catch (e) {
+      annota(`scrittura interrotta — ${perche(e)}`);
+    }
+    await pg.waitForTimeout(350);
+    letto = ridotto(await leggiCampo());
+    const volte = quante(letto, inizioAtteso);
+    if (volte === 1 && letto === attesoRidotto) {
+      scrittoBene = true;
+      break;
+    }
+    const poi = tentativo < 2 ? "svuoto e riscrivo una volta" : "mi arrendo";
+    if (volte > 1) {
+      annota(`tentativo ${tentativo}: il testo compare ${volte} volte nel campo — ${poi}.`);
+    } else if (volte === 0) {
+      annota(`tentativo ${tentativo}: il testo NON è nel campo (letto «${anteprima(letto)}») — ${poi}.`);
+    } else {
+      let i = 0;
+      while (i < letto.length && i < attesoRidotto.length && letto[i] === attesoRidotto[i]) i++;
+      annota(
+        `tentativo ${tentativo}: il testo c'è ma non è identico (dal carattere ${i + 1}: letto «${letto.slice(i, i + 30)}», atteso «${attesoRidotto.slice(i, i + 30)}») — ${poi}.`,
+      );
+    }
+  }
+  if (!scrittoBene) {
+    // Non si lascia in giro un testo sbagliato: si prova a togliere quello che c'è.
+    await campoAttivo.click({ timeout: 3000 }).catch(() => {});
+    await svuota();
+    await fotografaControlli("controlli dopo la scrittura fallita");
+    return {
+      trovata: true,
+      scritto: false,
+      passi,
+      root: coda,
+      autore: autoreTrovato,
+      dettaglio: `Trovato «${nome}» (autore «${autoreTrovato}») ma nel campo non è rimasta la risposta giusta (letto «${anteprima(letto)}»): NON pubblico. Nel passo-passo c'è cosa ha letto.`,
+    };
+  }
+  annota(`scritto nel campo (${viaCampo}) una volta sola: ${testoDaScrivere.length} caratteri, riletti e identici.`);
 
   // Il pulsante d'invio si guarda solo per sapere se si è acceso (prova che il
   // testo è stato accettato). Questa funzione non lo clicca MAI da sé: in
@@ -2091,6 +2227,21 @@ export async function rispondiPerSede(
         trovata: true,
         scritto: true,
         root: c.root,
+        dettaglio: `sede «${nomeGoogle}» · coda: ${c.dettaglio}`,
+      };
+    }
+    if (c.trovata) {
+      // La coda l'ha RICONOSCIUTA (dal testo, non da un nome di una lettera)
+      // ma non è riuscita a scrivere: l'esito è «trovata ma non scritta» e ci
+      // si ferma qui. Ripiegare sulla lista per la stessa recensione vorrebbe
+      // dire ricominciare con un metodo più debole — e lì il nome si cerca
+      // per sottostringa, e si pubblica davvero. Era il «torna indietro e
+      // ricerca da capo» che si vedeva dopo la scrittura fallita.
+      log(`la coda ha trovato «${nomeCliente}» ma non ha scritto (${c.dettaglio}): mi fermo, niente ripiego sulla lista.`);
+      return {
+        trovata: true,
+        scritto: false,
+        root: c.root ?? null,
         dettaglio: `sede «${nomeGoogle}» · coda: ${c.dettaglio}`,
       };
     }

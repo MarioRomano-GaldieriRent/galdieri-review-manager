@@ -1,7 +1,7 @@
 import { chromium, type Browser } from "playwright";
-import { cercaNellaCoda } from "@/server/robot/google";
+import { cercaNellaCoda, pubblica } from "@/server/robot/google";
 
-type Uscita = "sicura" | "ferma";
+type Uscita = "sicura" | "ferma" | "lascia";
 type Stile = "semplice" | "popup";
 
 //   npm run robot:banco
@@ -26,7 +26,13 @@ type Stile = "semplice" | "popup";
 //     «open_in_new» — una legatura testuale — quindi il testo dell'elemento
 //     è «Dopen_in_new» e il confronto col nome non combaciava MAI;
 //  6. la recensione lunga è mostrata tagliata: il testo intero c'è, ma in un
-//     nodo display:none che innerText non restituisce.
+//     nodo display:none che innerText non restituisce;
+//  7. la risposta VERA arriva dal form con «\r\n»: battuta tasto per tasto
+//     faceva DUE Invio per ogni a capo, e il confronto con quanto scritto
+//     falliva — così si passava al candidato successivo (lo STESSO campo) e
+//     si riscriveva: la risposta a «D» è comparsa tre volte;
+//  8. al momento di PUBBLICARE la coda veniva riconosciuta dal placeholder del
+//     campo, che dal vivo non c'è: «bottone di invio non trovato».
 
 type Recensione = { autore: string; stelle: number; testo: string; testoPieno?: string };
 
@@ -45,9 +51,15 @@ const RECENSIONI: Recensione[] = [
       "(Traduzione di Google) ATTENZIONE, EVITATE LUNGHE ATTESE - 3 persone davanti a noi e abbiamo aspettato 1 ora e 30 minuti. (Originale) ATTENTION AVOID LONG WAIT - 3 people in front of us and we have so far waited 1 hr 30 minutes.",
   },
 ];
-const BERSAGLIO = RECENSIONI[3];
 /** Quello che sta nel database: l'originale scritto dal cliente. */
 const TESTO_DB = "ATTENTION AVOID LONG WAIT - 3 people in front of us and we have so far waited 1 hr 30 minutes.";
+
+/** La risposta come arriva dal form della card: righe separate da «\r\n». */
+const TESTO_RISPOSTA = "Salve D,\r\nPROVA — non pubblicare.\r\n\r\nGrazie.";
+/** Com'è giusto che finisca nel campo: un a capo per riga, nessuno doppio. */
+const TESTO_ATTESO = "Salve D,\nPROVA — non pubblicare.\n\nGrazie.";
+/** Quello che un tentativo precedente può aver lasciato nel campo. */
+const RESIDUO = "vecchio testo rimasto da un tentativo precedente";
 
 /** I due tasti del pop-up, col testo dentro uno span annidato come su Google. */
 const TASTI = `
@@ -60,7 +72,7 @@ const TASTI = `
     <span jsname="V67aGc" class="UywwFc-vQzf8d">Rispondi</span><span jsname="UkTUqb"></span>
   </button>`;
 
-function pagina(stile: Stile): string {
+function pagina(stile: Stile, residuo: boolean): string {
   const popup = stile === "popup";
 
   // La LISTA sotto: contiene altre recensioni, comprese quelle che compaiono
@@ -118,8 +130,12 @@ button{padding:8px 14px} .nascosto{display:none}</style>
 
 <script>
   const RECENSIONI = ${JSON.stringify(RECENSIONI)};
+  const RESIDUO = ${JSON.stringify(residuo ? RESIDUO : "")};
   const campo = document.getElementById("campo");
   let i = 0;
+  // Ogni volta che qualcosa finisce nel campo (tasti, Canc, incolla) si
+  // registra: serve a contare QUANTE volte è stata scritta la risposta.
+  window.__scritture = 0;
   function mostra() {
     if (i >= RECENSIONI.length) { document.getElementById("coda").textContent = "Nessuna recensione da gestire"; return; }
     const r = RECENSIONI[i];
@@ -130,7 +146,8 @@ button{padding:8px 14px} .nascosto{display:none}</style>
     document.getElementById("stelle").setAttribute("aria-label", r.stelle + " su 5 stelle");
     document.getElementById("testo-corto").textContent = r.testo;
     document.getElementById("testo-pieno").textContent = r.testoPieno || r.testo;
-    campo.value = "";
+    // Il campo SPORCO: quello che un tentativo precedente può aver lasciato.
+    campo.value = r.autore === "D" ? RESIDUO : "";
     document.getElementById("invia").disabled = true;
   }
   document.getElementById("cta").addEventListener("click", () => {
@@ -142,9 +159,13 @@ button{padding:8px 14px} .nascosto{display:none}</style>
   campo.addEventListener("input", () => {
     document.getElementById("invia").disabled = campo.value.trim().length === 0;
   });
+  campo.addEventListener("keydown", (e) => { if (e.key === "P") window.__scritture++; });
   document.getElementById("banner-chiudi").addEventListener("click", function () { this.remove(); });
   window.__pubblicato = false;
-  document.getElementById("invia").addEventListener("click", () => { window.__pubblicato = true; });
+  document.getElementById("invia").addEventListener("click", function () {
+    if (this.disabled) return;
+    window.__pubblicato = true;
+  });
 </script>
 `;
 }
@@ -154,21 +175,43 @@ type Prova = { nome: string; controlli: [string, boolean][]; passi: string[] };
 async function scenario(
   browser: Browser,
   titolo: string,
-  { conTesto, stile, uscita }: { conTesto: boolean; stile: Stile; uscita: Uscita },
+  {
+    conTesto,
+    stile,
+    uscita,
+    residuo = false,
+    poiPubblica = false,
+  }: { conTesto: boolean; stile: Stile; uscita: Uscita; residuo?: boolean; poiPubblica?: boolean },
 ): Promise<Prova> {
   const page = await browser.newPage();
-  await page.setContent(pagina(stile));
+  await page.setContent(pagina(stile, residuo));
 
   const passi: string[] = [];
-  const esito = await cercaNellaCoda(page, "D", "PROVA — non pubblicare", {
+  const esito = await cercaNellaCoda(page, "D", TESTO_RISPOSTA, {
     log: (m) => passi.push(m),
     uscita,
     maxIgnora: 10,
     testoRecensione: conTesto ? TESTO_DB : undefined,
   });
 
-  const pubblicato = await page.evaluate(
+  // Come fa il «Rispondi» vero (azione «pubblica»): dopo la coda, l'invio.
+  let errorePubblica = "";
+  if (poiPubblica && esito.trovata && esito.scritto) {
+    try {
+      await pubblica(page);
+      passi.push("[banco] pubblica(): ha cliccato l'invio.");
+    } catch (e) {
+      errorePubblica = e instanceof Error ? e.message : String(e);
+      passi.push(`[banco] pubblica() FALLITA: ${errorePubblica}`);
+    }
+  }
+
+  const finestra = page as unknown as { evaluate: typeof page.evaluate };
+  const pubblicato = await finestra.evaluate(
     () => (window as unknown as { __pubblicato: boolean }).__pubblicato,
+  );
+  const scritture = await finestra.evaluate(
+    () => (window as unknown as { __scritture: number }).__scritture,
   );
   const rimasto = await page.evaluate(() => {
     const c = document.getElementById("campo") as HTMLTextAreaElement | null;
@@ -179,40 +222,58 @@ async function scenario(
   );
   await page.close();
 
-  return {
-    nome: titolo,
-    passi,
-    controlli: [
-      ["è entrata nella coda", passi.some((p) => p.includes("sono entrato nella coda"))],
-      ["ha premuto «Ignora» per girare", passi.some((p) => p.includes("recensione 2"))],
-      // Il nome NON dev'essere inquinato dall'icona «open_in_new».
-      ["ha letto il nome pulito (senza l'icona)", !/open_in_new/.test(esito.autore ?? "")],
-      // Solo le righe della recensione: l'elenco diagnostico dei controlli
-      // mostra apposta il testo grezzo, icone comprese.
-      [
-        "ha ripulito anche il testo della recensione",
-        !passi
-          .filter((p) => /^recensione \d|^la recensione trovata/.test(p))
-          .some((p) => p.includes("open_in_new")),
-      ],
-      ["NON si è fermata su «Vito D'Amico»", esito.autore !== "Vito D'Amico"],
-      ["è arrivata alla recensione di «D»", esito.autore === "D"],
-      ["ha visto che è da 1 stella", passi.some((p) => p.includes("1 su 5 stelle"))],
-      ["l'ha riconosciuta", esito.trovata === true],
-      ["ha fatto 3 salti", passi.some((p) => p.includes("trovata dopo 3 «Ignora»"))],
-      ["ha scritto", esito.scritto === true],
-      ["NON ha pubblicato", pubblicato === false],
-      conTesto
-        ? ["ha riconosciuto il TESTO (anche se nascosto e tagliato)", passi.some((p) => p.includes("il testo"))]
-        : ["ha riconosciuto per autore", passi.some((p) => p.includes("combacia l'autore"))],
-      uscita === "ferma"
-        ? ["si è fermata con la risposta scritta", rimasto.includes("PROVA")]
-        : ["ha svuotato il campo uscendo", rimasto.trim() === "" || rimasto === "(campo assente)"],
-      uscita === "ferma"
-        ? ["NON ha premuto «Ignora» dopo aver scritto", contatore.startsWith("4 di 4")]
-        : ["è passata oltre uscendo", !contatore.startsWith("4 di 4")],
+  const lasciaScritto = uscita === "ferma" || uscita === "lascia";
+  const controlli: [string, boolean][] = [
+    ["è entrata nella coda", passi.some((p) => p.includes("sono entrato nella coda"))],
+    ["ha premuto «Ignora» per girare", passi.some((p) => p.includes("recensione 2"))],
+    // Il nome NON dev'essere inquinato dall'icona «open_in_new».
+    ["ha letto il nome pulito (senza l'icona)", !/open_in_new/.test(esito.autore ?? "")],
+    // Solo le righe della recensione: l'elenco diagnostico dei controlli
+    // mostra apposta il testo grezzo, icone comprese.
+    [
+      "ha ripulito anche il testo della recensione",
+      !passi
+        .filter((p) => /^recensione \d|^la recensione trovata/.test(p))
+        .some((p) => p.includes("open_in_new")),
     ],
-  };
+    ["NON si è fermata su «Vito D'Amico»", esito.autore !== "Vito D'Amico"],
+    ["è arrivata alla recensione di «D»", esito.autore === "D"],
+    ["ha visto che è da 1 stella", passi.some((p) => p.includes("1 su 5 stelle"))],
+    ["l'ha riconosciuta", esito.trovata === true],
+    ["ha fatto 3 salti", passi.some((p) => p.includes("trovata dopo 3 «Ignora»"))],
+    ["ha scritto", esito.scritto === true],
+    // La «P» di PROVA battuta nel campo: una volta = scritta una volta.
+    ["ha battuto la risposta UNA volta sola", scritture === 1],
+    conTesto
+      ? ["ha riconosciuto il TESTO (anche se nascosto e tagliato)", passi.some((p) => p.includes("il testo"))]
+      : ["ha riconosciuto per autore", passi.some((p) => p.includes("combacia l'autore"))],
+  ];
+  if (lasciaScritto) {
+    controlli.push(
+      ["ha lasciato la risposta nel campo", rimasto.includes("PROVA")],
+      // Né doppioni, né righe vuote raddoppiate dai «\r\n» del form.
+      ["nel campo c'è ESATTAMENTE la risposta (a capo singoli, una volta)", rimasto === TESTO_ATTESO],
+      ["NON ha premuto «Ignora» dopo aver scritto", contatore.startsWith("4 di 4")],
+    );
+  } else {
+    controlli.push(
+      ["ha svuotato il campo uscendo", rimasto.trim() === "" || rimasto === "(campo assente)"],
+      ["è passata oltre uscendo", !contatore.startsWith("4 di 4")],
+    );
+  }
+  if (residuo) {
+    controlli.push(["ha tolto il residuo prima di scrivere (non ha accodato)", !rimasto.includes(RESIDUO)]);
+  }
+  if (poiPubblica) {
+    controlli.push(
+      ["pubblica() ha trovato l'invio della coda (senza placeholder)", errorePubblica === ""],
+      ["ha cliccato «Rispondi» (invio)", pubblicato === true],
+    );
+  } else {
+    controlli.push(["NON ha pubblicato", pubblicato === false]);
+  }
+
+  return { nome: titolo, passi, controlli };
 }
 
 (async () => {
@@ -234,6 +295,20 @@ async function scenario(
       conTesto: true,
       stile: "popup",
       uscita: "sicura",
+    }),
+    // Il percorso del «Rispondi» vero: coda con uscita «lascia», poi pubblica().
+    await scenario(browser, "pop-up vero, come il «Rispondi»: scrive e poi clicca l'invio", {
+      conTesto: true,
+      stile: "popup",
+      uscita: "lascia",
+      poiPubblica: true,
+    }),
+    // Il campo sporco: non si deve MAI accodare a quello che c'è già.
+    await scenario(browser, "pop-up vero, col campo sporco da un tentativo precedente", {
+      conTesto: true,
+      stile: "popup",
+      uscita: "ferma",
+      residuo: true,
     }),
     // Vista semplificata: tiene onesto il codice anche su un DOM diverso.
     await scenario(browser, "vista semplice (campo col placeholder)", {
