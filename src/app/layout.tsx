@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import "./globals.css";
 import { GearMenu } from "./GearMenu";
 import { operatoreCorrente } from "@/server/auth/sessione";
+import { contaAperte } from "@/server/db/segnalazioni";
 
 export const metadata: Metadata = {
   title: "GaldieriReviews",
@@ -28,11 +29,16 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
   const pathname = (await headers()).get("x-pathname") ?? "";
   const suLogin = pathname === "/login" || pathname.startsWith("/login/");
   const suStatistiche = pathname === "/statistiche";
+  const suSupervisione = pathname === "/supervisione";
 
   // Gate vero: fuori dal login serve un operatore loggato. Un cookie scaduto o
   // fasullo (che il middleware lascia passare) viene fermato qui.
   const operatore = suLogin ? null : await operatoreCorrente();
   if (!suLogin && !operatore) redirect("/login");
+
+  // Supervisione è dell'admin: link in testata solo per lui, col numero delle
+  // segnalazioni che aspettano (badge rosso), così non deve andarle a cercare.
+  const segnalazioniAperte = operatore?.ruolo === "admin" ? await contaAperte() : 0;
 
   // Voci riservate dell'ingranaggio, filtrate per ruolo: l'operatore lavora la
   // home, l'admin ha anche configurazione e banco di prova.
@@ -68,6 +74,23 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
                 >
                   Statistiche
                 </Link>
+                {operatore.ruolo === "admin" && (
+                  <Link
+                    href="/supervisione"
+                    className={`header-link${suSupervisione ? " is-active" : ""}`}
+                    aria-current={suSupervisione ? "page" : undefined}
+                  >
+                    Supervisione
+                    {segnalazioniAperte > 0 && (
+                      <span
+                        className="header-badge"
+                        title={`${segnalazioniAperte} ${segnalazioniAperte === 1 ? "segnalazione aperta" : "segnalazioni aperte"}`}
+                      >
+                        {segnalazioniAperte}
+                      </span>
+                    )}
+                  </Link>
+                )}
               </div>
               <GearMenu nome={operatore.nome} ruolo={operatore.ruolo} voci={voci} />
             </div>

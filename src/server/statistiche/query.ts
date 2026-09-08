@@ -419,6 +419,38 @@ export async function gestione(): Promise<Gestione> {
   return { ricevute, conRisposta, dalSistema };
 }
 
+export type RigaStelle = Gestione & { stelle: number | null };
+
+/**
+ * La stessa gestione spaccata per punteggio, da 5★ a 1★ più la riga delle
+ * recensioni senza punteggio (stelle null). Stesse tre misure e stesse
+ * avvertenze di gestione(): «dal sistema» e «in totale» non si confrontano fra
+ * loro, si rapportano entrambe alle ricevute.
+ */
+export async function gestionePerStelle(): Promise<RigaStelle[]> {
+  type Gruppo = { _id: number | null; n: number };
+  const perStelle = { $group: { _id: "$stelle", n: { $sum: 1 } } };
+  const [ricevute, conRisposta, dalSistema] = await Promise.all([
+    aggr<Gruppo>("recensioni", [perStelle]),
+    aggr<Gruppo>("recensioni", [{ $match: { haRisposta: true } }, perStelle]),
+    aggr<Gruppo>("pubblicazioni", [
+      { $match: { stato: { $in: ["pubblicata", "verificata"] } } },
+      perStelle,
+    ]),
+  ]);
+  const mappa = (righe: Gruppo[]) => new Map(righe.map((x) => [x._id ?? null, x.n]));
+  const r = mappa(ricevute);
+  const c = mappa(conRisposta);
+  const s = mappa(dalSistema);
+  const livelli: (number | null)[] = [5, 4, 3, 2, 1, null];
+  return livelli.map((stelle) => ({
+    stelle,
+    ricevute: r.get(stelle) ?? 0,
+    conRisposta: c.get(stelle) ?? 0,
+    dalSistema: s.get(stelle) ?? 0,
+  }));
+}
+
 /**
  * Recensioni in coda coperte da una regola attiva. Le combinazioni possibili
  * sono al massimo 5 stelle × 2 valori di haTesto = 10: si materializzano in

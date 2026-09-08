@@ -44,6 +44,9 @@ import {
   type RecensioneArchiviata,
 } from "@/server/db/recensioni";
 import { VediMail } from "./VediMail";
+import { BottoneSegnala } from "./BottoneSegnala";
+import { segnalaAction } from "./supervisione/actions";
+import { chiaviSegnalate } from "@/server/db/segnalazioni";
 import { CampoRispostaAI } from "./CampoRispostaAI";
 import { suggerimentiPer } from "@/server/db/suggerimenti";
 import { AutoAggiorna } from "./AutoAggiorna";
@@ -360,10 +363,11 @@ export default async function HomePage({
         )
       : Promise.resolve();
 
-    const [regoleBase, pubblicate, archiviateChiavi, run, erroreIngest] = await Promise.all([
+    const [regoleBase, pubblicate, archiviateChiavi, segnalateChiavi, run, erroreIngest] = await Promise.all([
       caricaRegole(),
       chiaviPubblicate(),
       chiaviArchiviate(),
+      chiaviSegnalate(),
       // L'esecuzione appena conclusa da mostrare in cima (feedback dopo
       // l'approvazione): una findOne per id, solo se richiesta.
       sp.run ? caricaEsecuzione(sp.run) : Promise.resolve(undefined),
@@ -391,11 +395,19 @@ export default async function HomePage({
       //  - ciò a cui ha GIÀ RISPOSTO l'operatore a mano (haRisposta): gestita
       //    fuori dal nostro flusso, e non finisce nemmeno nello Storico;
       //  - ciò che è stato ARCHIVIATO a mano (es. impossibile da gestire): va
-      //    nella tab «Archiviati», da dove si può ripristinare.
+      //    nella tab «Archiviati», da dove si può ripristinare;
+      //  - ciò che è stato SEGNALATO all'amministratore (tasto «?»): è in carico
+      //    a lui in Supervisione finché non lo rimette in coda.
       //
       // NB: qui NON si guarda l'email «ticket risolto» (segnale debole). Lo stato
       // VERO del ticket su Freshdesk lo si controlla più sotto, con una sweep.
-      .filter((r) => !pubblicate.has(r.chiave) && !r.haRisposta && !archiviateChiavi.has(r.chiave))
+      .filter(
+        (r) =>
+          !pubblicate.has(r.chiave) &&
+          !r.haRisposta &&
+          !archiviateChiavi.has(r.chiave) &&
+          !segnalateChiavi.has(r.chiave),
+      )
       .map((r) => ({ r, regola: regolaPer(regole, r.stelle, haTesto(r)) }))
       // Occhio spento: solo le recensioni coperte da una regola ATTIVA (default).
       // Occhio acceso: TUTTE, anche quelle senza regola (regola === null).
@@ -618,7 +630,9 @@ export default async function HomePage({
           <p className="form-error">
             {sp.errore === "nessuna-regola"
               ? "Nessuna regola attiva copre questa recensione: puoi solo inoltrarla al customer care."
-              : "Recensione non trovata: potrebbe essere uscita dalle ultime 50 email."}
+              : sp.errore === "segnalazione-senza-nota"
+                ? "Per segnalare una recensione all'amministratore devi scrivere qual è il problema."
+                : "Recensione non trovata: potrebbe essere uscita dalle ultime 50 email."}
           </p>
         </section>
       )}
@@ -833,6 +847,11 @@ export default async function HomePage({
                     <input type="hidden" name="chiave" value={r.chiave} />
                     <input type="hidden" name="label" value={label?.id ?? ""} />
                   </form>
+                  {/* Segnalazione all'amministratore: stesso schema. Il «?» apre il
+                      campo nota, che appartiene a questo form via attributo form=. */}
+                  <form id={`segn-${r.chiave}`} action={segnalaAction} className="dash-arch-form">
+                    <input type="hidden" name="chiave" value={r.chiave} />
+                  </form>
 
                   <header className="dash-card-testa">
                     <div className="dash-autore">
@@ -924,6 +943,7 @@ export default async function HomePage({
                         {operatore?.ruolo === "admin" && <BottoneProvaCoda chiave={r.chiave} />}
                         <VediMail id={r.messaggioId} className="btn-mini" />
                         <BottoneArchivia chiave={r.chiave} />
+                        <BottoneSegnala chiave={r.chiave} />
                       </div>
                     </form>
                   ) : regola ? (
@@ -945,6 +965,7 @@ export default async function HomePage({
                         </form>
                         <VediMail id={r.messaggioId} className="btn-mini" />
                         <BottoneArchivia chiave={r.chiave} />
+                        <BottoneSegnala chiave={r.chiave} />
                       </div>
                     </>
                   ) : tutte ? (
@@ -968,6 +989,7 @@ export default async function HomePage({
                         {operatore?.ruolo === "admin" && <BottoneProvaCoda chiave={r.chiave} />}
                         <VediMail id={r.messaggioId} className="btn-mini" />
                         <BottoneArchivia chiave={r.chiave} />
+                        <BottoneSegnala chiave={r.chiave} />
                       </div>
                     </form>
                   ) : (
@@ -979,6 +1001,7 @@ export default async function HomePage({
                       <div className="dash-azioni">
                         <VediMail id={r.messaggioId} className="btn-mini" />
                         <BottoneArchivia chiave={r.chiave} />
+                        <BottoneSegnala chiave={r.chiave} />
                       </div>
                     </>
                   )}

@@ -3814,3 +3814,119 @@ main.pipeline .pub-tabs {
   opacity: 0.4;
   pointer-events: none;
 }
+
+/* ===========================================================================
+   SEGNALAZIONI all'amministratore
+   Il «?» rosso sulla card (l'operatore passa una recensione che non riesce a
+   gestire), il pannello della nota, il badge in testata e la pagina
+   Supervisione dove l'admin le lavora.
+   =========================================================================== */
+
+/* Il «?» cerchiato in rosso: in fila con le azioni, dopo «Archivia». */
+.btn-segnala {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 999px;
+  color: var(--brand-red);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.btn-segnala:hover,
+.btn-segnala.is-aperto {
+  background: color-mix(in srgb, var(--brand-red) 12%, transparent);
+}
+
+/* Il pannello della nota: va a capo sotto i bottoni, su tutta la riga. */
+.segnala-pannello {
+  flex-basis: 100%;
+  margin-top: 6px;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--brand-red) 35%, var(--border));
+  border-left: 3px solid var(--brand-red);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--brand-red) 5%, var(--surface));
+}
+.segnala-etichetta {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 0.88rem;
+  font-weight: 600;
+}
+.segnala-azioni {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 9px;
+  margin-top: 10px;
+}
+.segnala-pannello .hint {
+  margin: 8px 0 0;
+}
+
+/* Badge rosso in testata: quante segnalazioni aspettano l'admin. */
+.header-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 19px;
+  height: 19px;
+  margin-left: 6px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--brand-red);
+  color: #fff;
+  font-size: 0.72rem;
+  font-weight: 700;
+  line-height: 1;
+  vertical-align: middle;
+}
+
+/* Pagina Supervisione. */
+.supervisione-stelle {
+  margin-top: 14px;
+}
+.supervisione-totale td {
+  font-weight: 700;
+  border-top: 2px solid var(--border);
+}
+.segnalazione-card {
+  margin-top: 14px;
+}
+.segnalazione-nota {
+  margin-top: 12px;
+  padding: 10px 14px;
+  border-left: 3px solid var(--brand-red);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  background: color-mix(in srgb, var(--brand-red) 6%, var(--surface-alt));
+  font-size: 0.9rem;
+}
+.segnalazione-nota-testa {
+  font-size: 0.8rem;
+  color: var(--text-soft);
+}
+.segnalazione-nota p {
+  margin: 6px 0 0;
+  white-space: pre-wrap;
+}
+.segnalazione-chiusura {
+  margin-top: 12px;
+}
+.segnalazioni-chiuse {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+}
+.segnalazioni-chiuse li {
+  padding: 12px 0;
+  border-top: 1px solid var(--border);
+}
+.segnalazione-riga {
+  margin: 6px 0 0;
+  font-size: 0.88rem;
+}

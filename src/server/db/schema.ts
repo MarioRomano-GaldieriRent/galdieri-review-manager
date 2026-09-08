@@ -936,6 +936,56 @@ export const COLLEZIONI: DefColl[] = [
       { key: { operatoreId: 1 }, name: "i_sessioni_operatore" },
     ],
   },
+
+  {
+    // SEGNALAZIONI all'amministratore: una recensione che l'operatore non
+    // riesce a gestire, con la nota di cosa non va. _id = chiave recensione.
+    //   aperta   — nascosta all'operatore, in carico all'admin
+    //   risolta  — l'admin ha sistemato: resta nascosta all'operatore
+    //   rimessa  — l'admin l'ha rimandata in coda: torna in «Da approvare»
+    nome: "segnalazioni",
+    validator: {
+      $jsonSchema: {
+        bsonType: "object",
+        additionalProperties: false,
+        required: [
+          "_id",
+          "nomeCliente",
+          "stelle",
+          "sedeNome",
+          "testoRecensione",
+          "ricevutaIl",
+          "messaggioId",
+          "nota",
+          "segnalataIl",
+          "segnalataDa",
+          "stato",
+          "notaChiusura",
+          "chiusaIl",
+          "chiusaDa",
+          "aggiornataIl",
+        ],
+        properties: {
+          _id: { bsonType: "string", minLength: 1 },
+          nomeCliente: stringaOFalsa,
+          stelle: { bsonType: ["int", "null"], minimum: 1, maximum: 5 },
+          sedeNome: stringaOFalsa,
+          testoRecensione: stringaOFalsa,
+          ricevutaIl: { bsonType: "date" },
+          messaggioId: stringaOFalsa,
+          nota: { bsonType: "string", minLength: 1 },
+          segnalataIl: { bsonType: "date" },
+          segnalataDa: { bsonType: "int" },
+          stato: { enum: ["aperta", "risolta", "rimessa"] },
+          notaChiusura: stringaOFalsa,
+          chiusaIl: dataO,
+          chiusaDa: { bsonType: ["int", "null"] },
+          aggiornataIl: { bsonType: "date" },
+        },
+      },
+    },
+    indici: [{ key: { stato: 1, segnalataIl: -1 }, name: "i_segnalazioni_stato" }],
+  },
 ];
 
 // --------------------------------------------------------------------- viste
