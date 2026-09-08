@@ -4,9 +4,9 @@ import { useState } from "react";
 import { provaCodaIgnoraAction } from "./dashboard/provaRobot";
 import type { EsitoRobot } from "@/server/robot/lancia";
 
-// Tasto di PROVA, visibile solo all'amministratore: testa sulla card il metodo
-// alternativo di ricerca — la coda «Rispondere a recensioni» + «Ignora» —
-// invece di scorrere la lista della sede.
+// Tasto «Test», accanto a «Rispondi» e uguale a lui: prova sulla card il
+// percorso del robot — la coda «Rispondere a recensioni» + «Ignora» — senza
+// pubblicare niente. Visibile solo all'amministratore.
 //
 // Quando trova la recensione giusta SI FERMA lì: risposta scritta nel riquadro,
 // recensione a schermo, finestra del robot lasciata APERTA sul server. Non
@@ -20,7 +20,7 @@ import type { EsitoRobot } from "@/server/robot/lancia";
 // Il primo rigo è la sigla della versione: se non c'è, sul server sta girando
 // ancora il codice vecchio (manca «npm run build» + restart dopo il git pull).
 
-export function BottoneProvaCoda({ chiave }: { chiave: string }) {
+export function BottoneTest({ chiave }: { chiave: string }) {
   const [provando, setProvando] = useState(false);
   const [esito, setEsito] = useState<EsitoRobot | null>(null);
   const [copiato, setCopiato] = useState(false);
@@ -58,20 +58,25 @@ export function BottoneProvaCoda({ chiave }: { chiave: string }) {
     <>
       <button
         type="button"
-        className="btn-mini"
+        className="btn-test"
         onClick={prova}
         disabled={provando}
         aria-busy={provando}
-        title="Prova (solo admin): cerca questa recensione nella coda «Rispondere a recensioni» saltando con «Ignora». Quando la trova scrive la risposta e SI FERMA lì, lasciando la finestra aperta sul server perché tu controlli: non pubblica e non scarta. Serve Chrome chiuso sul server."
+        title="Test (solo admin): cerca questa recensione col robot e, quando la trova, scrive la risposta e SI FERMA lì, lasciando la finestra aperta sul server perché tu controlli. Non pubblica e non scarta. Serve Chrome chiuso sul server."
       >
-        {provando ? "🧪 Provo…" : "🧪 Prova coda"}
+        {provando ? (
+          <span className="btn-caricamento">
+            <span className="spinner-mini spinner-chiaro" aria-hidden="true" />
+            Test in corso…
+          </span>
+        ) : (
+          "Test"
+        )}
       </button>
 
       {esito && (
         <div className="google-esito" role="status" aria-live="polite">
-          <span className={esito.ok ? "flag flag-green" : "flag flag-amber"}>
-            {esito.messaggio}
-          </span>
+          <span className={esito.ok ? "flag flag-green" : "flag flag-amber"}>{esito.messaggio}</span>
           {esito.log && esito.log.length > 0 ? (
             // Aperto SUBITO quando non è andata a buon fine: è lì che sta la
             // diagnostica (i controlli visti davvero), non serve doverla aprire.

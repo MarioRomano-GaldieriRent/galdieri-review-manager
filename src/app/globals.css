@@ -541,8 +541,11 @@ code {
   cursor: default;
 }
 
-/* ---------- Tasti della card recensione: Rispondi + G ---------- */
-.btn-rispondi {
+/* ---------- Tasti della card recensione: Rispondi + Test ---------- */
+/* «Rispondi» e, di fianco, «Test»: stesso identico tasto blu — l'uno pubblica,
+   l'altro fa solo la prova col robot (solo admin). */
+.btn-rispondi,
+.btn-test {
   background: var(--accent-fill);
   color: #fff;
   border: none;
@@ -557,38 +560,14 @@ code {
     box-shadow 0.25s var(--ease),
     transform 0.15s var(--ease);
 }
-.btn-rispondi:hover {
+.btn-rispondi:hover,
+.btn-test:hover {
   background: var(--accent-fill-hover);
   box-shadow: 0 6px 18px color-mix(in srgb, var(--g-blue) 40%, transparent);
 }
-.btn-rispondi:active {
+.btn-rispondi:active,
+.btn-test:active {
   transform: scale(0.97);
-}
-
-/* Tasto piccolo e tondo col logo Google a 4 colori. */
-.btn-google {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 40px;
-  height: 40px;
-  padding: 0;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  cursor: pointer;
-  transition:
-    background 0.15s,
-    border-color 0.15s,
-    box-shadow 0.15s;
-}
-.btn-google:hover {
-  background: var(--accent-soft);
-  border-color: var(--g-blue);
-  box-shadow: var(--shadow);
-}
-.btn-google svg {
-  display: block;
 }
 
 /* Tasto "occhio": anteprima del flusso della recensione. */

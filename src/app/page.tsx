@@ -34,9 +34,8 @@ import {
   mostraTutteAction,
   avviaEscalationAction,
 } from "./dashboard/actions";
-import { BottoneGoogle } from "./BottoneGoogle";
-import { BottoneProvaCoda } from "./BottoneProvaCoda";
 import { BottoneRispondi } from "./BottoneRispondi";
+import { BottoneTest } from "./BottoneTest";
 import {
   chiaviArchiviate,
   elencoArchiviate,
@@ -932,6 +931,7 @@ export default async function HomePage({
                       )}
                       <div className="dash-azioni">
                         <BottoneRispondi />
+                        {operatore?.ruolo === "admin" && <BottoneTest chiave={r.chiave} />}
                         <AnteprimaFlusso titolo={`Cosa farà su «${r.nome || "questa recensione"}»`}>
                           <ol className="ap-lista">
                             {regola!.azioni.map((a) => (
@@ -939,8 +939,6 @@ export default async function HomePage({
                             ))}
                           </ol>
                         </AnteprimaFlusso>
-                        <BottoneGoogle chiave={r.chiave} label={label?.id ?? ""} nome={r.nome} />
-                        {operatore?.ruolo === "admin" && <BottoneProvaCoda chiave={r.chiave} />}
                         <VediMail id={r.messaggioId} className="btn-mini" />
                         <BottoneArchivia chiave={r.chiave} />
                         <BottoneSegnala chiave={r.chiave} />
@@ -985,8 +983,7 @@ export default async function HomePage({
                         aria-label="Testo della risposta"
                       />
                       <div className="dash-azioni">
-                        <BottoneGoogle chiave={r.chiave} label={label?.id ?? ""} nome={r.nome} />
-                        {operatore?.ruolo === "admin" && <BottoneProvaCoda chiave={r.chiave} />}
+                        {operatore?.ruolo === "admin" && <BottoneTest chiave={r.chiave} />}
                         <VediMail id={r.messaggioId} className="btn-mini" />
                         <BottoneArchivia chiave={r.chiave} />
                         <BottoneSegnala chiave={r.chiave} />
