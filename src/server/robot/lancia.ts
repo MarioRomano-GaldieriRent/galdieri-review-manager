@@ -24,6 +24,20 @@ export type JobRobot = {
    * volte sono una sola lettera, il testo no. Se manca si va di solo nome.
    */
   testoRecensione?: string;
+  /**
+   * Quale metodo di ricerca provare PER PRIMO sulla sede mappata. L'altro resta
+   * come ripiego: nessuno dei due viene mai buttato via.
+   *
+   *   "coda"  → la coda «Rispondere a recensioni» + «Ignora» (default). È la
+   *             strada giusta per le recensioni CON testo — quelle che arrivano
+   *             dal customer care — perché la coda mostra solo le recensioni
+   *             ancora senza risposta e le riconosce dal testo, che è una prova
+   *             sicura anche quando l'autore si chiama «D».
+   *   "lista" → la ricerca classica nella lista della sede. Serve per le 5★
+   *             SECCHE, senza testo: lì la coda non avrebbe niente da
+   *             confrontare e potrebbe fermarsi sull'omonimo sbagliato.
+   */
+  metodo?: "coda" | "lista";
 };
 
 export type EsitoRobot = {
@@ -198,14 +212,15 @@ export function avviaRobotConEsito(
   });
 }
 
+/**
+ * `attesaMs` è la rete di sicurezza: oltre quel tempo il robot viene ucciso.
+ * Il default di 3 minuti bastava quando la coda aveva una scadenza corta; col
+ * metodo della coda per primo (recensioni con testo) servono più minuti, e chi
+ * chiama lo dice qui — il robot ha comunque una scadenza INTERNA più corta, così
+ * torna da sé col passo-passo invece di farsi ammazzare senza dire niente.
+ */
 export async function lanciaRobot(
   job: JobRobot,
-  /**
-   * Quanto si aspetta prima di ammazzare il robot. Dev'essere PIÙ LARGO della
-   * scadenza interna della coda: dare alla coda 200 secondi di salti dentro
-   * una finestra che chiude a 180 significa morire prima, e senza nemmeno
-   * arrivare ai ripieghi (lista, gruppi). Prima era fisso a 3 minuti.
-   */
   { attesaMs = 3 * 60 * 1000 }: { attesaMs?: number } = {},
 ): Promise<EsitoRobot> {
   if (robotInUso) return esitoOccupato();
@@ -238,7 +253,7 @@ export async function lanciaRobot(
         .map((r) => r.slice(3))
         .slice(-60);
 
-    // Rete di sicurezza: se il robot resta appeso, lo chiudo dopo 3 minuti.
+    // Rete di sicurezza: se il robot resta appeso, lo chiudo (vedi `attesaMs`).
     const timeout = setTimeout(
       () => {
         try {

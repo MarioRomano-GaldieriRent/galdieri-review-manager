@@ -4,7 +4,13 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { eseguiRegola } from "@/server/automation/engine";
 import { testoPerRecensione, testoPerRecensioneConLingua } from "@/server/automation/connectors";
-import { caricaRegole, conBeta, regolaPer, EMAIL_TICKETING } from "@/server/automation/rules";
+import {
+  caricaRegole,
+  conBeta,
+  nodiRisposta,
+  regolaPer,
+  EMAIL_TICKETING,
+} from "@/server/automation/rules";
 import { eliminaEsecuzione, registraEsecuzione } from "@/server/automation/runs";
 import type { Esecuzione, Regola } from "@/server/automation/types";
 import { haTesto, testoRecensione, type Recensione } from "@/server/reviews/load";
@@ -67,6 +73,64 @@ async function trovaRecensionePerChiave(chiave: string): Promise<Recensione | nu
 }
 
 /**
+ * Quale metodo di ricerca deve provare per PRIMO il robot su Google. L'altro
+ * resta sempre come ripiego: non si butta via nessuna delle due strade.
+ *
+ * Recensione CON testo — quelle che arrivano dal customer care: la CODA
+ * «Rispondere a recensioni». Mostra SOLO le recensioni ancora senza risposta,
+ * una alla volta, e la riconosce dal TESTO: è l'unica prova che regge quando
+ * l'autore si chiama «D» o quando due clienti sono omonimi. È il metodo che
+ * nelle prove arriva molto più lontano della ricerca nella lista.
+ *
+ * Recensione SENZA testo — la 5★ secca: la LISTA, il metodo classico. Nella
+ * coda non ci sarebbe niente da confrontare e si finirebbe per scrivere sotto
+ * la recensione del primo omonimo che passa.
+ *
+ * La foto non entra nella scelta perché il dato non esiste: il campo
+ * `photoChecked` è previsto nello schema ma nessuno lo valorizza (nessun
+ * rilevamento foto è mai stato scritto). Finché non arriverà, «5★ senza testo e
+ * senza foto» e «5★ senza testo» sono lo stesso insieme di recensioni.
+ */
+function metodoRobot(r: Recensione): "coda" | "lista" {
+  return haTesto(r) ? "coda" : "lista";
+}
+
+/**
+ * Quanto aspettare il robot prima di ucciderlo. Vale per ENTRAMBI i metodi:
+ * anche partendo dalla lista si può finire nella coda come ripiego, e i salti
+ * di «Ignora» possono essere decine — la scadenza interna del robot è 200
+ * secondi. Con i 3 minuti di default veniva ammazzato proprio mentre stava
+ * arrivando in fondo, che è il motivo per cui il «rispondi» sembrava arrendersi
+ * prima della prova. È un tetto, non un'attesa fissa: se conclude prima, torna
+ * subito.
+ */
+const ATTESA_ROBOT_MS = 5 * 60 * 1000;
+
+/**
+ * La riscrittura da passare al motore: il testo del box, applicato a TUTTI i
+ * nodi che rispondono al cliente (email e Google). null se l'operatore non ha
+ * toccato nulla — in quel caso vale la regola, con la sua scelta di lingua.
+ *
+ * I nodi si ricavano dalla REGOLA, non dal campo nascosto `azioneId` del form.
+ * Quel campo portava l'id di UN solo nodo, quello mostrato nella card, che è
+ * sempre il nodo Google; e siccome playAction toglie il nodo Google dalla
+ * regola prima di eseguirla (su Google ha già pubblicato il robot), la
+ * riscrittura non trovava più il suo bersaglio e non veniva applicata a niente:
+ * su Google usciva il testo dell'operatore, per email quello della regola. È il
+ * caso di «rhita prince» — «Thank you.» su Google, «Grazie.» nella mail che
+ * apre il ticket.
+ */
+function riscritturaPer(
+  regola: Regola,
+  testo: string,
+  originale: string,
+): { azioni: string[]; testo: string } | null {
+  if (!testo || testo === originale) return null;
+  const azioni = nodiRisposta(regola).map((a) => a.id);
+  return azioni.length > 0 ? { azioni, testo } : null;
+}
+
+/**
  * Approva la risposta suggerita ed esegue la regola che copre la recensione.
  *
  * Il testo che arriva dal form è quello che l'operatore ha davanti: se non lo
@@ -83,12 +147,11 @@ export async function approvaAction(formData: FormData): Promise<void> {
   const regola = regolaPer(regole, recensione.stelle, haTesto(recensione));
   if (!regola) indietro(formData, { errore: "nessuna-regola" });
 
-  const azioneId = str(formData, "azioneId");
   const testo = String(formData.get("testo") ?? "").trim();
   const originale = String(formData.get("testoOriginale") ?? "").trim();
   // Si sovrascrive solo quando il testo è stato davvero cambiato: altrimenti
   // la regola resta quella scritta in Impostazioni, senza copie inutili.
-  const riscritto = azioneId && testo && testo !== originale ? { azioneId, testo } : null;
+  const riscritto = riscritturaPer(regola, testo, originale);
 
   const esecuzione = await eseguiRegola(regola, recensione, riscritto);
   await registraEsecuzione(esecuzione);
@@ -274,7 +337,10 @@ export async function cercaSuGoogleAction(
     nome: r.nome,
     testo: risposta,
     nomeGoogle,
+    // Il testo vero della recensione: senza questo la coda può riconoscerla
+    // solo dal nome, che da solo non basta più.
     testoRecensione: r.originale,
+    metodo: metodoRobot(r),
   });
 }
 
@@ -292,10 +358,9 @@ export async function playAction(formData: FormData): Promise<void> {
   const regola = regolaPer(regole, recensione.stelle, haTesto(recensione));
   if (!regola) indietro(formData, { errore: "nessuna-regola" });
 
-  const azioneId = str(formData, "azioneId");
   const testo = String(formData.get("testo") ?? "").trim();
   const originale = String(formData.get("testoOriginale") ?? "").trim();
-  const riscritto = azioneId && testo && testo !== originale ? { azioneId, testo } : null;
+  const riscritto = riscritturaPer(regola, testo, originale);
 
   const modo = await modoOperativo();
 
@@ -324,20 +389,23 @@ export async function playAction(formData: FormData): Promise<void> {
   // GOOGLE PER PRIMO (regola «5 stelle senza foto»): la pubblicazione su Google
   // è il passo che conta ed è il più fragile. Se il robot NON pubblica, non ha
   // senso fare il resto (email, ticket): il robot è il "cancello" iniziale.
+  // Il metodo lo decide il TIPO di recensione: coda per quelle con testo (il
+  // grosso di quelle che arrivano dal customer care), lista per le 5★ secche.
+  const metodo = metodoRobot(recensione);
   const e = await lanciaRobot(
     {
       azione: modo === "reale" ? "pubblica" : "test",
       nome: recensione.nome,
       testo: testoPubblicazione,
       nomeGoogle: await nomeGoogleDiSede(recensione.sede),
-      // Il TESTO della recensione: senza, la coda può riconoscerla solo dal
-      // nome — e con un recensore che si chiama «D» non basta. È la vera
-      // differenza che c'era col tasto di prova, che il testo lo passava.
+      // MANCAVA: senza il testo della recensione la coda poteva riconoscerla
+      // solo dal nome — e da quando il solo nome non basta più, nel flusso vero
+      // non concludeva quasi mai, mentre il tasto di prova (che il testo lo
+      // passava) arrivava in fondo. È la differenza che si vedeva sulla card.
       testoRecensione: recensione.originale,
+      metodo,
     },
-    // Più largo della scadenza interna della coda (200 s), altrimenti il
-    // robot viene ammazzato prima di arrivare ai ripieghi.
-    { attesaMs: 5 * 60 * 1000 },
+    { attesaMs: ATTESA_ROBOT_MS },
   );
 
   // Via libera: in Reale serve la pubblicazione vera; in simulazione basta che
@@ -381,9 +449,15 @@ export async function playAction(formData: FormData): Promise<void> {
         // POSITIVE (5★/4★): il ticket è stato aperto pochi secondi fa da questa
         // stessa pubblicazione. Non lo risolviamo subito — Freshdesk non farebbe
         // in tempo a mandare le sue mail: PROGRAMMIAMO la risoluzione a +15 min,
-        // che la sweep alla home eseguirà a un ricarico successivo. Senza ticket
-        // agganciato non c'è nulla da rimandare: si chiude subito (segnala il KO).
-        if (positiva && voce.ticketId != null) {
+        // che la sweep alla home eseguirà a un ricarico successivo.
+        //
+        // Vale ANCHE quando il ticket non è stato agganciato (tipico: un 429 sul
+        // nodo «Trova il ticket», o il ticket non ancora nato). Prima in quel
+        // caso si tentava di chiudere all'istante, il che voleva dire dichiarare
+        // fallimento un secondo dopo aver mandato la mail che apre il ticket:
+        // adesso lo si rimanda, e la chiusura programmata lo ricercherà con il
+        // budget di Freshdesk di nuovo libero.
+        if (positiva) {
           await programmaChiusuraFreshdesk(recensione.chiave);
         } else {
           // NEGATIVE «pronte»: il ticket è aperto da giorni, si risolve adesso.

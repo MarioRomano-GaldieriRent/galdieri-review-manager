@@ -1,4 +1,4 @@
-import { agenteApiId, conRetry429, getTicket } from "./freshdesk";
+import { agenteApiId, conRetry429, getTicket, STATO } from "./freshdesk";
 import { resolveFreshdesk, scritturaConsentita } from "@/server/settings";
 
 // Chiusura del ticket quando la risposta è stata pubblicata a mano su Google.
@@ -121,6 +121,12 @@ async function corpoConClassificazione(
  * Chiude il ticket: stato Risolto, CLASSIFICAZIONE (tipo «Recensioni clienti
  * GMB», tag sede + «personale», campo annidato con le stelle), nota privata.
  *
+ * Se il ticket è GIÀ Risolto o Chiuso non lo si ri-chiude: gli si mette solo la
+ * classificazione che gli manca, senza toccare lo stato e senza aggiungere una
+ * seconda nota. Rimetterlo a «Risolto» riporterebbe indietro un ticket che
+ * qualcuno ha già portato a «Chiuso» a mano — ed è esattamente il caso che
+ * capita ai recuperi, dove nel frattempo il ticket può essere stato lavorato.
+ *
  * Non solleva mai: restituisce un esito. Il chiamante decide se accodare a
  * retry (fallita) o proseguire (eseguita/simulata). Così l'operatore non si
  * blocca mai per un errore Freshdesk.
@@ -151,10 +157,26 @@ export async function chiudiTicketPubblicato(
     // e agente correnti). Dalla cache si rischia di ripristinare tag ormai
     // cambiati (Freshdesk sostituisce l'intero array) o riassegnare il responder.
     const ticket = await getTicket(ticketId, true);
-    const corpo = await corpoConClassificazione(ticket, opts.tagSede, opts.stelle, 4);
+
+    // Già Risolto/Chiuso: solo la classificazione mancante, niente stato e
+    // niente nota (sarebbe la seconda). Stessa regola dello script chiudi:ticket.
+    const giaChiuso = ticket.status === 4 || ticket.status === 5;
+    const corpo = await corpoConClassificazione(
+      ticket,
+      opts.tagSede,
+      opts.stelle,
+      giaChiuso ? undefined : 4,
+    );
 
     const put = await fdScrittura(urlTicket, "PUT", corpo);
     if (!put.ok) return { stato: "fallita", errore: `PUT ${put.stato}: ${put.testo}` };
+
+    if (giaChiuso) {
+      return {
+        stato: "eseguita",
+        descrizione: `Ticket #${ticketId} era già ${STATO[ticket.status] ?? "chiuso"}: classificato, stato e note lasciati com'erano.`,
+      };
+    }
 
     const nota = await fdScrittura(`${urlTicket}/notes`, "POST", {
       body: opts.nota,

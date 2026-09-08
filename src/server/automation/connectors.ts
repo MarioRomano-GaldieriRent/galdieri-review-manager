@@ -1,7 +1,9 @@
 import { forwardMessage, replyToMessage } from "@/server/graph/client";
 import {
+  attesaRichiesta,
   cercaTicketPerRecensione,
   conRetry429,
+  eLimiteChiamate,
   STATO,
   type FdTicket,
 } from "@/server/integrations/freshdesk";
@@ -100,6 +102,17 @@ export function interpola(testo: string, r: Recensione): string {
 
 // ------------------------------------------------------------------ lettura
 
+/** Attesa fra un tentativo e l'altro mentre il ticket sta nascendo (~6 secondi). */
+const ATTESA_CREAZIONE_MS = 5000;
+
+/**
+ * Tetto all'attesa complessiva del nodo. Su un 429 Freshdesk chiede una
+ * trentina di secondi: uno lo si aspetta, non tre di fila — dietro c'è una
+ * persona che ha premuto Play. Se non basta non si perde nulla: la chiusura
+ * programmata a +15 min ricerca il ticket con il budget di nuovo libero.
+ */
+const MAX_ATTESA_TOTALE_MS = 45_000;
+
 async function trovaTicket(ctx: Contesto): Promise<RisultatoNodo> {
   // Questa è una GET: gira davvero anche in simulazione, ed è ciò che permette
   // di dire con precisione quale ticket sarebbe stato toccato.
@@ -117,8 +130,20 @@ async function trovaTicket(ctx: Contesto): Promise<RisultatoNodo> {
     motivo: "",
   };
   let erroreFd: string | null = null;
+  let attesaTotaleMs = 0;
+  let prossimaAttesaMs = ATTESA_CREAZIONE_MS;
   for (let i = 0; i < tentativi; i++) {
-    if (i > 0) await new Promise((ok) => setTimeout(ok, 5000));
+    if (i > 0) {
+      // Fra un tentativo e l'altro: cinque secondi di norma, ma su un 429 tanti
+      // quanti Freshdesk ne chiede (il suo budget è al minuto: cinque secondi
+      // non basterebbero mai). Il totale è comunque limitato — chi ha premuto
+      // Play sta aspettando — e oltre quel tetto si rinuncia: la chiusura
+      // programmata ricercherà il ticket più tardi.
+      const attesa = Math.min(prossimaAttesaMs, MAX_ATTESA_TOTALE_MS - attesaTotaleMs);
+      if (attesa <= 0) break;
+      attesaTotaleMs += attesa;
+      await new Promise((ok) => setTimeout(ok, attesa));
+    }
     try {
       esito = await cercaTicketPerRecensione(
         ctx.recensione.oggetto,
@@ -131,21 +156,30 @@ async function trovaTicket(ctx: Contesto): Promise<RisultatoNodo> {
           testoRecensione: ctx.recensione.originale,
         },
       );
+      erroreFd = null;
+      prossimaAttesaMs = ATTESA_CREAZIONE_MS;
     } catch (e) {
       // Errore Freshdesk (tipico: 429 rate-limit): NON deve far fallire l'intera
       // escalation. La mail è GIÀ stata inoltrata (il passo che conta): fermare
-      // qui il flusso lo fa sembrare rotto. Interrompo i tentativi e proseguo —
-      // i nodi Freshdesk successivi si salteranno da soli (ticket null) e la
-      // classificazione avverrà più tardi (alla chiusura o a un nuovo giro).
+      // qui il flusso lo fa sembrare rotto. Si riprova — un 429 è transitorio e
+      // rinunciare al primo colpo lasciava la recensione senza ticket, quindi
+      // senza classificazione e senza chiusura. Esauriti i tentativi si prosegue
+      // lo stesso: i nodi Freshdesk successivi si saltano da soli (ticket null)
+      // e la classificazione avverrà più tardi, alla chiusura.
       erroreFd = e instanceof Error ? e.message : "errore Freshdesk";
-      break;
+      prossimaAttesaMs = eLimiteChiamate(e)
+        ? Math.max(attesaRichiesta(e), 5) * 1000 + 500
+        : ATTESA_CREAZIONE_MS;
     }
     if (esito.ticket) break;
   }
 
   if (!esito.ticket) {
-    const attesa = attendiCreazione ? ` dopo ${(tentativi - 1) * 5} secondi di attesa` : "";
-    const perche = erroreFd ? `Freshdesk non raggiungibile (${erroreFd})` : `${esito.motivo}${attesa}`;
+    const secondi = Math.round(attesaTotaleMs / 1000);
+    const attesa = secondi > 0 ? ` dopo ${secondi} secondi di attesa` : "";
+    const perche = erroreFd
+      ? `Freshdesk non raggiungibile (${erroreFd})${attesa}`
+      : `${esito.motivo}${attesa}`;
     return {
       messaggio: `Nessun ticket agganciato: ${perche}. L'inoltro è comunque partito; i nodi Freshdesk si saltano e la classificazione avverrà più tardi.`,
       chiamata: null,

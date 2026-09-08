@@ -2319,9 +2319,10 @@ export async function rispondiPerSede(
   nomeCliente: string,
   testo: string,
   /**
-   * `conCoda` (di default ACCESO) prova prima la coda «Rispondere a
-   * recensioni»; `scadenza` è il momento oltre il quale la coda smette di
-   * saltare e lascia il posto al ripiego sulla lista.
+   * `conCoda` (di default ACCESO) permette la coda «Rispondere a recensioni»;
+   * `ordine` dice QUALE dei due metodi si prova per primo — l'altro resta
+   * sempre come ripiego. `scadenza` è il momento oltre il quale la coda smette
+   * di saltare e torna con quello che ha.
    */
   opts: {
     log?: (m: string) => void;
@@ -2329,10 +2330,20 @@ export async function rispondiPerSede(
     scadenza?: number;
     /** Il testo della recensione dal database: serve alla coda per riconoscerla. */
     testoRecensione?: string;
+    /**
+     * "coda-prima" (default) — per le recensioni CON testo: la coda mostra solo
+     * quelle ancora senza risposta e le riconosce dal testo, che è una prova
+     * sicura anche con l'autore chiamato «D».
+     * "lista-prima" — per le 5★ SECCHE, senza testo: la coda non avrebbe niente
+     * da confrontare e si fermerebbe sul primo omonimo, quindi si parte dalla
+     * ricerca classica e la coda resta solo come ripiego.
+     */
+    ordine?: "coda-prima" | "lista-prima";
   } = {},
 ): Promise<EsitoPerSede> {
   const log = opts.log ?? (() => {});
   const conCoda = opts.conCoda ?? true;
+  const ordine = opts.ordine ?? "coda-prima";
 
   const sede = await apriSedePerNome(page, nomeGoogle, { log });
   if (!sede.root) {
@@ -2343,14 +2354,37 @@ export async function rispondiPerSede(
     // lo stesso invece di arrendersi qui.
     log(`la lista non mostra «Rispondi» (${sede.dettaglio}): provo lo stesso.`);
   }
-  let root = sede.root;
+  const root = sede.root;
 
-  // 1) Prima la CODA «Rispondere a recensioni»: mostra SOLO le recensioni
-  //    ancora senza risposta, una alla volta, e si salta con «Ignora» finché
-  //    non compare l'autore giusto. In una sede con centinaia di recensioni è
-  //    molto più diretto che scorrere la lista.
-  if (conCoda) {
-    const c = await cercaNellaCoda(root, nomeCliente, testo, {
+  // L'ultimo motivo per cui un metodo non ha concluso: è quello che finisce
+  // nell'esito e sulla card, quindi va tenuto aggiornato da entrambi i rami.
+  let dettaglio = sede.dettaglio;
+
+  /**
+   * Fra un metodo e l'altro bisogna TORNARE al punto di partenza: dopo i salti
+   * si è dentro la coda, e dopo la lista si è a pagina N. Cercare senza
+   * riaprire vorrebbe dire cercare nella vista sbagliata.
+   * `perLaLista` pretende che la sede sia tornata davvero alla lista (coi suoi
+   * «Rispondi»): se non lo è, meglio arrendersi e lasciar fare al ripiego sui
+   * gruppi, che è collaudato, che cercare alla cieca.
+   */
+  const riapri = async (perLaLista: boolean): Promise<Radice | null> => {
+    const s = await apriSedePerNome(page, nomeGoogle, { log });
+    if (!s.root) {
+      dettaglio = s.dettaglio;
+      return null;
+    }
+    if (perLaLista && !s.aperta) {
+      dettaglio = s.dettaglio;
+      return null;
+    }
+    return s.root;
+  };
+
+  /** La CODA «Rispondere a recensioni»: solo le recensioni ancora senza
+   * risposta, una alla volta, saltando con «Ignora» finché non compare la sua. */
+  const conLaCoda = async (r: Radice): Promise<EsitoPerSede | null> => {
+    const c = await cercaNellaCoda(r, nomeCliente, testo, {
       log,
       uscita: "lascia",
       scadenza: opts.scadenza,
@@ -2379,39 +2413,72 @@ export async function rispondiPerSede(
         dettaglio: `sede «${nomeGoogle}» · coda: ${c.dettaglio}`,
       };
     }
-    log(`la coda non ha concluso (${c.dettaglio}): riapro la sede e ripiego sulla lista.`);
-    // Dopo i salti siamo dentro la coda: per cercare nella LISTA bisogna
-    // tornare al punto di partenza, altrimenti si cercherebbe nella vista
-    // sbagliata.
-    const sede2 = await apriSedePerNome(page, nomeGoogle, { log });
-    // Qui serve la LISTA per davvero: se non è tornata (magari siamo rimasti
-    // dentro la coda perché il ritorno è fallito), non si cerca alla cieca —
-    // si torna indietro e tocca al ripiego sui gruppi, che è collaudato.
-    if (!sede2.aperta || !sede2.root) {
-      return { trovata: false, scritto: false, root: null, dettaglio: `sede «${nomeGoogle}»: ${sede2.dettaglio}` };
-    }
-    root = sede2.root;
-  }
-
-  // 2) Ripiego: la lista della sede, come si è sempre fatto.
-  const t = await cercaClienteNelleRecensioni(root, nomeCliente, {
-    log,
-    testoRecensione: opts.testoRecensione,
-  });
-  if (!t.trovata) {
-    return { trovata: false, scritto: false, root, dettaglio: `sede «${nomeGoogle}»: ${t.dettaglio}` };
-  }
-
-  const r = await rispondiAllaRecensione(root, nomeCliente, testo, {
-    log,
-    testoRecensione: opts.testoRecensione,
-  });
-  return {
-    trovata: true,
-    scritto: r.scritto,
-    root,
-    dettaglio: `sede «${nomeGoogle}» · ${r.dettaglio}`,
+    dettaglio = c.dettaglio;
+    return null;
   };
+
+  /** La LISTA della sede, come si è sempre fatto: si scorre e si cerca il nome. */
+  const conLaLista = async (r: Radice): Promise<EsitoPerSede | null> => {
+    const t = await cercaClienteNelleRecensioni(r, nomeCliente, {
+      log,
+      testoRecensione: opts.testoRecensione,
+    });
+    if (!t.trovata) {
+      dettaglio = t.dettaglio;
+      return null;
+    }
+    // Trovata: da qui in poi l'esito è suo anche se la scrittura fallisce —
+    // «trovata ma non scritta» è un'informazione, non un motivo per ricominciare
+    // da capo con l'altro metodo sulla stessa recensione.
+    const rr = await rispondiAllaRecensione(r, nomeCliente, testo, {
+      log,
+      testoRecensione: opts.testoRecensione,
+    });
+    return {
+      trovata: true,
+      scritto: rr.scritto,
+      root: r,
+      dettaglio: `sede «${nomeGoogle}» · ${rr.dettaglio}`,
+    };
+  };
+
+  // --- LISTA per prima (5★ secche): la coda resta come ripiego ---------------
+  if (ordine === "lista-prima") {
+    log("metodo classico: cerco nella lista della sede…");
+    const primo = await conLaLista(root);
+    if (primo) return primo;
+
+    if (!conCoda) {
+      return { trovata: false, scritto: false, root, dettaglio: `sede «${nomeGoogle}»: ${dettaglio}` };
+    }
+    log(`nella lista non l'ho trovata (${dettaglio}): riapro la sede e provo la coda.`);
+    const r2 = await riapri(false);
+    if (!r2) {
+      return { trovata: false, scritto: false, root: null, dettaglio: `sede «${nomeGoogle}»: ${dettaglio}` };
+    }
+    const secondo = await conLaCoda(r2);
+    if (secondo) return secondo;
+    return { trovata: false, scritto: false, root: r2, dettaglio: `sede «${nomeGoogle}»: ${dettaglio}` };
+  }
+
+  // --- CODA per prima (recensioni con testo): la lista resta come ripiego ----
+  if (conCoda) {
+    log("metodo della coda: entro in «Rispondere a recensioni»…");
+    const primo = await conLaCoda(root);
+    if (primo) return primo;
+    log(`la coda non ha concluso (${dettaglio}): riapro la sede e ripiego sulla lista.`);
+    const r2 = await riapri(true);
+    if (!r2) {
+      return { trovata: false, scritto: false, root: null, dettaglio: `sede «${nomeGoogle}»: ${dettaglio}` };
+    }
+    const secondo = await conLaLista(r2);
+    if (secondo) return secondo;
+    return { trovata: false, scritto: false, root: r2, dettaglio: `sede «${nomeGoogle}»: ${dettaglio}` };
+  }
+
+  const solaLista = await conLaLista(root);
+  if (solaLista) return solaLista;
+  return { trovata: false, scritto: false, root, dettaglio: `sede «${nomeGoogle}»: ${dettaglio}` };
 }
 
 export type Bersaglio = {

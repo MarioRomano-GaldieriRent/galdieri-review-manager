@@ -33,8 +33,13 @@ function nuovoId(): string {
  * Il testo mostrato nella dashboard è già stato scelto nella lingua giusta, per
  * questo la riscrittura sostituisce sia la versione italiana sia quella
  * inglese: quello che si legge è quello che parte, senza sorprese.
+ *
+ * `azioni` è l'elenco dei nodi da riscrivere, non uno solo: la risposta al
+ * cliente può uscire da DUE nodi (email e Google) e devono dire la stessa cosa.
+ * Quando era un id singolo il testo dell'operatore finiva su Google e per email
+ * partiva quello della regola — vedi `nodiRisposta()` in rules.ts.
  */
-export type TestoRiscritto = { azioneId: string; testo: string };
+export type TestoRiscritto = { azioni: string[]; testo: string };
 
 export async function eseguiRegola(
   regola: Regola,
@@ -51,7 +56,7 @@ export async function eseguiRegola(
   let modificato = false;
 
   for (const originale of regola.azioni) {
-    const daRiscrivere = riscritto && riscritto.azioneId === originale.id;
+    const daRiscrivere = riscritto != null && riscritto.azioni.includes(originale.id);
     if (daRiscrivere) modificato = true;
     const azione = daRiscrivere
       ? {

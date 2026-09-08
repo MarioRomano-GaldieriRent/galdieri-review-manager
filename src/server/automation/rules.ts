@@ -201,6 +201,19 @@ export function conBeta(regole: Regola[], regoleBeta: string[] = []): Regola[] {
   return regole.map((r) => (beta.has(r.id) && !r.attiva ? { ...r, attiva: true } : r));
 }
 
+/**
+ * I nodi che scrivono la risposta AL CLIENTE: la risposta pubblica su Google e
+ * la risposta all'email della recensione. Dicono la stessa cosa, quindi quando
+ * l'operatore riscrive il testo nella card la riscrittura vale per TUTTI —
+ * altrimenti su Google esce la sua versione e per email quella della regola.
+ *
+ * `email.inoltra` NON è qui: è la nota interna al customer care, non una
+ * risposta al cliente, e non deve essere sostituita dal testo della card.
+ */
+export function nodiRisposta(regola: Regola): Azione[] {
+  return regola.azioni.filter((a) => a.tipo === "google.rispondi" || a.tipo === "email.rispondi");
+}
+
 /** Prima regola attiva che copre la recensione, oppure null. */
 export function regolaPer(
   regole: Regola[],

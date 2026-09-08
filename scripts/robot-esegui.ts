@@ -15,13 +15,21 @@ import {
 // 🔍 Test Google / G). Il lavoro arriva nell'env ROBOT_JOB come JSON:
 //
 //   { "azione": "test"|"pubblica"|"cerca", "nome": "...", "testo": "Grazie.",
-//     "nomeGoogle": "Galdieri Rent …" }   ← nomeGoogle facoltativo (dal Mapping)
+//     "nomeGoogle": "Galdieri Rent …",     ← facoltativo (dal Mapping)
+//     "testoRecensione": "…",              ← il testo vero, per riconoscerla
+//     "metodo": "coda"|"lista" }           ← quale metodo per primo
 //
 // Strategia:
-//   1. se la sede è MAPPATA (nomeGoogle) → va DRITTO sulla sede: la cerca su
-//      Google, apre «Leggi recensioni», trova il cliente e scrive;
-//   2. altrimenti (o se lì non la trova) → ripiega sulla ricerca fra i GRUPPI in
-//      ampiezza: pagina 1 di tutti i gruppi, poi pagina 2, ecc.
+//   1. se la sede è MAPPATA (nomeGoogle) → va DRITTO sulla sede e prova i due
+//      metodi, nell'ordine deciso da `metodo`:
+//        • "coda"  (default) — recensioni CON testo, quelle del customer care:
+//          si entra nella coda «Rispondere a recensioni» e si salta con
+//          «Ignora» finché non compare la sua, riconosciuta dal TESTO;
+//        • "lista" — 5★ secche, senza testo: lì la coda non ha niente da
+//          confrontare, quindi si parte dalla ricerca classica nella lista.
+//      Quello che non è primo resta come RIPIEGO: nessuno dei due si butta via;
+//   2. se sulla sede non la trova (o la sede non è mappata) → ripiega sulla
+//      ricerca fra i GRUPPI in ampiezza: pagina 1 di tutti i gruppi, poi 2, ecc.
 //
 //   test     → trova e scrive il testo, poi SI FERMA (niente di reale).
 //   pubblica → trova, scrive e clicca «Pubblica risposta» (reale su Google).
@@ -36,6 +44,11 @@ type Job = {
   nomeGoogle: string;
   /** Testo della recensione dal database: serve alla coda per riconoscerla. */
   testoRecensione: string;
+  /**
+   * Quale metodo provare per primo sulla sede: "coda" (default, recensioni CON
+   * testo) o "lista" (5★ secche). L'altro resta come ripiego.
+   */
+  metodo: "coda" | "lista";
 };
 const AZIONI = ["test", "pubblica", "cerca", "prova-coda"] as const;
 
@@ -51,6 +64,7 @@ function leggiJob(): Job {
     testo: (j.testo || "Grazie.").trim(),
     nomeGoogle: (j.nomeGoogle || "").trim(),
     testoRecensione: (j.testoRecensione || "").trim(),
+    metodo: j.metodo === "lista" ? "lista" : "coda",
   };
 }
 
@@ -178,17 +192,25 @@ const AVVIO = Date.now();
 
     // 1) PER SEDE, se mappata: si va dritti lì.
     if (job.nomeGoogle) {
-      traccia(`sede mappata: vado dritto su «${job.nomeGoogle}»…`);
-      // La coda ha una scadenza CORTA: se non conclude entro un minuto e
-      // mezzo deve lasciare il tempo al ripiego sulla lista, che è la strada
-      // che ha sempre funzionato.
+      const ordine = job.metodo === "lista" ? "lista-prima" : "coda-prima";
+      // Quanto può durare la CODA prima di lasciare il posto all'altro metodo.
+      // Il tasto «G» ha chi lo aspetta con una pazienza di 150 secondi: lì la
+      // coda deve stare abbondantemente sotto. Il ▶ Play può permettersi molto
+      // di più (chi lo lancia lo uccide a 5 minuti), ed è esattamente il motivo
+      // per cui la PROVA della coda arrivava tanto più lontano del «rispondi»:
+      // aveva 200 secondi di salti contro 90.
+      const scadenzaCoda = AVVIO + (job.azione === "cerca" ? 110_000 : 200_000);
+      traccia(
+        `sede mappata «${job.nomeGoogle}» · metodo: ${
+          ordine === "coda-prima"
+            ? "CODA per prima (recensione con testo), lista di ripiego"
+            : "LISTA per prima (recensione senza testo), coda di ripiego"
+        }.`,
+      );
       const ps = await rispondiPerSede(page0, job.nomeGoogle, job.nome, job.testo, {
         log: traccia,
-        // Lo stesso tempo del tasto di prova: era 90 secondi, e siccome si
-        // contano dall'avvio del processo (browser, sessione, apertura della
-        // sede: 30-40 secondi) alla coda ne restavano una manciata. È il
-        // motivo per cui la prova arrivava in fondo e il «Rispondi» no.
-        scadenza: AVVIO + 200_000,
+        ordine,
+        scadenza: scadenzaCoda,
         testoRecensione: job.testoRecensione,
       });
       dettaglio = ps.dettaglio;

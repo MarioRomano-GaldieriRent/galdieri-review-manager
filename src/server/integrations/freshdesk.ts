@@ -32,11 +32,41 @@ function cleanDomain(domain: string): string {
 }
 
 /**
+ * Errore di Freshdesk che porta con sé lo stato HTTP e, sul 429, i secondi di
+ * attesa chiesti dall'header «Retry-After».
+ *
+ * Senza questo dato chi riprova può solo tirare a indovinare: il budget di
+ * Freshdesk è AL MINUTO, e quando è esaurito l'header chiede una trentina di
+ * secondi. Chi può permettersi di aspettare (il nodo «Trova il ticket») legge
+ * `attesaSec` e aspetta il giusto invece di rinunciare. Resta un Error normale,
+ * col messaggio di sempre («Freshdesk 429: …»), così i chiamanti che guardano
+ * solo `e.message` continuano a funzionare.
+ */
+export class ErroreFreshdesk extends Error {
+  constructor(
+    readonly stato: number,
+    messaggio: string,
+    readonly attesaSec = 0,
+  ) {
+    super(messaggio);
+    this.name = "ErroreFreshdesk";
+  }
+}
+
+/** L'errore da sollevare su una risposta non ok, con l'attesa richiesta se c'è. */
+function erroreFd(res: Response, cosa: string): ErroreFreshdesk {
+  const attesa = Math.max(0, Number(res.headers.get("retry-after") ?? "0") || 0);
+  const quando = attesa > 0 ? ` Riprovabile fra ${attesa}s.` : "";
+  return new ErroreFreshdesk(res.status, `Freshdesk ${res.status}: ${cosa}${quando}`, attesa);
+}
+
+/**
  * Esegue una fetch verso Freshdesk riprovando UNA sola volta sul 429 (rate
  * limit), e SOLO se l'attesa richiesta (header «Retry-After») è breve (≤3s), per
  * non bloccare il render. Vale sia per le letture (fdFetch) sia per le scritture
  * (chiusura ticket, nodi automazione), che così non falliscono per un 429
- * transitorio. Se serve più di 3s la si lascia fallire: i chiamanti degradano.
+ * transitorio. Se serve più di 3s la si lascia fallire: i chiamanti degradano —
+ * e chi può aspettare lo fa a monte, leggendo `attesaSec` dall'ErroreFreshdesk.
  */
 export async function conRetry429(doFetch: () => Promise<Response>): Promise<Response> {
   let res = await doFetch();
@@ -232,7 +262,7 @@ export async function listTickets(
   const res = await fdFetch(
     `/tickets?per_page=${perPage}&page=${page}&order_by=created_at&order_type=desc${include}`,
   );
-  if (!res.ok) throw new Error(`Freshdesk ${res.status}: elenco ticket non disponibile.`);
+  if (!res.ok) throw erroreFd(res, "elenco ticket non disponibile.");
   const raw = (await res.json()) as RawTicket[];
   return { tickets: raw.map((t) => toTicket(t, conCorpo)), hasMore: raw.length === perPage };
 }
@@ -244,7 +274,7 @@ export async function searchTicketsByStatus(
 ): Promise<{ tickets: FdTicket[]; total: number }> {
   const query = encodeURIComponent(`"status:${status}"`);
   const res = await fdFetch(`/search/tickets?query=${query}&page=${Math.max(1, page)}`);
-  if (!res.ok) throw new Error(`Freshdesk ${res.status}: ricerca non disponibile.`);
+  if (!res.ok) throw erroreFd(res, "ricerca non disponibile.");
   const data = (await res.json()) as { results?: RawTicket[]; total?: number };
   return { tickets: (data.results ?? []).map((t) => toTicket(t, false)), total: data.total ?? 0 };
 }
@@ -263,7 +293,7 @@ export async function getTicket(id: number, forza = false): Promise<FdTicket> {
   if (!forza && hit && Date.now() - hit.at < TTL_GET_TICKET_MS) return hit.ticket;
   const res = await fdFetch(`/tickets/${id}?include=requester`);
   if (res.status === 404) throw new Error("Ticket non trovato.");
-  if (!res.ok) throw new Error(`Freshdesk ${res.status}: ticket non disponibile.`);
+  if (!res.ok) throw erroreFd(res, "ticket non disponibile.");
   const ticket = toTicket((await res.json()) as RawTicket, true);
   cacheGetTicket.set(id, { at: Date.now(), ticket });
   return ticket;
@@ -279,8 +309,14 @@ async function conCorpo(t: FdTicket, forza?: boolean): Promise<FdTicket> {
 }
 
 /** Un errore di Freshdesk per limite di chiamate (HTTP 429)? */
-function eLimiteChiamate(e: unknown): boolean {
+export function eLimiteChiamate(e: unknown): boolean {
+  if (e instanceof ErroreFreshdesk) return e.stato === 429;
   return e instanceof Error && /\b429\b/.test(e.message);
+}
+
+/** Secondi di attesa chiesti da Freshdesk su un 429; 0 se non l'ha detto. */
+export function attesaRichiesta(e: unknown): number {
+  return e instanceof ErroreFreshdesk ? e.attesaSec : 0;
 }
 
 function messaggio(e: unknown): string {

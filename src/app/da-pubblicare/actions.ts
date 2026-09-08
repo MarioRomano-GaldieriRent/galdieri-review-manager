@@ -81,7 +81,12 @@ export async function annullaPubblicazioneAction(formData: FormData): Promise<vo
   indietroRicontrollo();
 }
 
-/** Ritenta subito la chiusura del ticket rimasta in sospeso o fallita. */
+/**
+ * Chiude subito il ticket: il «Riprova»/«Risolvi ora» della coda e il «Chiudi
+ * il ticket» dello storico. Se il ticket non era stato agganciato lo si ricerca
+ * (lo fa ritentaChiusura); se risulta già chiuso su Freshdesk non lo si riapre,
+ * gli si mette solo la classificazione mancante.
+ */
 export async function riprovaFreshdeskAction(formData: FormData): Promise<void> {
   const op = await richiediOperatore();
   const chiave = str(formData, "chiave");

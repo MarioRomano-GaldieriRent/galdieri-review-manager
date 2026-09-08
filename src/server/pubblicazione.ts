@@ -61,15 +61,17 @@ function prossimoTentativo(tentativi: number): Date {
 /**
  * Ritrova il ticket di una pubblicazione che ne è rimasta senza.
  *
- * Prima l'escalation: il customer care risponde citando «ticket N», e quel
- * numero è già salvato lì — per «D» c'era (59358) e nessuno lo guardava. Poi
- * Freshdesk, con gli stessi criteri del nodo «Trova il ticket» e in più il
- * TESTO della recensione, che aggancia anche i nomi corti. Se lo trova lo
- * scrive sulla pubblicazione, così vale anche per i tentativi successivi e
- * compare nello storico. Non solleva: null vuol dire «non ancora».
+ * L'aggancio avviene al momento della pubblicazione, ma può fallire: un 429 di
+ * Freshdesk, oppure il ticket che non era ancora nato (nasce dalla risposta
+ * all'email, con qualche secondo di ritardo). Qui si ricerca con gli stessi
+ * criteri del nodo «Trova il ticket», partendo dalla recensione in archivio.
+ * Se lo trova lo scrive sulla pubblicazione, così vale anche per i tentativi
+ * successivi e compare nello storico. Non solleva: null vuol dire «non ancora».
  */
 async function ritrovaTicket(voce: VocePubblicazione): Promise<number | null> {
   try {
+    // Prima l'escalation: il customer care risponde citando «ticket N», e quel
+    // numero è già salvato lì — per «D» c'era (59358) e nessuno lo guardava.
     const daEscalation = await ticketDiEscalation(voce.chiave);
     if (daEscalation != null) {
       await collegaTicket(voce.chiave, daEscalation);
@@ -100,10 +102,10 @@ export async function chiudiFreshdeskPer(
   voce: VocePubblicazione,
   operatoreNome = "Sistema",
 ): Promise<void> {
-  // Senza ticket agganciato non si dichiara fallimento: prima lo si cerca —
-  // nell'escalation, poi su Freshdesk dal testo della recensione. Era qui che
-  // «D» restava col ticket aperto per sempre: «fallito» senza prossimo
-  // tentativo, e nessuno rifaceva mai la ricerca, nemmeno premendo «Riprova».
+  // Senza ticket agganciato non si dichiara fallimento: prima lo si cerca. Era
+  // qui che una recensione pubblicata restava col ticket aperto per sempre —
+  // «fallito» senza prossimo tentativo, e nessun punto del codice rifaceva mai
+  // la ricerca, nemmeno premendo «Riprova».
   const ticketId = voce.ticketId ?? (await ritrovaTicket(voce));
   if (ticketId == null) {
     const tentativi = voce.freshdeskTentativi + 1;
