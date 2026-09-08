@@ -8,6 +8,7 @@ import { caricaRegole, conBeta, regolaPer, EMAIL_TICKETING } from "@/server/auto
 import { eliminaEsecuzione, registraEsecuzione } from "@/server/automation/runs";
 import type { Esecuzione, Regola } from "@/server/automation/types";
 import { haTesto, testoRecensione, type Recensione } from "@/server/reviews/load";
+import { linguaRisposta } from "@/server/reviews/lingua";
 import {
   approvaPerPubblicazione,
   leggiPubblicazione,
@@ -291,11 +292,18 @@ export async function playAction(formData: FormData): Promise<void> {
 
   const modo = await modoOperativo();
 
-  // Il ripiego «Grazie.» vale SOLO per le recensioni positive (≥4★, il caso
+  // Il ripiego automatico vale SOLO per le recensioni positive (≥4★, il caso
   // «5★ senza commento»). Su una negativa senza testo NON si pubblica nulla:
   // la risposta la fornisce Cherubina e va scritta nel box.
+  //
+  // Normalmente il box arriva già compilato nella lingua giusta (il nodo
+  // google.rispondi passa dalla stessa linguaRisposta): questo ripiego serve
+  // solo se l'operatore lo svuota. Senza testo da cui riconoscere la lingua,
+  // decide il NOME — «Grazie.» per un nome italiano, «Thank you.» altrimenti.
   const positiva = (recensione.stelle ?? 0) >= 4;
-  const testoPubblicazione = testo || (positiva ? "Grazie." : "");
+  const linguaFallback = linguaRisposta(recensione.lingua, recensione.originale, recensione.nome);
+  const testoPubblicazione =
+    testo || (positiva ? (linguaFallback === "altra" ? "Thank you." : "Grazie.") : "");
   if (!testoPubblicazione.trim()) {
     indietro(formData, esitoQuery(recensione.chiave, {
       ok: false,

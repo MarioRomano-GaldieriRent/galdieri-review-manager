@@ -127,7 +127,9 @@ export async function generaRispostaSuggerita(
   const commento = (r.commento ?? "").trim();
   if (!commento) throw new Error("Nessun commento: per una recensione senza testo vale «Grazie.».");
 
-  const lingua = linguaRisposta(r.lingua ?? "", commento);
+  // Il nome: ultimo ripiego quando il commento è troppo corto/neutro per
+  // riconoscere la lingua da solo (vedi reviews/lingua.ts).
+  const lingua = linguaRisposta(r.lingua ?? "", commento, r.nome);
   const italiano = lingua !== "altra"; // "it" e "ignota" → italiano, come nel resto dell'app
   const linguaEsempi = italiano ? "it" : "en";
 

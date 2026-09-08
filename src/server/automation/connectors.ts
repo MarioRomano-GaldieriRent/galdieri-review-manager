@@ -56,7 +56,9 @@ export type RisultatoNodo = {
  * chiunque, appena la traduzione è accesa.
  */
 export function testoPerRecensione(a: Azione, r: Recensione): { testo: string; lingua: Lingua } {
-  const lingua = linguaRisposta(r.lingua, r.originale);
+  // Il nome: ultimo ripiego di linguaRisposta quando manca ogni altro segnale
+  // (tipico: 5★ senza commento) — vedi reviews/lingua.ts.
+  const lingua = linguaRisposta(r.lingua, r.originale, r.nome);
   const scelto = testoNellaLingua(lingua, a.parametri.testo ?? "", a.parametri.testoInglese ?? "");
   return { testo: interpola(scelto, r), lingua };
 }
