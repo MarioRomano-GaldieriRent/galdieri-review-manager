@@ -22,6 +22,7 @@ import {
 } from "@/server/db/pubblicazioni";
 import { chiudiFreshdeskPer, programmaChiusuraFreshdesk } from "@/server/pubblicazione";
 import { archiviaRecensione, leggiRecensione, ripristinaRecensione } from "@/server/db/recensioni";
+import { eliminaBozza } from "@/server/db/bozze";
 import {
   leggiEscalation,
   registraInoltro,
@@ -468,6 +469,9 @@ export async function playAction(formData: FormData): Promise<void> {
     // Se era una negativa «pronta» (risposta del customer care pubblicata ora),
     // esce dal ciclo escalation. No-op se non c'era una voce in attesa.
     await segnaChiusa(recensione.chiave);
+    // La bozza ha finito il suo compito: il testo è pubblicato. Lasciandola,
+    // ricomparirebbe precompilata sotto una recensione ormai gestita.
+    await eliminaBozza(recensione.chiave);
   }
 
   revalidatePath("/");

@@ -640,6 +640,29 @@ export const COLLEZIONI: DefColl[] = [
   },
 
   {
+    // BOZZE: il testo scritto nel riquadro di una card e non ancora pubblicato
+    // (_id = chiave della recensione). Si salva da solo mentre si scrive, così
+    // un ricarico o un auto-aggiornamento non buttano via il lavoro. Una per
+    // recensione, non per persona: la coda è una sola e chi la lavora si
+    // alterna. Sparisce quando la risposta viene pubblicata davvero.
+    nome: "bozze",
+    validator: {
+      $jsonSchema: {
+        bsonType: "object",
+        additionalProperties: false,
+        required: ["_id", "testo", "operatoreId", "salvataIl"],
+        properties: {
+          _id: { bsonType: "string", minLength: 1 },
+          testo: { bsonType: "string", minLength: 1 },
+          operatoreId: { bsonType: "int" },
+          salvataIl: { bsonType: "date" },
+        },
+      },
+    },
+    indici: [{ key: { salvataIl: -1 }, name: "i_bozze_data" }],
+  },
+
+  {
     // MEMORIA — i blocchi di CONTESTO per rispondere (chi siamo, tono, regole):
     // testo libero curato dall'admin, ciascuno accendibile/spegnibile.
     nome: "memoria_contesto",

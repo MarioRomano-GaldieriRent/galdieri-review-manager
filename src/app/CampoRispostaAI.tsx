@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { suggerisciAction } from "./dashboard/suggerisci";
+import { SpiaBozza, useBozza } from "./useBozza";
 
 // Il box della risposta quando la proposta la scrive l'AI.
 //
@@ -41,17 +42,23 @@ type Props = {
   iniziale: string | null;
   /** Testo di ripiego (quello della regola) se l'AI non è disponibile. */
   ripiego: string;
+  /** Bozza già scritta a mano: vince sulla proposta e blocca la generazione. */
+  bozza?: string | null;
 };
 
 type Stato = "pronto" | "daChiedere" | "carico" | "errore";
 
-export function CampoRispostaAI({ chiave, iniziale, ripiego }: Props) {
-  const [testo, setTesto] = useState(iniziale ?? "");
+export function CampoRispostaAI({ chiave, iniziale, ripiego, bozza }: Props) {
+  // La bozza scritta a mano vince sulla proposta AI: è il lavoro di una persona.
+  const partenza = bozza ?? iniziale ?? "";
+  const [testo, setTesto] = useState(partenza);
   const [errore, setErrore] = useState("");
-  const [stato, setStato] = useState<Stato>(iniziale ? "pronto" : "daChiedere");
+  const [stato, setStato] = useState<Stato>(bozza || iniziale ? "pronto" : "daChiedere");
+  const statoBozza = useBozza(chiave, testo, partenza);
   // Una sola richiesta per card, anche con lo Strict Mode di sviluppo (che
-  // monta i componenti due volte).
-  const chiesto = useRef(Boolean(iniziale));
+  // monta i componenti due volte). Con una bozza già scritta non si chiede
+  // nulla: sarebbe una proposta che nessuno vedrebbe, pagata per niente.
+  const chiesto = useRef(Boolean(bozza || iniziale));
   const ancora = useRef<HTMLDivElement>(null);
 
   const genera = useCallback(
@@ -130,6 +137,7 @@ export function CampoRispostaAI({ chiave, iniziale, ripiego }: Props) {
         ) : (
           <span className="ai-badge">✨ Proposta AI — rileggila prima di pubblicare</span>
         )}
+        <SpiaBozza stato={statoBozza} />
         <button
           type="button"
           className="btn-mini"

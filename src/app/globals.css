@@ -4054,3 +4054,24 @@ main.pipeline .pub-tabs {
 .skel-tile {
   height: 78px;
 }
+
+/* La spia del salvataggio automatico della bozza: piccola, accanto al riquadro.
+   Deve rassicurare, non rubare l'occhio — chi scrive guarda il testo. */
+.bozza-spia {
+  font-size: 0.72rem;
+  color: var(--text-soft);
+  margin-left: auto;
+  white-space: nowrap;
+}
+.bozza-spia-salvata {
+  color: var(--g-green-dark);
+}
+.bozza-spia-errore {
+  color: var(--error-text);
+}
+/* Nel riquadro semplice la spia sta su una riga sua, allineata a destra. */
+.dash-proposta > .bozza-spia {
+  display: block;
+  margin-top: 4px;
+  text-align: right;
+}

@@ -48,6 +48,8 @@ import { segnalaAction } from "./supervisione/actions";
 import { inoltraAlCustomerCareAction } from "./dashboard/inoltro";
 import { chiaviSegnalate } from "@/server/db/segnalazioni";
 import { CampoRispostaAI } from "./CampoRispostaAI";
+import { CampoRisposta } from "./CampoRisposta";
+import { bozzePer, type Bozza } from "@/server/db/bozze";
 import { suggerimentiPer } from "@/server/db/suggerimenti";
 import { AutoAggiorna } from "./AutoAggiorna";
 import { AnteprimaFlusso } from "./AnteprimaFlusso";
@@ -318,6 +320,8 @@ export default async function HomePage({
   let nApprovare: number | null = null;
   /** Proposte AI già salvate, per chiave recensione (le mancanti se le chiede la card). */
   let suggeritiAI = new Map<string, { testo: string }>();
+  /** Testi riscritti a mano e non ancora pubblicati: vincono su tutto il resto. */
+  let bozze = new Map<string, Bozza>();
   /** Lingua decisa dall'IA per le 5★ senza testo (nessun altro segnale da cui riconoscerla). */
   let linguaPerNome = new Map<string, "it" | "altra">();
   let runAperta: Esecuzione | undefined;
@@ -578,6 +582,14 @@ export default async function HomePage({
       }
     }
 
+    // Le bozze delle card MOSTRATE: una query sola. Best-effort come le
+    // proposte — se non si leggono, il riquadro riparte dalla proposta.
+    try {
+      bozze = await bozzePer(visibili.map((x) => x.r.chiave));
+    } catch (e) {
+      console.warn("[bozze] lettura non riuscita:", e);
+    }
+
     // Le 5★ SENZA testo non hanno nessun segnale da cui riconoscere la lingua:
     // chi decide "Grazie." o "Thank you." è il NOME, chiesto all'IA (con
     // cache: uno stesso nome non ripaga mai la domanda due volte) invece che
@@ -832,6 +844,9 @@ export default async function HomePage({
               // «pronte», quando l'inoltro è già stato fatto.
               const offriInoltro = Boolean(suggerito) && !rispostaPronta && (r.stelle ?? 0) < 4;
               const suggerimentoAI = conAI ? suggeritiAI.get(r.chiave) : undefined;
+              // La bozza scritta a mano è l'ultima parola: vince sulla proposta
+              // della regola e su quella dell'AI, perché è lavoro di una persona.
+              const bozza = bozze.get(r.chiave)?.testo ?? null;
 
               return (
                 <article
@@ -935,18 +950,14 @@ export default async function HomePage({
                           chiave={r.chiave}
                           iniziale={suggerimentoAI?.testo ?? null}
                           ripiego={suggerito.testo}
+                          bozza={bozza}
                         />
                       ) : (
-                        <>
-                          <input type="hidden" name="testoOriginale" value={suggerito.testo} />
-                          <textarea
-                            name="testo"
-                            className="dash-testo"
-                            rows={suggerito.testo.length > 120 ? 4 : 2}
-                            defaultValue={suggerito.testo}
-                            aria-label="Testo della risposta"
-                          />
-                        </>
+                        <CampoRisposta
+                          chiave={r.chiave}
+                          iniziale={bozza ?? suggerito.testo}
+                          proposta={suggerito.testo}
+                        />
                       )}
                       <div className="dash-azioni">
                         <BottoneRispondi />
@@ -1003,14 +1014,7 @@ export default async function HomePage({
                     <form action={playAction} className="dash-proposta">
                       <input type="hidden" name="chiave" value={r.chiave} />
                       <input type="hidden" name="label" value={label?.id ?? ""} />
-                      <textarea
-                        name="testo"
-                        className="dash-testo"
-                        rows={2}
-                        defaultValue=""
-                        placeholder="Scrivi qui la risposta…"
-                        aria-label="Testo della risposta"
-                      />
+                      <CampoRisposta chiave={r.chiave} iniziale={bozza ?? ""} proposta="" vuoto />
                       <div className="dash-azioni">
                         {operatore?.ruolo === "admin" && <BottoneTest chiave={r.chiave} />}
                         <VediMail id={r.messaggioId} icona />
