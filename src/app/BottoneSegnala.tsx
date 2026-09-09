@@ -1,30 +1,69 @@
 "use client";
 
-import { useState } from "react";
+import { useId, useState } from "react";
+import { segnalaAction } from "./supervisione/actions";
 
 // Il «?» rosso sulla card: l'operatore non riesce a gestire la recensione e la
-// passa all'amministratore. Il tasto apre un campo per scrivere qual è il
-// problema; campo e invio appartengono al form nascosto `segn-<chiave>` che
-// sta sulla card (attributo form=), fuori dal form «Rispondi», che non si può
-// annidare. Inviata, la recensione sparisce dalla coda ed entra in Supervisione.
+// passa all'amministratore, scrivendo qual è il problema.
+//
+// DEVE essere istantaneo: è un clic. Perciò l'azione si chiama direttamente da
+// qui e NON naviga — prima si finiva con un redirect alla home, che è la pagina
+// lenta (posta + Freshdesk), e il tasto sembrava piantato per decine di secondi.
+// Anche la mail all'amministratore non si aspetta più: parte lato server dopo
+// che la risposta è già arrivata al browser.
+//
+// Riuscita o no, la risposta si legge SUL POSTO: verde se è passata, rossa col
+// motivo se no (per esempio quando era già stata segnalata). La card resta a
+// schermo fino al prossimo caricamento della pagina: è un promemoria, non un
+// errore — la segnalazione è già registrata.
+
+type Stato = "chiuso" | "aperto" | "invio" | "fatta" | "errore";
 
 export function BottoneSegnala({ chiave }: { chiave: string }) {
-  const [aperto, setAperto] = useState(false);
-  // Il primo clic chiude la porta: il tasto si spegne e cambia scritta, così
-  // non si manda la stessa segnalazione due volte mentre la pagina lavora.
-  // È solo il primo argine, comodo; quello che conta davvero è la guardia nel
-  // database (segnala() in db/segnalazioni.ts), che regge anche al ricarico.
-  const [inviato, setInviato] = useState(false);
-  const form = `segn-${chiave}`;
+  const [stato, setStato] = useState<Stato>("chiuso");
+  const [nota, setNota] = useState("");
+  const [messaggio, setMessaggio] = useState("");
+  const id = useId();
+
+  const aperto = stato === "aperto" || stato === "invio" || stato === "errore";
+  const inCorso = stato === "invio";
+
+  async function invia() {
+    if (!nota.trim() || inCorso) return;
+    setStato("invio");
+    try {
+      const esito = await segnalaAction(chiave, nota);
+      if (esito.ok) {
+        setStato("fatta");
+        setMessaggio(esito.messaggio);
+      } else {
+        setStato("errore");
+        setMessaggio(esito.errore);
+      }
+    } catch (e) {
+      setStato("errore");
+      setMessaggio(e instanceof Error ? e.message : "Non è riuscita: riprova.");
+    }
+  }
+
+  // Andata a buon fine: al posto del pannello resta la conferma, e il «?»
+  // diventa una spunta spenta — non si segnala due volte la stessa cosa.
+  if (stato === "fatta") {
+    return (
+      <span className="segnala-fatta" role="status">
+        ✓ {messaggio || "Passata all'amministratore."}
+      </span>
+    );
+  }
 
   return (
     <>
       <button
         type="button"
         className={`btn-segnala${aperto ? " is-aperto" : ""}`}
-        onClick={() => setAperto((v) => !v)}
+        onClick={() => setStato((s) => (s === "chiuso" ? "aperto" : "chiuso"))}
         aria-expanded={aperto}
-        aria-controls={`${form}-pannello`}
+        aria-controls={`${id}-pannello`}
         aria-label="Segnala all'amministratore"
         title="Non riesci a gestirla? Segnalala all'amministratore: scrivi qual è il problema e passa a lui."
       >
@@ -46,40 +85,52 @@ export function BottoneSegnala({ chiave }: { chiave: string }) {
       </button>
 
       {aperto && (
-        <div className="segnala-pannello" id={`${form}-pannello`}>
-          <label className="segnala-etichetta" htmlFor={`${form}-nota`}>
+        <div className="segnala-pannello" id={`${id}-pannello`}>
+          <label className="segnala-etichetta" htmlFor={`${id}-nota`}>
             Qual è il problema?
           </label>
           <textarea
-            id={`${form}-nota`}
-            form={form}
-            name="nota"
+            id={`${id}-nota`}
             className="dash-testo"
             rows={3}
-            required
             maxLength={1000}
             autoFocus
+            value={nota}
+            onChange={(e) => setNota(e.target.value)}
+            disabled={inCorso}
             placeholder="Es. il cliente non si trova su Google, il ticket risulta già chiuso, la sede è sbagliata…"
           />
           <div className="segnala-azioni">
             <button
-              type="submit"
-              form={form}
+              type="button"
               className="btn-primary"
-              disabled={inviato}
-              onClick={() => setInviato(true)}
+              onClick={invia}
+              disabled={inCorso || !nota.trim()}
+              aria-busy={inCorso}
             >
-              {inviato ? "Invio…" : "Segnala all'amministratore"}
+              {inCorso ? (
+                <span className="btn-caricamento">
+                  <span className="spinner-mini spinner-chiaro" aria-hidden="true" />
+                  Invio…
+                </span>
+              ) : (
+                "Segnala all'amministratore"
+              )}
             </button>
-            {!inviato && (
-              <button type="button" className="btn-mini" onClick={() => setAperto(false)}>
+            {!inCorso && (
+              <button type="button" className="btn-mini" onClick={() => setStato("chiuso")}>
                 Annulla
               </button>
             )}
           </div>
-          <p className="hint">
-            La recensione sparisce dalla tua lista e passa a chi amministra, con la tua nota.
-          </p>
+          {stato === "errore" ? (
+            <p className="form-error segnala-esito">{messaggio}</p>
+          ) : (
+            <p className="hint">
+              Passa a chi amministra con la tua nota, e sparisce dalla tua lista al prossimo
+              caricamento.
+            </p>
+          )}
         </div>
       )}
     </>

@@ -1,4 +1,5 @@
 import { linkGoogle, type VocePubblicazione } from "@/server/db/pubblicazioni";
+import { BottoneSegnala } from "../BottoneSegnala";
 import { CopiaRisposta } from "./CopiaRisposta";
 import {
   annullaPubblicazioneAction,
@@ -239,8 +240,8 @@ export function VoceStorico({ v, numero }: { v: VocePubblicazione; numero: numbe
         <p className="pub-risposta-testo">{v.testoRisposta}</p>
       </div>
 
-      {daChiudere && (
-        <div className="pub-controlli">
+      <div className="pub-controlli">
+        {daChiudere && (
           <form action={riprovaFreshdeskAction}>
             <input type="hidden" name="chiave" value={v.chiave} />
             <button
@@ -251,9 +252,12 @@ export function VoceStorico({ v, numero }: { v: VocePubblicazione; numero: numbe
               Chiudi il ticket
             </button>
           </form>
-          {v.freshdeskErrore && <p className="hint">Ultimo tentativo: {v.freshdeskErrore}</p>}
-        </div>
-      )}
+        )}
+        <BottoneSegnala chiave={v.chiave} />
+        {daChiudere && v.freshdeskErrore && (
+          <p className="hint">Ultimo tentativo: {v.freshdeskErrore}</p>
+        )}
+      </div>
     </li>
   );
 }

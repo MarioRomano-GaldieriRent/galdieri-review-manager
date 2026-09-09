@@ -44,7 +44,6 @@ import {
 } from "@/server/db/recensioni";
 import { VediMail } from "./VediMail";
 import { BottoneSegnala } from "./BottoneSegnala";
-import { segnalaAction } from "./supervisione/actions";
 import { inoltraAlCustomerCareAction } from "./dashboard/inoltro";
 import { chiaviSegnalate } from "@/server/db/segnalazioni";
 import { CampoRispostaAI } from "./CampoRispostaAI";
@@ -55,6 +54,7 @@ import { AutoAggiorna } from "./AutoAggiorna";
 import { AnteprimaFlusso } from "./AnteprimaFlusso";
 import { PassoAnteprima } from "./_ui/automazioni";
 import { Stelle, VoceCoda, VoceStorico } from "./da-pubblicare/Voci";
+import { TabRecensioni } from "./TabRecensioni";
 import { TastieraCoda } from "./da-pubblicare/TastieraCoda";
 import { FiltriDaApprovare } from "./FiltriDaApprovare";
 
@@ -685,40 +685,38 @@ export default async function HomePage({
 
       {/* -------------------------------------------------------------- tab */}
       <nav className="pub-tabs" aria-label="Fasi della pubblicazione">
-        <div className="pub-tabs-scroll">
-          <Link
-            href="/"
-            className={`pub-tab${step === "approvare" ? " is-active" : ""}`}
-            title="Recensioni coperte dalle regole attive, in attesa di una tua decisione"
-          >
-            Da approvare
-            {nApprovare !== null && nApprovare > 0 && (
-              <span className="chip-count">{nApprovare}</span>
-            )}
-          </Link>
-          <Link
-            href="/?step=attesa"
-            className={`pub-tab${step === "attesa" ? " is-active" : ""}`}
-            title="Recensioni negative inoltrate al customer care, in attesa della risposta"
-          >
-            In attesa
-            {nAttesa !== null && nAttesa > 0 && <span className="chip-count">{nAttesa}</span>}
-          </Link>
-          <Link
-            href="/?step=ricontrollo"
-            className={`pub-tab${step === "ricontrollo" ? " is-active" : ""}`}
-            title="Cronologia delle risposte pubblicate dal nostro sito"
-          >
-            Storico
-          </Link>
-          <Link
-            href="/?step=archiviati"
-            className={`pub-tab${step === "archiviati" ? " is-active" : ""}`}
-            title="Recensioni messe da parte (es. impossibili da gestire)"
-          >
-            Archiviati
-          </Link>
-        </div>
+        <TabRecensioni
+          voci={[
+            {
+              href: "/",
+              etichetta: "Da approvare",
+              titolo: "Recensioni coperte dalle regole attive, in attesa di una tua decisione",
+              attivo: step === "approvare",
+              conteggio: nApprovare,
+            },
+            {
+              href: "/?step=attesa",
+              etichetta: "In attesa",
+              titolo: "Recensioni negative inoltrate al customer care, in attesa della risposta",
+              attivo: step === "attesa",
+              conteggio: nAttesa,
+            },
+            {
+              href: "/?step=ricontrollo",
+              etichetta: "Storico",
+              titolo: "Cronologia delle risposte pubblicate dal nostro sito",
+              attivo: step === "ricontrollo",
+              conteggio: null,
+            },
+            {
+              href: "/?step=archiviati",
+              etichetta: "Archiviati",
+              titolo: "Recensioni messe da parte (es. impossibili da gestire)",
+              attivo: step === "archiviati",
+              conteggio: null,
+            },
+          ]}
+        />
         <Link
           href={
             step === "approvare"
@@ -867,11 +865,6 @@ export default async function HomePage({
                   <form id={`arch-${r.chiave}`} action={archiviaAction} className="dash-arch-form">
                     <input type="hidden" name="chiave" value={r.chiave} />
                     <input type="hidden" name="label" value={label?.id ?? ""} />
-                  </form>
-                  {/* Segnalazione all'amministratore: stesso schema. Il «?» apre il
-                      campo nota, che appartiene a questo form via attributo form=. */}
-                  <form id={`segn-${r.chiave}`} action={segnalaAction} className="dash-arch-form">
-                    <input type="hidden" name="chiave" value={r.chiave} />
                   </form>
                   {/* Inoltro al customer care dalle card ibride (3★): il tasto sta
                       fra le azioni, dentro il form «Rispondi», e invia QUESTO via

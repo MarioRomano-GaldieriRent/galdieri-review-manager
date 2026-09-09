@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
+import { after } from "next/server";
 import { richiediAdmin, richiediOperatore } from "@/server/auth/sessione";
 import { leggiRecensione } from "@/server/db/recensioni";
 import { chiudiSegnalazione, leggiSegnalazione, segnala } from "@/server/db/segnalazioni";
@@ -40,46 +41,67 @@ async function indirizzoApp(): Promise<string> {
 }
 
 /** L'operatore passa all'amministratore una recensione che non riesce a gestire. */
-export async function segnalaAction(formData: FormData): Promise<void> {
+export type EsitoSegnalazione = { ok: true; messaggio: string } | { ok: false; errore: string };
+
+/**
+ * Segnala una recensione all'amministratore. DEVE essere istantanea: è un clic.
+ *
+ * Perché prima non lo era, e cosa è cambiato:
+ *  - si finiva con un redirect alla home, che è la pagina lenta (legge la posta
+ *    e interroga Freshdesk): il clic sembrava piantato per decine di secondi.
+ *    Ora l'azione RITORNA un esito e non naviga: la card si aggiorna sul posto.
+ *  - la mail all'admin veniva attesa prima di rispondere. Ora parte con
+ *    `after()`, cioè DOPO che la risposta è già stata mandata al browser: chi
+ *    segnala non aspetta la posta.
+ *  - niente `revalidatePath`: rigenererebbe la home — di nuovo posta e
+ *    Freshdesk — proprio mentre si vuole essere veloci. La lista si aggiorna da
+ *    sola al prossimo caricamento o con l'auto-aggiornamento.
+ *
+ * Resta veloce anche quando la posta è rotta: un guasto di Graph non tocca più
+ * il tempo di risposta, si vede solo nei log.
+ */
+export async function segnalaAction(chiave: string, notaGrezza: string): Promise<EsitoSegnalazione> {
+  // Le server action sono endpoint a sé: la sessione si ricontrolla qui.
   const op = await richiediOperatore();
-  const chiave = str(formData, "chiave");
-  const nota = str(formData, "nota").slice(0, 1000);
-  if (!chiave || !nota) redirect("/?errore=segnalazione-senza-nota");
+  const nota = (notaGrezza ?? "").trim().slice(0, 1000);
+  if (!chiave) return { ok: false, errore: "Recensione non indicata." };
+  if (!nota) return { ok: false, errore: "Scrivi qual è il problema prima di segnalare." };
+
   const r = await leggiRecensione(chiave);
-  if (!r) redirect("/?errore=recensione-non-trovata");
+  if (!r) return { ok: false, errore: "Recensione non trovata in archivio." };
 
   // Una sola segnalazione per volta. Se ce n'è già una aperta si esce SUBITO:
-  // niente riscrittura e — soprattutto — nessuna seconda mail all'admin. Vale
-  // per il doppio clic, per il tasto premuto su una pagina vecchia e per il
-  // ritorno con «Indietro».
+  // niente riscrittura e nessuna seconda mail all'admin. Vale per il doppio
+  // clic, per il tasto premuto su una pagina vecchia e per il «Indietro».
   const creata = await segnala(r, nota, op._id);
   if (!creata) {
     const gia = await leggiSegnalazione(chiave);
     const quando = gia ? fmtQuando.format(new Date(gia.segnalataIl)) : "poco fa";
-    const msg = `«${r.nome || "Questa recensione"}» era già stata segnalata ${quando}: la sta guardando l'amministratore. Non serve rimandarla.`;
-    redirect(`/?esitoOk=0&esitoMsg=${encodeURIComponent(msg)}`);
+    return {
+      ok: false,
+      errore: `Era già stata segnalata ${quando}: la sta guardando l'amministratore. Non serve rimandarla.`,
+    };
   }
 
-  // Avviso agli admin. Best-effort DOPO il salvataggio: se la posta non parte
-  // la segnalazione resta comunque nel pannello, e il motivo finisce nei log.
-  const avviso = await avvisaAdminDiSegnalazione({
-    recensione: r,
-    nota,
-    daChi: op.nome || op.chiave,
-    link: `${await indirizzoApp()}/supervisione`,
-  });
-  console.log(
-    avviso.inviata
-      ? `[segnalazione] avviso inviato a ${avviso.motivo}`
-      : `[segnalazione] avviso NON inviato: ${avviso.motivo}`,
-  );
+  // Il link si costruisce ADESSO, finché la richiesta c'è: dentro after() gli
+  // header della richiesta non sono un appiglio su cui contare.
+  const link = `${await indirizzoApp()}/supervisione`;
+  const daChi = op.nome || op.chiave;
 
-  revalidatePath("/");
-  revalidatePath("/supervisione");
-  const msg = avviso.inviata
-    ? `Segnalazione inviata: «${r.nome || "la recensione"}» è passata all'amministratore, che ha ricevuto la mail.`
-    : `Segnalazione registrata: «${r.nome || "la recensione"}» è passata all'amministratore (avviso per email non partito).`;
-  redirect(`/?esitoOk=1&esitoMsg=${encodeURIComponent(msg)}`);
+  // La mail parte DOPO la risposta: chi ha premuto non la aspetta.
+  after(async () => {
+    const avviso = await avvisaAdminDiSegnalazione({ recensione: r, nota, daChi, link });
+    console.log(
+      avviso.inviata
+        ? `[segnalazione] avviso inviato a ${avviso.motivo}`
+        : `[segnalazione] avviso NON inviato: ${avviso.motivo}`,
+    );
+  });
+
+  return {
+    ok: true,
+    messaggio: `«${r.nome || "La recensione"}» è passata all'amministratore.`,
+  };
 }
 
 /** L'admin ha sistemato: la recensione resta fuori dalla coda dell'operatore. */

@@ -4075,3 +4075,23 @@ main.pipeline .pub-tabs {
   margin-top: 4px;
   text-align: right;
 }
+
+/* Segnalazione andata a buon fine: la conferma prende il posto del «?» sulla
+   card, senza ricaricare la pagina. */
+.segnala-fatta {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--g-green-dark);
+  white-space: nowrap;
+  align-self: center;
+}
+.segnala-esito {
+  margin: 8px 0 0;
+}
+
+/* Tab in corso di apertura: la rotellina prende il posto del conteggio e il
+   tab si smorza, così si vede che il clic è arrivato ed è al lavoro. */
+.pub-tab.is-in-corso {
+  opacity: 0.65;
+  cursor: progress;
+}
