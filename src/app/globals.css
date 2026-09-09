@@ -2168,6 +2168,24 @@ main.pannello {
   margin-top: 0;
 }
 
+/* I pannelli delle Impostazioni arrivano tutti insieme e si accende quello
+   scelto: cambiare sezione non passa più dal server. Il contenitore di ognuno
+   sparisce dal layout con display:contents, così le card restano figlie VISIVE
+   di .pannello-contenuto e la spaziatura è quella di prima.
+   La riga [hidden] deve stare qui sotto: display:contents è una regola
+   d'autore e batterebbe il [hidden] del browser, lasciando a schermo tutti i
+   pannelli insieme. */
+.sezione-pannello {
+  display: contents;
+}
+.sezione-pannello[hidden] {
+  display: none;
+}
+.pannello-contenuto > .sezione-pannello > .card:first-child,
+.pannello-contenuto > .sezione-pannello > .regole-elenco:first-child {
+  margin-top: 0;
+}
+
 /* ------------------------------------------------------------ stretto */
 
 @media (max-width: 900px) {

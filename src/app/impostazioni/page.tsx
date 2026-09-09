@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { Suspense } from "react";
 import {
   activeMailbox,
   isSet,
@@ -12,7 +13,8 @@ import {
 import { getGoogleReviewsStatus } from "@/server/integrations/googleReviews";
 import { caricaRegole } from "@/server/automation/rules";
 import { richiediAdmin } from "@/server/auth/sessione";
-import { leggiSedi } from "@/server/db/sedi";
+import { Sezioni } from "./Sezioni";
+import { leggiSedi, type Sede } from "@/server/db/sedi";
 import { conteggioRecensioniPerSede } from "@/server/db/recensioni";
 import {
   AutomazioneRegola,
@@ -105,15 +107,6 @@ export default async function ImpostazioniPage({
   const sezione: IdSezione =
     richiesta ?? (sp.test ? (SEZIONE_DEL_TEST[sp.test] ?? "modo") : "modo");
 
-  // Mapping: il conteggio recensioni per sede è un'aggregazione più pesante, la
-  // si legge solo quando si apre davvero il pannello. Le sedi più attive in cima.
-  const conteggi = sezione === "mapping" ? await conteggioRecensioniPerSede() : null;
-  const sediMap = conteggi
-    ? sedi
-        .map((s) => ({ ...s, conteggio: conteggi.perSede.get(s.chiave)?.conteggio ?? 0 }))
-        .sort((a, b) => b.conteggio - a.conteggio || a.nome.localeCompare(b.nome))
-    : [];
-
   const esito = sp.test ? { quale: sp.test, ok: sp.ok === "1", msg: sp.msg ?? "" } : null;
   const Esito = ({ per }: { per: string }) =>
     esito && esito.quale === per ? (
@@ -153,622 +146,669 @@ export default async function ImpostazioniPage({
       </div>
 
       <div className="pannello-corpo">
-        {/* ------------------------------------------------- voci laterali */}
-        <nav className="pannello-menu" aria-label="Sezioni delle impostazioni">
-          {gruppi.map((g) => (
-            <div key={g} className="menu-gruppo">
-              <p className="menu-gruppo-titolo">{g}</p>
-              {SEZIONI.filter((s) => s.gruppo === g).map((s) => (
-                <Link
-                  key={s.id}
-                  href={`/impostazioni?s=${s.id}`}
-                  className={`menu-voce${s.id === sezione ? " is-active" : ""}`}
-                  aria-current={s.id === sezione ? "page" : undefined}
-                >
-                  <span className="menu-voce-testo">{s.voce}</span>
-                  <span className={`menu-voce-stato${vocePreoccupa(s.id) ? " ko" : ""}`}>
-                    {statoVoce(s.id)}
-                  </span>
-                </Link>
-              ))}
+        <Sezioni
+          iniziale={sezione}
+          voci={SEZIONI.map((s) => ({
+            id: s.id,
+            voce: s.voce,
+            gruppo: s.gruppo,
+            stato: statoVoce(s.id),
+            preoccupa: vocePreoccupa(s.id),
+          }))}
+          altrePagine={
+            // Statistiche, Posta e Ticket non sono sezioni del pannello: sono pagine
+            // a sé, raggiunte da qui. Restano link veri.
+            <div className="menu-gruppo">
+              <p className="menu-gruppo-titolo">Altre pagine</p>
+              <Link href="/statistiche" className="menu-voce">
+                <span className="menu-voce-testo">Statistiche</span>
+                <span className="menu-voce-stato">↗</span>
+              </Link>
+              <Link href="/posta" className="menu-voce">
+                <span className="menu-voce-testo">Posta in arrivo</span>
+                <span className="menu-voce-stato">↗</span>
+              </Link>
+              <Link href="/ticket" className="menu-voce">
+                <span className="menu-voce-testo">Ticket Freshdesk</span>
+                <span className="menu-voce-stato">↗</span>
+              </Link>
+              <Link href="/utenti" className="menu-voce">
+                <span className="menu-voce-testo">Utenti e accessi</span>
+                <span className="menu-voce-stato">↗</span>
+              </Link>
             </div>
-          ))}
+          }
+          pannelli={[
+            {
+              id: "modo",
+              nodo: (
+                <>
+                <section className={`card modo-banner ${simulazione ? "modo-sim" : "modo-reale"}`}>
+                  <div className="sec-head">
+                    <h2>Modalità operativa</h2>
+                    <span className={`conn-badge ${simulazione ? "conn-ok" : "conn-ko"}`}>
+                      {simulazione ? "simulazione" : "REALE"}
+                    </span>
+                  </div>
 
-          {/* Statistiche, Posta e Ticket non sono sezioni del pannello: sono
-              pagine a sé, raggiunte da qui. Ognuna la sua voce. */}
-          <div className="menu-gruppo">
-            <p className="menu-gruppo-titolo">Altre pagine</p>
-            <Link href="/statistiche" className="menu-voce">
-              <span className="menu-voce-testo">Statistiche</span>
-              <span className="menu-voce-stato">↗</span>
-            </Link>
-            <Link href="/posta" className="menu-voce">
-              <span className="menu-voce-testo">Posta in arrivo</span>
-              <span className="menu-voce-stato">↗</span>
-            </Link>
-            <Link href="/ticket" className="menu-voce">
-              <span className="menu-voce-testo">Ticket Freshdesk</span>
-              <span className="menu-voce-stato">↗</span>
-            </Link>
-            <Link href="/utenti" className="menu-voce">
-              <span className="menu-voce-testo">Utenti e accessi</span>
-              <span className="menu-voce-stato">↗</span>
-            </Link>
-          </div>
-        </nav>
+                  <p>
+                    {simulazione ? (
+                      <>
+                        Le automazioni <strong>non scrivono nulla</strong> fuori da qui. Leggono i dati
+                        veri — così sanno dire quale ticket toccherebbero — ma non modificano Freshdesk,
+                        non pubblicano su Google e non inviano posta.
+                      </>
+                    ) : (
+                      <>
+                        Le automazioni <strong>eseguono davvero</strong>: modificano i ticket e inviano
+                        email. Restano comunque a conferma, una recensione alla volta.
+                      </>
+                    )}
+                  </p>
 
-        {/* --------------------------------------------------- contenuto */}
-        <div className="pannello-contenuto">
-          {sezione === "modo" && (
-            <section className={`card modo-banner ${simulazione ? "modo-sim" : "modo-reale"}`}>
-              <div className="sec-head">
-                <h2>Modalità operativa</h2>
-                <span className={`conn-badge ${simulazione ? "conn-ok" : "conn-ko"}`}>
-                  {simulazione ? "simulazione" : "REALE"}
-                </span>
-              </div>
-
-              <p>
-                {simulazione ? (
-                  <>
-                    Le automazioni <strong>non scrivono nulla</strong> fuori da qui. Leggono i dati
-                    veri — così sanno dire quale ticket toccherebbero — ma non modificano Freshdesk,
-                    non pubblicano su Google e non inviano posta.
-                  </>
-                ) : (
-                  <>
-                    Le automazioni <strong>eseguono davvero</strong>: modificano i ticket e inviano
-                    email. Restano comunque a conferma, una recensione alla volta.
-                  </>
-                )}
-              </p>
-
-              <form action={cambiaModoAction} className="filters-row" style={{ marginTop: 12 }}>
-                <input type="hidden" name="modo" value={simulazione ? "reale" : "simulazione"} />
-                {simulazione && (
-                  <label className="field grow">
-                    <span>Per attivare la modalità reale scrivi REALE</span>
-                    <input name="conferma" placeholder="REALE" autoComplete="off" />
-                  </label>
-                )}
-                <div className="filters-actions">
-                  <button
-                    type="submit"
-                    className={simulazione ? "btn-secondary btn-danger" : "btn-primary"}
-                  >
-                    {simulazione ? "Attiva modalità reale" : "Torna in simulazione"}
-                  </button>
-                </div>
-              </form>
-              <Esito per="modo" />
-            </section>
-          )}
-
-          {sezione === "regole" && (
-            <>
-              <section className="card">
-                <div className="sec-head">
-                  <h2>Regole e flussi</h2>
-                  <span className="conn-badge conn-ok">
-                    {attive} attive su {regole.length}
-                  </span>
-                </div>
-                <p className="hint">
-                  Ogni regola è una catena di passaggi che scatta su un certo tipo di recensione. I
-                  valori iniziali ricalcano quello che oggi viene fatto a mano, ricavati leggendo i
-                  ticket già presenti su Freshdesk. Le recensioni si lavorano poi dal pannello{" "}
-                  <Link href="/automazioni">Automazioni</Link>.
-                </p>
-                <p className="notice">
-                  Nelle regole che rispondono al cliente il testo si scrive due volte, in italiano e
-                  in inglese: si usa l&apos;italiano se la recensione è in italiano, altrimenti
-                  l&apos;inglese — è come si risponde oggi.
-                </p>
-              </section>
-
-              {/* Chiuse di default: si apre solo quella che interessa, e
-                  aprirne una chiude le altre. */}
-              <div className="regole-elenco">
-                {regole.map((r) => (
-                  <details
-                    key={r.id}
-                    name="regole"
-                    className={`card regola ${r.attiva ? "" : "regola-spenta"}`}
-                  >
-                    <summary className="regola-testa">
-                      <span className="regola-cond">{descriviCondizione(r)}</span>
-                      <span className="regola-nome">{r.nome}</span>
-                      <span className="regola-conteggio">{r.azioni.length} passaggi</span>
-                      <span className={`conn-badge ${r.attiva ? "conn-ok" : "conn-ko"}`}>
-                        {r.attiva ? "attiva" : "spenta"}
-                      </span>
-                      <span className="regola-freccia" aria-hidden="true" />
-                    </summary>
-
-                    <div className="regola-dentro">
-                      <p className="regola-quando">
-                        {quandoScatta(r)}, l&apos;applicazione esegue questi {r.azioni.length}{" "}
-                        passaggi in ordine. {quantiModificano(r)}
-                      </p>
-
-                      <ol className="passi">
-                        {r.azioni.map((a, i) => (
-                          <PassoRegola
-                            key={a.id}
-                            regola={r}
-                            azione={a}
-                            numero={i + 1}
-                            ultimo={i === r.azioni.length - 1}
-                          />
-                        ))}
-                      </ol>
-
-                      <AutomazioneRegola regola={r} />
-
-                      <form action={cambiaStatoRegolaAction} className="regola-interruttore">
-                        <input type="hidden" name="id" value={r.id} />
-                        <button
-                          type="submit"
-                          className={r.attiva ? "btn-secondary" : "btn-primary"}
-                        >
-                          {r.attiva ? "Disattiva questa regola" : "Attiva questa regola"}
-                        </button>
-                        <span className="hint">
-                          {r.attiva
-                            ? "Disattivandola, le recensioni che copre escono dalla coda in Automazioni."
-                            : "Attivandola, le recensioni che copre compaiono nella coda in Automazioni."}
-                        </span>
-                      </form>
+                  <form action={cambiaModoAction} className="filters-row" style={{ marginTop: 12 }}>
+                    <input type="hidden" name="modo" value={simulazione ? "reale" : "simulazione"} />
+                    {simulazione && (
+                      <label className="field grow">
+                        <span>Per attivare la modalità reale scrivi REALE</span>
+                        <input name="conferma" placeholder="REALE" autoComplete="off" />
+                      </label>
+                    )}
+                    <div className="filters-actions">
+                      <button
+                        type="submit"
+                        className={simulazione ? "btn-secondary btn-danger" : "btn-primary"}
+                      >
+                        {simulazione ? "Attiva modalità reale" : "Torna in simulazione"}
+                      </button>
                     </div>
-                  </details>
-                ))}
-              </div>
+                  </form>
+                  <Esito per="modo" />
+                </section>
+                </>
+              ),
+            },
+            {
+              id: "regole",
+              nodo: (
+                <>
+                <>
+                  <section className="card">
+                    <div className="sec-head">
+                      <h2>Regole e flussi</h2>
+                      <span className="conn-badge conn-ok">
+                        {attive} attive su {regole.length}
+                      </span>
+                    </div>
+                    <p className="hint">
+                      Ogni regola è una catena di passaggi che scatta su un certo tipo di recensione. I
+                      valori iniziali ricalcano quello che oggi viene fatto a mano, ricavati leggendo i
+                      ticket già presenti su Freshdesk. Le recensioni si lavorano poi dal pannello{" "}
+                      <Link href="/automazioni">Automazioni</Link>.
+                    </p>
+                    <p className="notice">
+                      Nelle regole che rispondono al cliente il testo si scrive due volte, in italiano e
+                      in inglese: si usa l&apos;italiano se la recensione è in italiano, altrimenti
+                      l&apos;inglese — è come si risponde oggi.
+                    </p>
+                  </section>
 
-              <section className="card">
-                <h2>Ripristino</h2>
-                <p className="hint">
-                  Riporta tutte le regole a come sono state scritte all&apos;inizio, perdendo le
-                  modifiche fatte ai passaggi.
-                </p>
-                <form action={ripristinaRegoleAction} style={{ marginTop: 12 }}>
-                  <button type="submit" className="btn-secondary">
-                    Ripristina regole iniziali
-                  </button>
-                </form>
-              </section>
-            </>
-          )}
-
-          {sezione === "parametri" && (
-            <section className="card">
-              <h2>Parametri delle automazioni</h2>
-              <p className="hint">
-                Valori a cui i passaggi delle regole fanno riferimento, rilevati dai ticket reali di
-                Freshdesk.
-              </p>
-              <form action={salvaAutomationAction}>
-                <div className="form-grid">
-                  <label className="field">
-                    <span>Email per le recensioni negative</span>
-                    <input name="emailEscalation" defaultValue={automation.emailEscalation} />
-                  </label>
-                  <label className="field">
-                    <span>Testo dell&apos;inoltro</span>
-                    <input name="testoEscalation" defaultValue={automation.testoEscalation} />
-                  </label>
-                  <label className="field">
-                    <span>Id agente — recensioni positive</span>
-                    <input name="agenteMarketing" defaultValue={automation.agenteMarketing} />
-                  </label>
-                  <label className="field">
-                    <span>Id agente — recensioni negative</span>
-                    <input name="agenteEscalation" defaultValue={automation.agenteEscalation} />
-                  </label>
-                  <label className="field">
-                    <span>Tipo ticket per le recensioni Google</span>
-                    <input name="tipoTicketGoogle" defaultValue={automation.tipoTicketGoogle} />
-                  </label>
-                </div>
-                <button type="submit" className="btn-primary" style={{ marginTop: 12 }}>
-                  Salva
-                </button>
-              </form>
-            </section>
-          )}
-
-          {sezione === "mapping" && (
-            <>
-              <section className="card">
-                <div className="sec-head">
-                  <h2>Mapping delle attività commerciali</h2>
-                  <span className="conn-badge conn-ok">
-                    {sediMappate}/{sedi.length} mappate
-                  </span>
-                </div>
-                <p className="hint">
-                  Ogni «sede» qui sotto è ricavata dall&apos;oggetto delle email delle recensioni
-                  (es. <em>Orio al Serio Milano-Bergamo</em>). Scrivi accanto il{" "}
-                  <strong>nome con cui la sede si trova su Google</strong> (il nome dell&apos;attività
-                  commerciale): è il dato stabile — il link cambia, il nome no — e con questo il
-                  robot potrà andare dritto alla sede invece di cercare fra i gruppi. Le sedi più
-                  attive sono in cima.
-                </p>
-                {conteggi && conteggi.nonRiconosciute > 0 && (
-                  <p className="notice">
-                    {conteggi.nonRiconosciute} recensioni hanno una sede non riconosciuta
-                    dall&apos;oggetto: non compaiono qui finché l&apos;oggetto non le identifica.
-                  </p>
-                )}
-                <p className="hint">
-                  Cosa diversa: la pagina <Link href="/sedi">Sedi</Link> serve al{" "}
-                  <em>link diretto</em> per «Apri su Google» nella coda (il link, non il nome).
-                </p>
-              </section>
-
-              <section className="card">
-                {sediMap.length === 0 ? (
-                  <p className="hint">
-                    Nessuna sede ancora: compaiono man mano che arrivano le recensioni.
-                  </p>
-                ) : (
-                  <div className="sedi-lista">
-                    {sediMap.map((s) => (
-                      <form key={s.chiave} action={salvaMappingSedeAction} className="sede-riga">
-                        <input type="hidden" name="chiave" value={s.chiave} />
-                        <div className="sede-testa">
-                          <span className="sede-nome">{s.nome}</span>
-                          <span className="conn-badge conn-ok">
-                            {s.conteggio} {s.conteggio === 1 ? "recensione" : "recensioni"}
+                  {/* Chiuse di default: si apre solo quella che interessa, e
+                      aprirne una chiude le altre. */}
+                  <div className="regole-elenco">
+                    {regole.map((r) => (
+                      <details
+                        key={r.id}
+                        name="regole"
+                        className={`card regola ${r.attiva ? "" : "regola-spenta"}`}
+                      >
+                        <summary className="regola-testa">
+                          <span className="regola-cond">{descriviCondizione(r)}</span>
+                          <span className="regola-nome">{r.nome}</span>
+                          <span className="regola-conteggio">{r.azioni.length} passaggi</span>
+                          <span className={`conn-badge ${r.attiva ? "conn-ok" : "conn-ko"}`}>
+                            {r.attiva ? "attiva" : "spenta"}
                           </span>
-                          <span className={`conn-badge ${s.nomeGoogle ? "conn-ok" : "conn-ko"}`}>
-                            {s.nomeGoogle ? "mappata" : "da mappare"}
-                          </span>
-                        </div>
-                        <div className="filters-row">
-                          <label className="field grow">
-                            <span>Nome con cui cercarla su Google</span>
-                            <input
-                              name="nomeGoogle"
-                              defaultValue={s.nomeGoogle}
-                              placeholder={`es. ${s.nome}`}
-                            />
-                          </label>
-                          <div className="filters-actions">
-                            <button type="submit" className="btn-mini">
-                              Salva
+                          <span className="regola-freccia" aria-hidden="true" />
+                        </summary>
+
+                        <div className="regola-dentro">
+                          <p className="regola-quando">
+                            {quandoScatta(r)}, l&apos;applicazione esegue questi {r.azioni.length}{" "}
+                            passaggi in ordine. {quantiModificano(r)}
+                          </p>
+
+                          <ol className="passi">
+                            {r.azioni.map((a, i) => (
+                              <PassoRegola
+                                key={a.id}
+                                regola={r}
+                                azione={a}
+                                numero={i + 1}
+                                ultimo={i === r.azioni.length - 1}
+                              />
+                            ))}
+                          </ol>
+
+                          <AutomazioneRegola regola={r} />
+
+                          <form action={cambiaStatoRegolaAction} className="regola-interruttore">
+                            <input type="hidden" name="id" value={r.id} />
+                            <button
+                              type="submit"
+                              className={r.attiva ? "btn-secondary" : "btn-primary"}
+                            >
+                              {r.attiva ? "Disattiva questa regola" : "Attiva questa regola"}
                             </button>
-                          </div>
+                            <span className="hint">
+                              {r.attiva
+                                ? "Disattivandola, le recensioni che copre escono dalla coda in Automazioni."
+                                : "Attivandola, le recensioni che copre compaiono nella coda in Automazioni."}
+                            </span>
+                          </form>
                         </div>
-                      </form>
+                      </details>
                     ))}
                   </div>
-                )}
-              </section>
-            </>
-          )}
 
-          {sezione === "email" && (
-            <section className="card">
-              <div className="sec-head">
-                <h2>Email — Microsoft 365</h2>
-                <Stato ok={graphOk} testo={graphOk ? "configurata" : "incompleta"} />
-              </div>
-              <p className="hint">
-                Lettura della posta via Microsoft Graph in modalità applicativa. È la sorgente di
-                tutto: recensioni, automazioni e ticket partono da qui.
-              </p>
-
-              <form action={saveGraphAction}>
-                <div className="form-grid">
-                  <label className="field">
-                    <span>Tenant ID</span>
-                    <input
-                      name="tenantId"
-                      defaultValue={settings.graph.tenantId ?? ""}
-                      placeholder={graph.tenantId}
-                    />
-                  </label>
-                  <label className="field">
-                    <span>Client ID</span>
-                    <input
-                      name="clientId"
-                      defaultValue={settings.graph.clientId ?? ""}
-                      placeholder={graph.clientId}
-                    />
-                  </label>
-                  <label className="field">
-                    <span>Client secret</span>
-                    <input
-                      name="clientSecret"
-                      type="password"
-                      autoComplete="off"
-                      placeholder={isSet(graph.clientSecret) ? SEGRETO : "non impostato"}
-                    />
-                  </label>
-                  <label className="field">
-                    <span>Endpoint Graph</span>
-                    <input
-                      name="graphUrl"
-                      defaultValue={settings.graph.graphUrl ?? ""}
-                      placeholder={graph.graphUrl}
-                    />
-                  </label>
-                </div>
-                <div className="label-actions">
-                  <button type="submit" className="btn-primary">
-                    Salva
-                  </button>
-                  <button type="submit" className="btn-secondary" formAction={testGraphAction}>
-                    Prova connessione
-                  </button>
-                </div>
-              </form>
-              <Esito per="graph" />
-
-              <hr className="sep" />
-
-              <form action={saveMailboxAction} className="filters-row">
-                <label className="field grow">
-                  <span>Casella monitorata (vuoto = quella del .env)</span>
-                  <input name="mailbox" defaultValue={settings.mailbox} placeholder={mailbox} />
-                </label>
-                <div className="filters-actions">
-                  <button type="submit" className="btn-primary">
-                    Salva casella
-                  </button>
-                </div>
-              </form>
-              <p className="hint">
-                In uso adesso: <strong>{mailbox || "(nessuna)"}</strong>
-              </p>
-            </section>
-          )}
-
-          {sezione === "traduzione" && (
-            <section className="card">
-              <div className="sec-head">
-                <h2>Traduzione — Azure AI Translator</h2>
-                <Stato ok={translatorOk} testo={translatorOk ? "attiva" : "non attiva"} />
-              </div>
-              <p className="hint">
-                Traduce in italiano le recensioni scritte in altre lingue, per leggerle nel pannello
-                Recensioni. Piano gratuito F0: 2 milioni di caratteri al mese, e ogni testo si
-                traduce una volta sola perché il risultato resta in cache.
-              </p>
-              <p className="notice">
-                Non serve alle automazioni: la scelta fra risposta italiana e inglese si fa senza
-                chiamare nessun servizio.
-              </p>
-
-              <form action={saveTranslatorAction}>
-                <div className="form-grid">
-                  <label className="field">
-                    <span>Chiave</span>
-                    <input
-                      name="key"
-                      type="password"
-                      autoComplete="off"
-                      placeholder={isSet(translator.key) ? SEGRETO : "non impostata"}
-                    />
-                  </label>
-                  <label className="field">
-                    <span>Regione</span>
-                    <input
-                      name="region"
-                      defaultValue={settings.translator.region ?? ""}
-                      placeholder={translator.region || "es. westeurope"}
-                    />
-                  </label>
-                  <label className="field">
-                    <span>Endpoint</span>
-                    <input
-                      name="endpoint"
-                      defaultValue={settings.translator.endpoint ?? ""}
-                      placeholder={translator.endpoint}
-                    />
-                  </label>
-                </div>
-                <div className="label-actions">
-                  <button type="submit" className="btn-primary">
-                    Salva
-                  </button>
-                  <button type="submit" className="btn-secondary" formAction={testTranslatorAction}>
-                    Prova connessione
-                  </button>
-                </div>
-              </form>
-              <Esito per="translator" />
-            </section>
-          )}
-
-          {sezione === "freshdesk" && (
-            <section className="card">
-              <div className="sec-head">
-                <h2>Freshdesk — ticketing</h2>
-                <Stato ok={freshdeskOk} testo={freshdeskOk ? "configurata" : "da configurare"} />
-              </div>
-              <p className="hint">
-                Le credenziali si prendono dal profilo agente Freshdesk → <em>View API Key</em>. Il
-                pannello Ticket è di sola lettura; le automazioni scrivono solo in modalità reale.
-              </p>
-
-              <form action={saveFreshdeskAction}>
-                <div className="form-grid">
-                  <label className="field">
-                    <span>Dominio</span>
-                    <input
-                      name="domain"
-                      defaultValue={settings.freshdesk.domain ?? ""}
-                      placeholder={freshdesk.domain || "azienda.freshdesk.com"}
-                    />
-                  </label>
-                  <label className="field">
-                    <span>API key</span>
-                    <input
-                      name="apiKey"
-                      type="password"
-                      autoComplete="off"
-                      placeholder={isSet(freshdesk.apiKey) ? SEGRETO : "non impostata"}
-                    />
-                  </label>
-                </div>
-                <div className="label-actions">
-                  <button type="submit" className="btn-primary">
-                    Salva
-                  </button>
-                  <button type="submit" className="btn-secondary" formAction={testFreshdeskAction}>
-                    Prova connessione
-                  </button>
-                </div>
-              </form>
-              <Esito per="freshdesk" />
-            </section>
-          )}
-
-          {sezione === "google" && (
-            <section className="card">
-              <div className="sec-head">
-                <h2>Google Business Profile — recensioni</h2>
-                <Stato
-                  ok={false}
-                  testo={googleStatus.configured ? "dati completi, non attiva" : "da configurare"}
-                />
-              </div>
-              <p className="hint">{googleStatus.note}</p>
-              {googleStatus.missing.length > 0 && (
-                <p className="hint">Mancano: {googleStatus.missing.join(", ")}.</p>
-              )}
-
-              <form action={saveGoogleReviewsAction}>
-                <div className="form-grid">
-                  <label className="field">
-                    <span>Client ID (OAuth)</span>
-                    <input
-                      name="clientId"
-                      defaultValue={settings.googleReviews.clientId ?? ""}
-                      placeholder={google.clientId || "…apps.googleusercontent.com"}
-                    />
-                  </label>
-                  <label className="field">
-                    <span>Client secret</span>
-                    <input
-                      name="clientSecret"
-                      type="password"
-                      autoComplete="off"
-                      placeholder={isSet(google.clientSecret) ? SEGRETO : "non impostato"}
-                    />
-                  </label>
-                  <label className="field">
-                    <span>Refresh token</span>
-                    <input
-                      name="refreshToken"
-                      type="password"
-                      autoComplete="off"
-                      placeholder={isSet(google.refreshToken) ? SEGRETO : "non impostato"}
-                    />
-                  </label>
-                  <label className="field">
-                    <span>Account ID</span>
-                    <input
-                      name="accountId"
-                      defaultValue={settings.googleReviews.accountId ?? ""}
-                      placeholder={google.accountId || "accounts/1234567890"}
-                    />
-                  </label>
-                </div>
-                <button type="submit" className="btn-primary" style={{ marginTop: 12 }}>
-                  Salva
-                </button>
-              </form>
-
-              <p className="notice" style={{ marginTop: 14 }}>
-                <strong>Come si attiva.</strong> 1) In Google Cloud Console crea un client OAuth e
-                abilita la <em>Business Profile API</em>. 2) Compila il modulo di richiesta accesso:
-                Google assegna <strong>quota 0</strong> di default e finché non approva ogni
-                chiamata risponde 403. 3) Ottieni una volta sola un refresh token con scope{" "}
-                <code>business.manage</code>. Nel frattempo le recensioni continuano ad arrivare via
-                email (Zapier), che è la sorgente usata ora.
-              </p>
-            </section>
-          )}
-
-          {sezione === "etichette" && (
-            <>
-              <section className="card">
-                <h2>Etichette ({settings.labels.length})</h2>
-                <p className="hint" style={{ marginBottom: 16 }}>
-                  Un&apos;etichetta raccoglie le email il cui <strong>oggetto contiene</strong> un
-                  testo. Il filtro sul mittente è facoltativo: lascialo vuoto per prendere tutto il
-                  flusso.
-                </p>
-
-                {settings.labels.map((l) => (
-                  <form key={l.id} action={updateLabelAction} className="label-row">
-                    <input type="hidden" name="id" value={l.id} />
+                  <section className="card">
+                    <h2>Ripristino</h2>
+                    <p className="hint">
+                      Riporta tutte le regole a come sono state scritte all&apos;inizio, perdendo le
+                      modifiche fatte ai passaggi.
+                    </p>
+                    <form action={ripristinaRegoleAction} style={{ marginTop: 12 }}>
+                      <button type="submit" className="btn-secondary">
+                        Ripristina regole iniziali
+                      </button>
+                    </form>
+                  </section>
+                </>
+                </>
+              ),
+            },
+            {
+              id: "parametri",
+              nodo: (
+                <>
+                <section className="card">
+                  <h2>Parametri delle automazioni</h2>
+                  <p className="hint">
+                    Valori a cui i passaggi delle regole fanno riferimento, rilevati dai ticket reali di
+                    Freshdesk.
+                  </p>
+                  <form action={salvaAutomationAction}>
                     <div className="form-grid">
                       <label className="field">
-                        <span>Nome etichetta</span>
-                        <input name="name" defaultValue={l.name} required />
+                        <span>Email per le recensioni negative</span>
+                        <input name="emailEscalation" defaultValue={automation.emailEscalation} />
                       </label>
                       <label className="field">
-                        <span>Oggetto contiene</span>
-                        <input name="subjectContains" defaultValue={l.subjectContains} required />
+                        <span>Testo dell&apos;inoltro</span>
+                        <input name="testoEscalation" defaultValue={automation.testoEscalation} />
                       </label>
                       <label className="field">
-                        <span>Mittente contiene (facoltativo)</span>
+                        <span>Id agente — recensioni positive</span>
+                        <input name="agenteMarketing" defaultValue={automation.agenteMarketing} />
+                      </label>
+                      <label className="field">
+                        <span>Id agente — recensioni negative</span>
+                        <input name="agenteEscalation" defaultValue={automation.agenteEscalation} />
+                      </label>
+                      <label className="field">
+                        <span>Tipo ticket per le recensioni Google</span>
+                        <input name="tipoTicketGoogle" defaultValue={automation.tipoTicketGoogle} />
+                      </label>
+                    </div>
+                    <button type="submit" className="btn-primary" style={{ marginTop: 12 }}>
+                      Salva
+                    </button>
+                  </form>
+                </section>
+                </>
+              ),
+            },
+            {
+              id: "mapping",
+              // L'unico pannello con un costo suo: il conteggio per sede è
+              // un'aggregazione da ~600 ms. Dietro un confine di attesa non ritarda il
+              // resto della pagina, e quando si arriva a cliccare «Mapping» è già lì.
+              nodo: (
+                <Suspense fallback={<p className="hint">Conto le recensioni per sede…</p>}>
+                  <PannelloMapping sedi={sedi} />
+                </Suspense>
+              ),
+            },
+            {
+              id: "email",
+              nodo: (
+                <>
+                <section className="card">
+                  <div className="sec-head">
+                    <h2>Email — Microsoft 365</h2>
+                    <Stato ok={graphOk} testo={graphOk ? "configurata" : "incompleta"} />
+                  </div>
+                  <p className="hint">
+                    Lettura della posta via Microsoft Graph in modalità applicativa. È la sorgente di
+                    tutto: recensioni, automazioni e ticket partono da qui.
+                  </p>
+
+                  <form action={saveGraphAction}>
+                    <div className="form-grid">
+                      <label className="field">
+                        <span>Tenant ID</span>
                         <input
-                          name="fromContains"
-                          defaultValue={l.fromContains}
-                          placeholder="es. zapiermail"
+                          name="tenantId"
+                          defaultValue={settings.graph.tenantId ?? ""}
+                          placeholder={graph.tenantId}
+                        />
+                      </label>
+                      <label className="field">
+                        <span>Client ID</span>
+                        <input
+                          name="clientId"
+                          defaultValue={settings.graph.clientId ?? ""}
+                          placeholder={graph.clientId}
+                        />
+                      </label>
+                      <label className="field">
+                        <span>Client secret</span>
+                        <input
+                          name="clientSecret"
+                          type="password"
+                          autoComplete="off"
+                          placeholder={isSet(graph.clientSecret) ? SEGRETO : "non impostato"}
+                        />
+                      </label>
+                      <label className="field">
+                        <span>Endpoint Graph</span>
+                        <input
+                          name="graphUrl"
+                          defaultValue={settings.graph.graphUrl ?? ""}
+                          placeholder={graph.graphUrl}
                         />
                       </label>
                     </div>
                     <div className="label-actions">
-                      <button type="submit" className="btn-mini">
-                        Salva modifiche
+                      <button type="submit" className="btn-primary">
+                        Salva
                       </button>
-                      <button
-                        type="submit"
-                        className="btn-mini btn-danger"
-                        formAction={deleteLabelAction}
-                      >
-                        Elimina
+                      <button type="submit" className="btn-secondary" formAction={testGraphAction}>
+                        Prova connessione
                       </button>
                     </div>
                   </form>
-                ))}
-              </section>
+                  <Esito per="graph" />
 
-              <section className="card">
-                <h2>Aggiungi etichetta</h2>
-                <form action={addLabelAction}>
-                  <div className="form-grid">
-                    <label className="field">
-                      <span>Nome etichetta</span>
-                      <input name="name" placeholder="Recensioni di Google" required />
+                  <hr className="sep" />
+
+                  <form action={saveMailboxAction} className="filters-row">
+                    <label className="field grow">
+                      <span>Casella monitorata (vuoto = quella del .env)</span>
+                      <input name="mailbox" defaultValue={settings.mailbox} placeholder={mailbox} />
                     </label>
-                    <label className="field">
-                      <span>Oggetto contiene</span>
-                      <input
-                        name="subjectContains"
-                        placeholder="NUOVA RECENSIONE GOOGLE"
-                        required
-                      />
-                    </label>
-                    <label className="field">
-                      <span>Mittente contiene (facoltativo)</span>
-                      <input name="fromContains" placeholder="lascia vuoto per tutti" />
-                    </label>
+                    <div className="filters-actions">
+                      <button type="submit" className="btn-primary">
+                        Salva casella
+                      </button>
+                    </div>
+                  </form>
+                  <p className="hint">
+                    In uso adesso: <strong>{mailbox || "(nessuna)"}</strong>
+                  </p>
+                </section>
+                </>
+              ),
+            },
+            {
+              id: "traduzione",
+              nodo: (
+                <>
+                <section className="card">
+                  <div className="sec-head">
+                    <h2>Traduzione — Azure AI Translator</h2>
+                    <Stato ok={translatorOk} testo={translatorOk ? "attiva" : "non attiva"} />
                   </div>
-                  <button type="submit" className="btn-primary" style={{ marginTop: 12 }}>
-                    Aggiungi
-                  </button>
-                </form>
-              </section>
-            </>
-          )}
-        </div>
+                  <p className="hint">
+                    Traduce in italiano le recensioni scritte in altre lingue, per leggerle nel pannello
+                    Recensioni. Piano gratuito F0: 2 milioni di caratteri al mese, e ogni testo si
+                    traduce una volta sola perché il risultato resta in cache.
+                  </p>
+                  <p className="notice">
+                    Non serve alle automazioni: la scelta fra risposta italiana e inglese si fa senza
+                    chiamare nessun servizio.
+                  </p>
+
+                  <form action={saveTranslatorAction}>
+                    <div className="form-grid">
+                      <label className="field">
+                        <span>Chiave</span>
+                        <input
+                          name="key"
+                          type="password"
+                          autoComplete="off"
+                          placeholder={isSet(translator.key) ? SEGRETO : "non impostata"}
+                        />
+                      </label>
+                      <label className="field">
+                        <span>Regione</span>
+                        <input
+                          name="region"
+                          defaultValue={settings.translator.region ?? ""}
+                          placeholder={translator.region || "es. westeurope"}
+                        />
+                      </label>
+                      <label className="field">
+                        <span>Endpoint</span>
+                        <input
+                          name="endpoint"
+                          defaultValue={settings.translator.endpoint ?? ""}
+                          placeholder={translator.endpoint}
+                        />
+                      </label>
+                    </div>
+                    <div className="label-actions">
+                      <button type="submit" className="btn-primary">
+                        Salva
+                      </button>
+                      <button type="submit" className="btn-secondary" formAction={testTranslatorAction}>
+                        Prova connessione
+                      </button>
+                    </div>
+                  </form>
+                  <Esito per="translator" />
+                </section>
+                </>
+              ),
+            },
+            {
+              id: "freshdesk",
+              nodo: (
+                <>
+                <section className="card">
+                  <div className="sec-head">
+                    <h2>Freshdesk — ticketing</h2>
+                    <Stato ok={freshdeskOk} testo={freshdeskOk ? "configurata" : "da configurare"} />
+                  </div>
+                  <p className="hint">
+                    Le credenziali si prendono dal profilo agente Freshdesk → <em>View API Key</em>. Il
+                    pannello Ticket è di sola lettura; le automazioni scrivono solo in modalità reale.
+                  </p>
+
+                  <form action={saveFreshdeskAction}>
+                    <div className="form-grid">
+                      <label className="field">
+                        <span>Dominio</span>
+                        <input
+                          name="domain"
+                          defaultValue={settings.freshdesk.domain ?? ""}
+                          placeholder={freshdesk.domain || "azienda.freshdesk.com"}
+                        />
+                      </label>
+                      <label className="field">
+                        <span>API key</span>
+                        <input
+                          name="apiKey"
+                          type="password"
+                          autoComplete="off"
+                          placeholder={isSet(freshdesk.apiKey) ? SEGRETO : "non impostata"}
+                        />
+                      </label>
+                    </div>
+                    <div className="label-actions">
+                      <button type="submit" className="btn-primary">
+                        Salva
+                      </button>
+                      <button type="submit" className="btn-secondary" formAction={testFreshdeskAction}>
+                        Prova connessione
+                      </button>
+                    </div>
+                  </form>
+                  <Esito per="freshdesk" />
+                </section>
+                </>
+              ),
+            },
+            {
+              id: "google",
+              nodo: (
+                <>
+                <section className="card">
+                  <div className="sec-head">
+                    <h2>Google Business Profile — recensioni</h2>
+                    <Stato
+                      ok={false}
+                      testo={googleStatus.configured ? "dati completi, non attiva" : "da configurare"}
+                    />
+                  </div>
+                  <p className="hint">{googleStatus.note}</p>
+                  {googleStatus.missing.length > 0 && (
+                    <p className="hint">Mancano: {googleStatus.missing.join(", ")}.</p>
+                  )}
+
+                  <form action={saveGoogleReviewsAction}>
+                    <div className="form-grid">
+                      <label className="field">
+                        <span>Client ID (OAuth)</span>
+                        <input
+                          name="clientId"
+                          defaultValue={settings.googleReviews.clientId ?? ""}
+                          placeholder={google.clientId || "…apps.googleusercontent.com"}
+                        />
+                      </label>
+                      <label className="field">
+                        <span>Client secret</span>
+                        <input
+                          name="clientSecret"
+                          type="password"
+                          autoComplete="off"
+                          placeholder={isSet(google.clientSecret) ? SEGRETO : "non impostato"}
+                        />
+                      </label>
+                      <label className="field">
+                        <span>Refresh token</span>
+                        <input
+                          name="refreshToken"
+                          type="password"
+                          autoComplete="off"
+                          placeholder={isSet(google.refreshToken) ? SEGRETO : "non impostato"}
+                        />
+                      </label>
+                      <label className="field">
+                        <span>Account ID</span>
+                        <input
+                          name="accountId"
+                          defaultValue={settings.googleReviews.accountId ?? ""}
+                          placeholder={google.accountId || "accounts/1234567890"}
+                        />
+                      </label>
+                    </div>
+                    <button type="submit" className="btn-primary" style={{ marginTop: 12 }}>
+                      Salva
+                    </button>
+                  </form>
+
+                  <p className="notice" style={{ marginTop: 14 }}>
+                    <strong>Come si attiva.</strong> 1) In Google Cloud Console crea un client OAuth e
+                    abilita la <em>Business Profile API</em>. 2) Compila il modulo di richiesta accesso:
+                    Google assegna <strong>quota 0</strong> di default e finché non approva ogni
+                    chiamata risponde 403. 3) Ottieni una volta sola un refresh token con scope{" "}
+                    <code>business.manage</code>. Nel frattempo le recensioni continuano ad arrivare via
+                    email (Zapier), che è la sorgente usata ora.
+                  </p>
+                </section>
+                </>
+              ),
+            },
+            {
+              id: "etichette",
+              nodo: (
+                <>
+                <>
+                  <section className="card">
+                    <h2>Etichette ({settings.labels.length})</h2>
+                    <p className="hint" style={{ marginBottom: 16 }}>
+                      Un&apos;etichetta raccoglie le email il cui <strong>oggetto contiene</strong> un
+                      testo. Il filtro sul mittente è facoltativo: lascialo vuoto per prendere tutto il
+                      flusso.
+                    </p>
+
+                    {settings.labels.map((l) => (
+                      <form key={l.id} action={updateLabelAction} className="label-row">
+                        <input type="hidden" name="id" value={l.id} />
+                        <div className="form-grid">
+                          <label className="field">
+                            <span>Nome etichetta</span>
+                            <input name="name" defaultValue={l.name} required />
+                          </label>
+                          <label className="field">
+                            <span>Oggetto contiene</span>
+                            <input name="subjectContains" defaultValue={l.subjectContains} required />
+                          </label>
+                          <label className="field">
+                            <span>Mittente contiene (facoltativo)</span>
+                            <input
+                              name="fromContains"
+                              defaultValue={l.fromContains}
+                              placeholder="es. zapiermail"
+                            />
+                          </label>
+                        </div>
+                        <div className="label-actions">
+                          <button type="submit" className="btn-mini">
+                            Salva modifiche
+                          </button>
+                          <button
+                            type="submit"
+                            className="btn-mini btn-danger"
+                            formAction={deleteLabelAction}
+                          >
+                            Elimina
+                          </button>
+                        </div>
+                      </form>
+                    ))}
+                  </section>
+
+                  <section className="card">
+                    <h2>Aggiungi etichetta</h2>
+                    <form action={addLabelAction}>
+                      <div className="form-grid">
+                        <label className="field">
+                          <span>Nome etichetta</span>
+                          <input name="name" placeholder="Recensioni di Google" required />
+                        </label>
+                        <label className="field">
+                          <span>Oggetto contiene</span>
+                          <input
+                            name="subjectContains"
+                            placeholder="NUOVA RECENSIONE GOOGLE"
+                            required
+                          />
+                        </label>
+                        <label className="field">
+                          <span>Mittente contiene (facoltativo)</span>
+                          <input name="fromContains" placeholder="lascia vuoto per tutti" />
+                        </label>
+                      </div>
+                      <button type="submit" className="btn-primary" style={{ marginTop: 12 }}>
+                        Aggiungi
+                      </button>
+                    </form>
+                  </section>
+                </>
+                </>
+              ),
+            },
+          ]}
+        />
       </div>
     </main>
+  );
+}
+
+/**
+ * Il pannello «Mapping». Vive a parte perché è l'unico con un costo suo: il
+ * conteggio delle recensioni per sede è un'aggregazione da ~600 ms. Dietro un
+ * confine di attesa arriva per conto suo, senza ritardare il resto della
+ * pagina — e quando si arriva a cliccare la voce è già lì.
+ */
+async function PannelloMapping({ sedi }: { sedi: Sede[] }) {
+  const conteggi = await conteggioRecensioniPerSede();
+  const sediMappate = sedi.filter((s) => s.nomeGoogle).length;
+  // Le sedi più attive in cima: si mappano quelle, le altre possono aspettare.
+  const sediMap = sedi
+    .map((s) => ({ ...s, conteggio: conteggi.perSede.get(s.chiave)?.conteggio ?? 0 }))
+    .sort((a, b) => b.conteggio - a.conteggio || a.nome.localeCompare(b.nome));
+
+  return (
+    <>
+      <section className="card">
+        <div className="sec-head">
+          <h2>Mapping delle attività commerciali</h2>
+          <span className="conn-badge conn-ok">
+            {sediMappate}/{sedi.length} mappate
+          </span>
+        </div>
+        <p className="hint">
+          Ogni «sede» qui sotto è ricavata dall&apos;oggetto delle email delle recensioni
+          (es. <em>Orio al Serio Milano-Bergamo</em>). Scrivi accanto il{" "}
+          <strong>nome con cui la sede si trova su Google</strong> (il nome dell&apos;attività
+          commerciale): è il dato stabile — il link cambia, il nome no — e con questo il
+          robot potrà andare dritto alla sede invece di cercare fra i gruppi. Le sedi più
+          attive sono in cima.
+        </p>
+        {conteggi && conteggi.nonRiconosciute > 0 && (
+          <p className="notice">
+            {conteggi.nonRiconosciute} recensioni hanno una sede non riconosciuta
+            dall&apos;oggetto: non compaiono qui finché l&apos;oggetto non le identifica.
+          </p>
+        )}
+        <p className="hint">
+          Cosa diversa: la pagina <Link href="/sedi">Sedi</Link> serve al{" "}
+          <em>link diretto</em> per «Apri su Google» nella coda (il link, non il nome).
+        </p>
+      </section>
+
+      <section className="card">
+        {sediMap.length === 0 ? (
+          <p className="hint">
+            Nessuna sede ancora: compaiono man mano che arrivano le recensioni.
+          </p>
+        ) : (
+          <div className="sedi-lista">
+            {sediMap.map((s) => (
+              <form key={s.chiave} action={salvaMappingSedeAction} className="sede-riga">
+                <input type="hidden" name="chiave" value={s.chiave} />
+                <div className="sede-testa">
+                  <span className="sede-nome">{s.nome}</span>
+                  <span className="conn-badge conn-ok">
+                    {s.conteggio} {s.conteggio === 1 ? "recensione" : "recensioni"}
+                  </span>
+                  <span className={`conn-badge ${s.nomeGoogle ? "conn-ok" : "conn-ko"}`}>
+                    {s.nomeGoogle ? "mappata" : "da mappare"}
+                  </span>
+                </div>
+                <div className="filters-row">
+                  <label className="field grow">
+                    <span>Nome con cui cercarla su Google</span>
+                    <input
+                      name="nomeGoogle"
+                      defaultValue={s.nomeGoogle}
+                      placeholder={`es. ${s.nome}`}
+                    />
+                  </label>
+                  <div className="filters-actions">
+                    <button type="submit" className="btn-mini">
+                      Salva
+                    </button>
+                  </div>
+                </div>
+              </form>
+            ))}
+          </div>
+        )}
+      </section>
+    </>
   );
 }
