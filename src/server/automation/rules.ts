@@ -82,6 +82,18 @@ export function regoleDiDefault(): Regola[] {
       attiva: false,
       condizione: { stelle: [5], testo: "con" },
       azioni: [
+        // Primo passaggio, ed è quello che APRE il ticket: senza questa risposta
+        // all'email nessun ticket nasce e i nodi Freshdesk qui sotto si saltano
+        // tutti per mancanza di bersaglio. Verificato il 9/9/2026 su una 4★
+        // pubblicata senza ticket (Vanessa CREPEAUX, Palermo Punta Raisi).
+        // Destinatario vuoto: segue il Reply-To, cioè customer.care.
+        azione("b0", "email.rispondi", {
+          a: "",
+          testo:
+            "Grazie {nome} per le sue parole! Siamo felici che il servizio della sede di {sede} sia stato all'altezza. A presto da Galdieri rent.",
+          testoInglese:
+            "Thank you {nome} for your kind words! We're glad our service lived up to your expectations. We look forward to welcoming you again — Galdieri rent.",
+        }),
         azione("b1", "freshdesk.trovaTicket"),
         azione("b2", "freshdesk.classifica", {
           tipo: TIPO_TICKET_GMB,
@@ -106,6 +118,14 @@ export function regoleDiDefault(): Regola[] {
       attiva: false,
       condizione: { stelle: [4], testo: "qualsiasi" },
       azioni: [
+        // Come sopra: è questo nodo a far nascere il ticket.
+        azione("c0", "email.rispondi", {
+          a: "",
+          testo:
+            "Grazie {nome} per la recensione. Siamo a disposizione per rendere il prossimo noleggio ancora migliore. A presto da Galdieri rent.",
+          testoInglese:
+            "Thank you {nome} for your review. We're here to make your next rental even better. See you soon — Galdieri rent.",
+        }),
         azione("c1", "freshdesk.trovaTicket"),
         azione("c2", "freshdesk.classifica", {
           tipo: TIPO_TICKET_GMB,

@@ -30,6 +30,7 @@
     "diag:regole": "tsx --tsconfig tsconfig.json scripts/diag-regole.ts",
     "scrivi:regola12": "tsx --tsconfig tsconfig.json scripts/scrivi-regola-1-2.ts",
     "scrivi:regola3": "tsx --tsconfig tsconfig.json scripts/scrivi-regola-3.ts",
+    "aggiungi:emailrispondi": "tsx --tsconfig tsconfig.json scripts/aggiungi-email-rispondi.ts",
     "diag:ticketid": "tsx --tsconfig tsconfig.json scripts/diag-ticket-id.ts",
     "diag:agente": "tsx --tsconfig tsconfig.json scripts/diag-agente.ts",
     "crea-utente": "tsx --tsconfig tsconfig.json scripts/crea-utente.ts",
