@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { after } from "next/server";
 // La versione "con lingua già decisa": qui la lingua per le 5★ senza testo la
 // stabilisce l'IA (linguaRispostaIA), pre-calcolata in blocco più sotto.
 import { testoPerRecensioneConLingua } from "@/server/automation/connectors";
@@ -285,7 +286,20 @@ export default async function HomePage({
   // Code di pubblicazione: letture Mongo veloci, si caricano sempre così i tab
   // hanno i conteggi e la pubblicazione a raffica resta immediata. All'apertura
   // si ritentano, best-effort, le chiusure Freshdesk rimaste in sospeso.
-  await ritentaChiusureInSospeso();
+  // Ritenta le chiusure Freshdesk rimaste in sospeso. È MANUTENZIONE: la
+  // pagina non usa il risultato, ma finché stava qui davanti veniva ATTESA —
+  // e ognuna è una scrittura verso Freshdesk, cioè secondi di attesa prima
+  // ancora di cominciare a leggere i dati. Con `after()` parte quando la
+  // risposta è già partita verso il browser: si fa lo stesso lavoro, ma non
+  // davanti a chi guarda.
+  after(async () => {
+    try {
+      const n = await ritentaChiusureInSospeso();
+      if (n > 0) console.log(`[freshdesk] chiusure in sospeso ritentate: ${n}.`);
+    } catch (e) {
+      console.warn("[freshdesk] ritento chiusure saltato:", e instanceof Error ? e.message : e);
+    }
+  });
   const [codaPubAll, storicoAll, fdOk] = await Promise.all([
     codaDaPubblicare(),
     storicoPubblicazioni(),

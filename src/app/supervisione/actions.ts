@@ -2,7 +2,6 @@
 
 import { revalidatePath } from "next/cache";
 import { headers } from "next/headers";
-import { redirect } from "next/navigation";
 import { after } from "next/server";
 import { richiediAdmin, richiediOperatore } from "@/server/auth/sessione";
 import { segnaChiusa } from "@/server/db/escalation";
@@ -14,7 +13,6 @@ import { avvisaAdminDiSegnalazione } from "@/server/notifiche/segnalazione";
 // middleware non valida la sessione. Segnalare lo fa chiunque sia loggato;
 // risolvere e rimettere in coda solo l'admin.
 
-const str = (fd: FormData, k: string) => String(fd.get(k) ?? "").trim();
 
 /** «il 9 settembre alle 12:24»: per dire QUANDO era già stata segnalata. */
 const fmtQuando = new Intl.DateTimeFormat("it-IT", {
@@ -105,9 +103,33 @@ export async function segnalaAction(chiave: string, notaGrezza: string): Promise
   };
 }
 
+export type EsitoChiusura = { ok: true; messaggio: string } | { ok: false; errore: string };
+
+/**
+ * Invalida SOLO la cache di navigazione della home, senza renderizzarla.
+ *
+ * `revalidatePath` marca un percorso come da rileggere: non esegue la pagina,
+ * quindi non paga posta né Freshdesk. Serve perché la home, pur essendo
+ * dinamica, resta nella Router Cache del browser per qualche decina di secondi:
+ * senza questo, tornando indietro si rivedrebbe la lista di prima.
+ *
+ * Su /supervisione NON si chiama: la card la toglie il browser all'istante, e
+ * far rileggere la pagina che si sta guardando è lavoro buttato.
+ */
+function scartaCacheDellaHome(): void {
+  revalidatePath("/");
+}
+
 /**
  * L'admin CHIUDE: la recensione è già stata gestita e non deve più tornare da
  * nessuna parte.
+ *
+ * DEVE essere istantanea, come il tasto «?»: si preme una volta e la card se ne
+ * va. Perciò l'azione RITORNA un esito e non naviga. Prima era un form con
+ * `redirect("/supervisione")`: il browser restava fermo senza dire niente
+ * finché il server non aveva ri-renderizzato tutta la pagina — statistiche
+ * comprese — e chi premeva vedeva «non è successo niente». La riga sparisce
+ * solo dopo, ricaricando.
  *
  * Chiude su tutti e tre i fronti, perché su tutti e tre una recensione può
  * ricomparire:
@@ -123,32 +145,41 @@ export async function segnalaAction(chiave: string, notaGrezza: string): Promise
  * sistema restava aperta, continuava a contare fra le non gestite e — se la
  * segnalazione veniva rimessa in coda — poteva ripresentarsi.
  */
-export async function chiudiGiaGestitaAction(formData: FormData): Promise<void> {
+export async function chiudiGiaGestitaAction(
+  chiave: string,
+  notaGrezza: string,
+): Promise<EsitoChiusura> {
   const admin = await richiediAdmin();
-  const chiave = str(formData, "chiave");
-  if (chiave) {
-    const nota = str(formData, "nota").slice(0, 1000);
-    await chiudiSegnalazione(chiave, "risolta", nota, admin._id);
-    // Il motivo finisce sotto la card in «Archiviate»: se l'admin non scrive
-    // nulla ci va comunque una frase che dica da dove arriva la chiusura,
-    // altrimenti fra un mese quella riga è muta.
-    await segnaGestitaFuoriPortale(
-      chiave,
-      nota || "Chiusa dalla Supervisione: già gestita fuori dal portale.",
-    );
-    await segnaChiusa(chiave);
-  }
-  revalidatePath("/supervisione");
-  revalidatePath("/");
-  redirect("/supervisione");
+  if (!chiave) return { ok: false, errore: "Recensione non indicata." };
+  const nota = (notaGrezza ?? "").trim().slice(0, 1000);
+
+  await chiudiSegnalazione(chiave, "risolta", nota, admin._id);
+  // Il motivo finisce sotto la card in «Archiviate»: se l'admin non scrive
+  // nulla ci va comunque una frase che dica da dove arriva la chiusura,
+  // altrimenti fra un mese quella riga è muta.
+  await segnaGestitaFuoriPortale(
+    chiave,
+    nota || "Chiusa dalla Supervisione: già gestita fuori dal portale.",
+  );
+  await segnaChiusa(chiave);
+
+  scartaCacheDellaHome();
+  return { ok: true, messaggio: "chiusa: risulta gestita e va in «Archiviate»" };
 }
 
-/** L'admin la rimanda all'operatore: ricompare in «Da approvare». */
-export async function rimettiInCodaSegnalazioneAction(formData: FormData): Promise<void> {
+/**
+ * L'admin la rimanda all'operatore: ricompare in «Da approvare».
+ *
+ * Stesse regole di velocità della chiusura: risponde e basta, la card la
+ * toglie il browser.
+ */
+export async function rimettiInCodaSegnalazioneAction(
+  chiave: string,
+  notaGrezza: string,
+): Promise<EsitoChiusura> {
   const admin = await richiediAdmin();
-  const chiave = str(formData, "chiave");
-  if (chiave) await chiudiSegnalazione(chiave, "rimessa", str(formData, "nota").slice(0, 1000), admin._id);
-  revalidatePath("/supervisione");
-  revalidatePath("/");
-  redirect("/supervisione");
+  if (!chiave) return { ok: false, errore: "Recensione non indicata." };
+  await chiudiSegnalazione(chiave, "rimessa", (notaGrezza ?? "").trim().slice(0, 1000), admin._id);
+  scartaCacheDellaHome();
+  return { ok: true, messaggio: "rimessa in coda: torna in «Da approvare»" };
 }

@@ -3934,6 +3934,21 @@ main.pipeline .pub-tabs {
 .segnalazione-chiusura {
   margin-top: 12px;
 }
+
+/* Appena chiusa o rimessa in coda: al posto della card resta questo rigo.
+   La card sparisce all'istante — è quello che chiede chi ha premuto — ma
+   sparire e basta si legge come un difetto: una riga verde dice che il clic è
+   arrivato, e occupa un rigo invece di venti. Se ne va al prossimo caricamento. */
+.segnalazione-fatta {
+  margin: 14px 0 0;
+  padding: 10px 14px;
+  border-left: 3px solid var(--g-green-dark);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  background: color-mix(in srgb, var(--g-green-dark) 8%, var(--surface-alt));
+  color: var(--g-green-dark);
+  font-size: 0.88rem;
+  font-weight: 600;
+}
 .segnalazioni-chiuse {
   list-style: none;
   margin: 10px 0 0;

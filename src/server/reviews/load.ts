@@ -170,7 +170,19 @@ function raggruppa(messaggi: MailDetail[], label: Label) {
 // e cavalca la cache. Vive nel processo del server: si azzera solo a un riavvio.
 type CaricoRecensioni = { recensioni: Recensione[]; analizzate: number };
 const cacheCarico = new Map<string, { at: number; dati: CaricoRecensioni }>();
-const TTL_CARICO_MS = 90_000;
+/**
+ * Tre minuti, quanto l'auto-aggiornamento della pagina.
+ *
+ * A 90 secondi la cache scadeva a metà fra due auto-aggiornamenti, quindi
+ * capitava spesso di ripagare 3,5 secondi di posta su un clic qualsiasi — un
+ * cambio di tab, un ritorno in lista — invece che sul giro automatico. Allineati
+ * i due tempi, l'ingest vero lo fa l'auto-aggiornamento e i clic in mezzo
+ * viaggiano sulla cache.
+ *
+ * Cosa si perde: una recensione appena arrivata può farsi vedere fino a tre
+ * minuti dopo invece di uno e mezzo. «Aggiorna» (`forza: true`) la porta subito.
+ */
+const TTL_CARICO_MS = 180_000;
 
 export async function caricaRecensioni(
   label: Label,

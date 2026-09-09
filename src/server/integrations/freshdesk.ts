@@ -523,7 +523,19 @@ export async function cercaTicketPerRecensione(
 // filtro. Costo fisso: 2 crediti a pagina, 12 per sweep; in memoria ~5 MB.
 // Sola lettura; si azzera a un riavvio.
 let cacheTicket: { at: number; pagine: number; tickets: FdTicket[] } | null = null;
-const TTL_TICKET_MS = 60_000;
+/**
+ * Cinque minuti, non uno.
+ *
+ * A 60 secondi chi lavora ripagava 2,5 secondi di Freshdesk più o meno a ogni
+ * caricamento: si pubblica, si torna in lista, la cache è già scaduta. Ed è la
+ * sola cosa che sta fra il clic e la lista.
+ *
+ * Cosa si perde: una recensione che qualcuno chiude FUORI dal portale può
+ * restare in lista fino a cinque minuti invece di uno. Non è un errore — è la
+ * stessa informazione, vecchia di qualche minuto — e chi ha fretta ha
+ * «Aggiorna», che passa `forza: true` e salta la cache.
+ */
+const TTL_TICKET_MS = 300_000;
 
 export async function elencoTicketRecenti(pagine: number, forza = false): Promise<FdTicket[]> {
   if (!forza && cacheTicket && cacheTicket.pagine >= pagine && Date.now() - cacheTicket.at < TTL_TICKET_MS) {

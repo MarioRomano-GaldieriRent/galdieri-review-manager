@@ -16,10 +16,8 @@ import {
   type Intervallo,
 } from "@/server/statistiche/query";
 import { inizioGiornoItaliano } from "@/server/tempo";
-import { BottoneTest } from "../BottoneTest";
 import { Stelle } from "../da-pubblicare/Voci";
-import { VediMail } from "../VediMail";
-import { chiudiGiaGestitaAction, rimettiInCodaSegnalazioneAction } from "./actions";
+import { ListaSegnalazioni } from "./ListaSegnalazioni";
 
 // Supervisione: riservata all'amministratore. Due cose sole:
 //   1. i numeri del periodo scelto (recensioni gestite per punteggio,
@@ -286,29 +284,38 @@ export default async function SupervisionePage({
       </section>
 
       {/* ------------------------------------------------ segnalazioni aperte */}
+      {/* La lista sta nel browser: chiudere una segnalazione è un clic e la card
+          deve sparire subito, senza aspettare che il server ri-renderizzi la
+          pagina. Il contenuto delle card lo prepara comunque il server (prop
+          `contenuto`), così testi e formattatori non finiscono nel pacchetto JS. */}
       <section className="card">
-        <div className="sec-head">
-          <h2>Segnalazioni aperte</h2>
-          {aperte.length > 0 && <span className="chip-count">{aperte.length}</span>}
-        </div>
-        <p className="hint">
-          Recensioni che un operatore ha passato a te col tasto «?» perché non riusciva a
-          gestirle. Finché stanno qui, lui non le vede più.{" "}
-          <strong>«Chiudi: già gestita»</strong> la chiude davvero — risulta gestita anche nelle
-          statistiche e finisce in «Archiviate», dove resta leggibile col motivo e si può
-          ripristinare: è il tasto per quando ti dicono «questa era già fatta».{" "}
-          <strong>«Rimetti in coda»</strong> la fa ricomparire in «Da approvare» dell&apos;operatore.{" "}
-          <strong>«Test»</strong> manda il robot a cercare QUELLA recensione su Google e ti riporta
-          il passo-passo, senza pubblicare niente: è il modo per capire un «non lo trova» invece di
-          indovinarlo.
-        </p>
-        {aperte.length === 0 ? (
-          <p className="dash-vuoto">Nessuna segnalazione aperta.</p>
-        ) : (
-          aperte.map((s) => (
-            <CardSegnalazione key={s.chiave} s={s} chi={chiPer(s.segnalataDa)} ticket={ticketPer.get(s.chiave) ?? null} />
-          ))
-        )}
+        <ListaSegnalazioni
+          nota={
+            <p className="hint">
+              Recensioni che un operatore ha passato a te col tasto «?» perché non riusciva a
+              gestirle. Finché stanno qui, lui non le vede più.{" "}
+              <strong>«Chiudi: già gestita»</strong> la chiude davvero — risulta gestita anche nelle
+              statistiche e finisce in «Archiviate», dove resta leggibile col motivo e si può
+              ripristinare: è il tasto per quando ti dicono «questa era già fatta».{" "}
+              <strong>«Rimetti in coda»</strong> la fa ricomparire in «Da approvare»
+              dell&apos;operatore. <strong>«Test»</strong> manda il robot a cercare QUELLA
+              recensione su Google e ti riporta il passo-passo, senza pubblicare niente: è il modo
+              per capire un «non lo trova» invece di indovinarlo.
+            </p>
+          }
+          voci={aperte.map((s) => ({
+            chiave: s.chiave,
+            nome: s.nomeCliente,
+            messaggioId: s.messaggioId,
+            contenuto: (
+              <ContenutoSegnalazione
+                s={s}
+                chi={chiPer(s.segnalataDa)}
+                ticket={ticketPer.get(s.chiave) ?? null}
+              />
+            ),
+          }))}
+        />
       </section>
 
       {/* ------------------------------------------------ segnalazioni chiuse */}
@@ -349,16 +356,25 @@ export default async function SupervisionePage({
   );
 }
 
-function CardSegnalazione({ s, chi, ticket }: { s: Segnalazione; chi: string; ticket: number | null }) {
-  const rimetti = `rimetti-${s.chiave}`;
+/**
+ * Il CONTENUTO della card, renderizzato dal server: intestazione, testo della
+ * recensione, nota di chi l'ha segnalata, ticket collegato.
+ *
+ * I tasti NON stanno qui. Vivono in ListaSegnalazioni, lato browser, perche'
+ * devono poter far sparire la card all'istante. Cosi' il pacchetto JavaScript
+ * non si porta dietro ne' i testi delle recensioni ne' i formattatori di data.
+ */
+function ContenutoSegnalazione({
+  s,
+  chi,
+  ticket,
+}: {
+  s: Segnalazione;
+  chi: string;
+  ticket: number | null;
+}) {
   return (
-    <article className="card dash-card segnalazione-card">
-      {/* «Rimetti in coda» non ha un form suo visibile: invia questo, via attributo form=,
-          così sta in fila con «Risolta» senza annidare form. */}
-      <form id={rimetti} action={rimettiInCodaSegnalazioneAction} className="dash-arch-form">
-        <input type="hidden" name="chiave" value={s.chiave} />
-      </form>
-
+    <>
       <header className="dash-card-testa">
         <div className="dash-autore">
           <span className="dash-iniziale" aria-hidden="true">
@@ -393,41 +409,6 @@ function CardSegnalazione({ s, chi, ticket }: { s: Segnalazione; chi: string; ti
           Ticket Freshdesk collegato: <Link href={`/ticket/${ticket}`}>#{ticket}</Link>
         </p>
       )}
-
-      <form action={chiudiGiaGestitaAction} className="segnalazione-chiusura">
-        <input type="hidden" name="chiave" value={s.chiave} />
-        <textarea
-          name="nota"
-          className="dash-testo"
-          rows={2}
-          maxLength={1000}
-          placeholder="Cos'era e perché la chiudi (finisce sotto la card in «Archiviate»)…"
-          aria-label="Nota di chiusura"
-        />
-        <div className="dash-azioni">
-          <button
-            type="submit"
-            className="btn-primary"
-            title="La recensione risulta gestita e va in «Archiviate»: non torna né a te né all'operatore"
-          >
-            ✓ Chiudi: già gestita
-          </button>
-          <button
-            type="submit"
-            form={rimetti}
-            className="btn-mini"
-            title="La recensione torna in «Da approvare» dell'operatore"
-          >
-            ↩ Rimetti in coda
-          </button>
-          {/* Il perché di una segnalazione è quasi sempre «il robot non la
-              trova»: il Test lo manda a cercarla e riporta il passo-passo, qui
-              dove si decide, senza dover tornare in coda. Non pubblica nulla e
-              l'azione ricontrolla da sé che chi la lancia sia admin. */}
-          <BottoneTest chiave={s.chiave} />
-          <VediMail id={s.messaggioId} className="btn-mini" />
-        </div>
-      </form>
-    </article>
+    </>
   );
 }
