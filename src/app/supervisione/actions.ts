@@ -5,7 +5,7 @@ import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { richiediAdmin, richiediOperatore } from "@/server/auth/sessione";
 import { leggiRecensione } from "@/server/db/recensioni";
-import { chiudiSegnalazione, segnala } from "@/server/db/segnalazioni";
+import { chiudiSegnalazione, leggiSegnalazione, segnala } from "@/server/db/segnalazioni";
 import { avvisaAdminDiSegnalazione } from "@/server/notifiche/segnalazione";
 
 // Le azioni della segnalazione. La guardia sta QUI, dentro ogni azione: il
@@ -13,6 +13,14 @@ import { avvisaAdminDiSegnalazione } from "@/server/notifiche/segnalazione";
 // risolvere e rimettere in coda solo l'admin.
 
 const str = (fd: FormData, k: string) => String(fd.get(k) ?? "").trim();
+
+/** «il 9 settembre alle 12:24»: per dire QUANDO era già stata segnalata. */
+const fmtQuando = new Intl.DateTimeFormat("it-IT", {
+  day: "numeric",
+  month: "long",
+  hour: "2-digit",
+  minute: "2-digit",
+});
 
 /**
  * L'indirizzo con cui raggiungere il gestionale, per il tasto dentro la mail.
@@ -39,7 +47,18 @@ export async function segnalaAction(formData: FormData): Promise<void> {
   if (!chiave || !nota) redirect("/?errore=segnalazione-senza-nota");
   const r = await leggiRecensione(chiave);
   if (!r) redirect("/?errore=recensione-non-trovata");
-  await segnala(r, nota, op._id);
+
+  // Una sola segnalazione per volta. Se ce n'è già una aperta si esce SUBITO:
+  // niente riscrittura e — soprattutto — nessuna seconda mail all'admin. Vale
+  // per il doppio clic, per il tasto premuto su una pagina vecchia e per il
+  // ritorno con «Indietro».
+  const creata = await segnala(r, nota, op._id);
+  if (!creata) {
+    const gia = await leggiSegnalazione(chiave);
+    const quando = gia ? fmtQuando.format(new Date(gia.segnalataIl)) : "poco fa";
+    const msg = `«${r.nome || "Questa recensione"}» era già stata segnalata ${quando}: la sta guardando l'amministratore. Non serve rimandarla.`;
+    redirect(`/?esitoOk=0&esitoMsg=${encodeURIComponent(msg)}`);
+  }
 
   // Avviso agli admin. Best-effort DOPO il salvataggio: se la posta non parte
   // la segnalazione resta comunque nel pannello, e il motivo finisce nei log.

@@ -10,6 +10,11 @@ import { useState } from "react";
 
 export function BottoneSegnala({ chiave }: { chiave: string }) {
   const [aperto, setAperto] = useState(false);
+  // Il primo clic chiude la porta: il tasto si spegne e cambia scritta, così
+  // non si manda la stessa segnalazione due volte mentre la pagina lavora.
+  // È solo il primo argine, comodo; quello che conta davvero è la guardia nel
+  // database (segnala() in db/segnalazioni.ts), che regge anche al ricarico.
+  const [inviato, setInviato] = useState(false);
   const form = `segn-${chiave}`;
 
   return (
@@ -57,12 +62,20 @@ export function BottoneSegnala({ chiave }: { chiave: string }) {
             placeholder="Es. il cliente non si trova su Google, il ticket risulta già chiuso, la sede è sbagliata…"
           />
           <div className="segnala-azioni">
-            <button type="submit" form={form} className="btn-primary">
-              Segnala all'amministratore
+            <button
+              type="submit"
+              form={form}
+              className="btn-primary"
+              disabled={inviato}
+              onClick={() => setInviato(true)}
+            >
+              {inviato ? "Invio…" : "Segnala all'amministratore"}
             </button>
-            <button type="button" className="btn-mini" onClick={() => setAperto(false)}>
-              Annulla
-            </button>
+            {!inviato && (
+              <button type="button" className="btn-mini" onClick={() => setAperto(false)}>
+                Annulla
+              </button>
+            )}
           </div>
           <p className="hint">
             La recensione sparisce dalla tua lista e passa a chi amministra, con la tua nota.

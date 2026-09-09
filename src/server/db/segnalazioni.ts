@@ -72,40 +72,69 @@ function componi(d: DocSegn): Segnalazione {
 }
 
 /**
- * L'operatore segnala la recensione: voce «aperta» con la sua nota. Una
- * recensione già rimessa in coda si può segnalare di nuovo: la voce riparte da
- * zero (la storia resta nel registro attività).
+ * L'operatore segnala la recensione: voce «aperta» con la sua nota.
+ *
+ * UNA SOLA VOLTA. Se ce n'è già una APERTA per quella recensione non si fa
+ * nulla e si torna `false`: senza questa guardia un doppio clic, un tasto
+ * premuto su una pagina vecchia o un ritorno con «Indietro» riscrivevano la
+ * segnalazione e — soprattutto — rimandavano la mail all'amministratore ogni
+ * volta.
+ *
+ * La guardia è ATOMICA e sta nel database, non in un controllo prima della
+ * scrittura: il filtro esclude le voci già aperte, quindi l'upsert è costretto
+ * a inserire e sbatte contro l'unicità di `_id` (errore 11000). Due clic
+ * simultanei non possono passare tutti e due, cosa che un «leggi e poi scrivi»
+ * non garantirebbe.
+ *
+ * Una voce RISOLTA o RIMESSA IN CODA invece si può segnalare di nuovo: il
+ * filtro la lascia passare e la voce riparte da zero (la storia resta nel
+ * registro attività). È il caso di una recensione rimandata all'operatore che
+ * continua a non essere lavorabile.
  */
-export async function segnala(r: Recensione, nota: string, operatoreId: number): Promise<void> {
+export async function segnala(r: Recensione, nota: string, operatoreId: number): Promise<boolean> {
   const ora = new Date();
-  await (await segnalazioni()).updateOne(
-    { _id: r.chiave },
-    {
-      $set: {
-        nomeCliente: r.nome,
-        stelle: r.stelle,
-        sedeNome: r.sede,
-        testoRecensione: testoRecensione(r),
-        ricevutaIl: new Date(r.ricevutaIl),
-        messaggioId: r.messaggioId,
-        nota,
-        segnalataIl: ora,
-        segnalataDa: operatoreId,
-        stato: "aperta",
-        notaChiusura: "",
-        chiusaIl: null,
-        chiusaDa: null,
-        aggiornataIl: ora,
+  try {
+    await (await segnalazioni()).updateOne(
+      { _id: r.chiave, stato: { $ne: "aperta" } },
+      {
+        $set: {
+          nomeCliente: r.nome,
+          stelle: r.stelle,
+          sedeNome: r.sede,
+          testoRecensione: testoRecensione(r),
+          ricevutaIl: new Date(r.ricevutaIl),
+          messaggioId: r.messaggioId,
+          nota,
+          segnalataIl: ora,
+          segnalataDa: operatoreId,
+          stato: "aperta",
+          notaChiusura: "",
+          chiusaIl: null,
+          chiusaDa: null,
+          aggiornataIl: ora,
+        },
       },
-    },
-    { upsert: true },
-  );
+      { upsert: true },
+    );
+  } catch (e) {
+    // 11000 = chiave duplicata: esiste già una voce aperta per questa
+    // recensione, ed è esattamente il caso che vogliamo bloccare.
+    if ((e as { code?: number }).code === 11000) return false;
+    throw e;
+  }
   await registraAttivita("segnalazione.aperta", {
     operatoreId,
     oggettoTipo: "recensione",
     oggettoId: r.chiave,
     dettaglio: nota.slice(0, 200),
   });
+  return true;
+}
+
+/** La segnalazione di una recensione, in qualunque stato. */
+export async function leggiSegnalazione(chiave: string): Promise<Segnalazione | null> {
+  const d = await (await segnalazioni()).findOne({ _id: chiave });
+  return d ? componi(d) : null;
 }
 
 /** Chiavi da tenere FUORI da «Da approvare»: aperte e risolte (le rimesse tornano in coda). */
