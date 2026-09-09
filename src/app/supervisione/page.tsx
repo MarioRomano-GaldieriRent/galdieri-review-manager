@@ -9,7 +9,13 @@ import {
   elencoChiuse,
   type Segnalazione,
 } from "@/server/db/segnalazioni";
-import { gestionePerStelle, modifichePerStelle, type Intervallo } from "@/server/statistiche/query";
+import {
+  gestionePerStelle,
+  gestiteNelGiorno,
+  modifichePerStelle,
+  type Intervallo,
+} from "@/server/statistiche/query";
+import { inizioGiornoItaliano } from "@/server/tempo";
 import { BottoneTest } from "../BottoneTest";
 import { Stelle } from "../da-pubblicare/Voci";
 import { VediMail } from "../VediMail";
@@ -64,6 +70,15 @@ function quota(n: number, base: number, soglia = SOGLIA_BASE): string {
   return base >= soglia ? ` · ${Math.round((n / base) * 100)}%` : "";
 }
 
+/**
+ * La riga sotto ai numeri di «Oggi». Qui la percentuale si mostra sempre, anche
+ * su basi piccole: non è una statistica da cui trarre conclusioni, è la
+ * ripartizione esatta di una giornata — «4 su 12» si legge e basta.
+ */
+function quotaOggi(n: number, totale: number): string {
+  return totale > 0 ? `${n} su ${totale} · ${Math.round((n / totale) * 100)}%` : "nessuna, per ora";
+}
+
 function Riquadro({ titolo, valore, base }: { titolo: string; valore: string | number; base?: string }) {
   return (
     <div className="stat-tile">
@@ -86,15 +101,21 @@ export default async function SupervisionePage({
   const dal = new Date(al.getTime() - periodoSel.giorni * 24 * 60 * 60 * 1000);
   const intervallo: Intervallo = { dal, al };
 
-  const [righe, modifiche, apertePeriodo, gestitePeriodo, aperte, chiuse, utenti] = await Promise.all([
-    gestionePerStelle(intervallo),
-    modifichePerStelle(intervallo),
-    contaApertePeriodo(dal, al),
-    contaGestitePeriodo(dal, al),
-    elencoAperte(),
-    elencoChiuse(),
-    elencoUtenti(),
-  ]);
+  // «Oggi» sta FUORI dai tab del periodo: è la fotografia della giornata in
+  // corso e non deve cambiare quando si sfoglia 7/30/90 giorni.
+  const inizioOggi = inizioGiornoItaliano(al);
+
+  const [righe, modifiche, apertePeriodo, gestitePeriodo, oggi, aperte, chiuse, utenti] =
+    await Promise.all([
+      gestionePerStelle(intervallo),
+      modifichePerStelle(intervallo),
+      contaApertePeriodo(dal, al),
+      contaGestitePeriodo(dal, al),
+      gestiteNelGiorno(inizioOggi, al),
+      elencoAperte(),
+      elencoChiuse(),
+      elencoUtenti(),
+    ]);
   const nomeDi = new Map<number, string>(utenti.map((u) => [u._id, u.nome]));
   const chiPer = (id: number | null) => (id === null ? "—" : nomeDi.get(id) ?? (id === 1 ? "Sistema" : `#${id}`));
 
@@ -129,6 +150,37 @@ export default async function SupervisionePage({
         Riservata all&apos;amministratore: i numeri del periodo scelto e le recensioni che gli
         operatori hanno segnalato perché non riuscivano a gestirle.
       </p>
+
+      {/* --------------------------------------------------------------- oggi */}
+      {/* Fuori dai tab di proposito: è la giornata in corso, non un periodo da
+          sfogliare. Ed è la prima cosa che si guarda entrando. */}
+      <section className="card">
+        <div className="sec-head">
+          <h2>Oggi</h2>
+          <span className="muted">{dataConGiorno(al)}</span>
+        </div>
+        <div className="stat-griglia">
+          <Riquadro titolo="Recensioni chiuse oggi" valore={oggi.totale} base="dalla mezzanotte" />
+          <Riquadro
+            titolo="Dal portale"
+            valore={oggi.dalPortale}
+            base={quotaOggi(oggi.dalPortale, oggi.totale)}
+          />
+          <Riquadro
+            titolo="Dalla posta"
+            valore={oggi.dallaPosta}
+            base={quotaOggi(oggi.dallaPosta, oggi.totale)}
+          />
+        </div>
+        <p className="hint">
+          «Dal portale» sono le risposte pubblicate da questo sito oggi. «Dalla posta» sono quelle
+          che il portale ha visto arrivare nella casella scritte da qualcuno di Galdieri senza
+          passare di qui: ci rientra anche l&apos;inoltro al customer care, che è lavoro fatto
+          fuori ma non è una recensione chiusa. La data è quella in cui il portale se n&apos;è
+          accorto — rilegge la posta ogni pochi minuti — non per forza l&apos;istante dell&apos;invio.
+          Chi compare da tutte e due le parti è contato una volta sola.
+        </p>
+      </section>
 
       {/* ------------------------------------------------------------ periodo */}
       <nav className="pub-tabs" aria-label="Periodo">

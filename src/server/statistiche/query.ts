@@ -419,6 +419,47 @@ export async function gestione(): Promise<Gestione> {
   return { ricevute, conRisposta, dalSistema };
 }
 
+export type GestiteNelGiorno = { totale: number; dalPortale: number; dallaPosta: number };
+
+/**
+ * Quante recensioni sono state CHIUSE in una giornata, e quante lo sono state
+ * dalla posta invece che dal portale.
+ *
+ * È l'unica misura che conta per DATA DI LAVORAZIONE e non per data di
+ * ricezione: le altre dicono «delle recensioni arrivate in questo periodo,
+ * quante sono state gestite», che è la domanda giusta per valutare una coorte e
+ * quella sbagliata per sapere quanto si è lavorato oggi.
+ *
+ * Due sorgenti, unite senza doppioni:
+ *  - dal PORTALE: una pubblicazione andata a buon fine oggi (`pubblicataIl`);
+ *  - dalla POSTA: il portale ha rilevato oggi, nella casella, una risposta
+ *    scritta da qualcuno di Galdieri senza passare di qui (`rispostaRilevataIl`,
+ *    che si scrive una volta sola, alla prima volta che la si vede).
+ * Chi compare in tutte e due conta una volta, dalla parte del portale.
+ *
+ * Attenzione a cosa vuol dire «dalla posta»: il segnale è una mail in uscita da
+ * un indirizzo Galdieri che non sia il customer care, quindi ci rientra anche
+ * l'INOLTRO a Cherubina — che è lavoro fatto fuori dal portale, ma non è una
+ * recensione chiusa. E la data è quella in cui il portale se n'è accorto, non
+ * per forza l'istante dell'invio: la posta si rilegge ogni pochi minuti.
+ */
+export async function gestiteNelGiorno(dal: Date, al: Date): Promise<GestiteNelGiorno> {
+  const [pubb, posta] = await Promise.all([
+    (await coll("pubblicazioni"))
+      .find(
+        { pubblicataIl: { $gte: dal, $lt: al }, stato: { $in: ["pubblicata", "verificata"] } },
+        { projection: { _id: 1 } },
+      )
+      .toArray() as Promise<{ _id: string }[]>,
+    (await coll("recensioni"))
+      .find({ rispostaRilevataIl: { $gte: dal, $lt: al } }, { projection: { _id: 1 } })
+      .toArray() as Promise<{ _id: string }[]>,
+  ]);
+  const dalPortale = new Set(pubb.map((d) => d._id));
+  const dallaPosta = posta.filter((d) => !dalPortale.has(d._id)).length;
+  return { totale: dalPortale.size + dallaPosta, dalPortale: dalPortale.size, dallaPosta };
+}
+
 export type RigaStelle = Gestione & { stelle: number | null };
 
 /** Una finestra temporale [dal, al). `dal: null` = da sempre (nessun filtro). */

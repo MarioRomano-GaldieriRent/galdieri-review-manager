@@ -45,6 +45,26 @@ export function aOraItaliana(isoUtc: string): string {
 }
 
 /**
+ * Mezzanotte del giorno italiano in cui cade `ora`, restituita come istante.
+ *
+ * Serve a ogni conto che dice «oggi»: il giorno di chi legge comincia a
+ * mezzanotte a Roma, non a mezzanotte UTC, e fra le 00:00 e le 02:00 italiane
+ * le due cose sono giorni diversi. Non si usa `new Date(anno, mese, giorno)`
+ * perché quello prende il fuso del PROCESSO: sul portatile è Roma, su un server
+ * configurato in UTC darebbe silenziosamente un giorno sbagliato.
+ *
+ * Lo scarto fra l'istante e la sua lettura italiana È l'offset del fuso in quel
+ * momento — così l'ora legale non va gestita a parte.
+ */
+export function inizioGiornoItaliano(ora: Date = new Date()): Date {
+  const locale = aOraItaliana(ora.toISOString()); // "2026-09-09T15:40:00"
+  if (!locale) return ora;
+  const scarto = new Date(`${locale}Z`).getTime() - ora.getTime();
+  const mezzanotteLocale = new Date(`${locale.slice(0, 10)}T00:00:00Z`).getTime();
+  return new Date(mezzanotteLocale - scarto);
+}
+
+/**
  * Settimana ISO nel formato "2026-W30".
  *
  * Non si usa strftime('%W') di SQLite: quella non è la settimana ISO (conta le
