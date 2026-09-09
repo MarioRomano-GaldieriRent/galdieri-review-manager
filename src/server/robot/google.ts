@@ -844,28 +844,49 @@ export async function apriSedePerNome(
   await page.waitForTimeout(1600);
   await scatto("3-digitato");
 
-  // Corrisponde se il testo contiene, nell'ordine, le parole del nome.
-  const re = new RegExp(
+  // IL NOME DEVE COMBACIARE PER INTERO, non «contenere».
+  //
+  // Sotto lo stesso marchio convivono attività diverse cercando le quali una
+  // regex larga sbaglia bersaglio: «Galdieri Rent Cagliari» combaciava anche con
+  // «Galdieri Rent Cagliari noleggio lungo termine», e il robot apriva le
+  // recensioni dell'attività sbagliata — dove poi avrebbe potuto scrivere sotto
+  // la recensione di un altro. Quindi:
+  //   1. nome IDENTICO;
+  //   2. nome seguito da un separatore vero (·, |, virgola, trattino, a capo):
+  //      è il caso «Nome · Via Tale 12», dove il resto è l'indirizzo;
+  //   3. solo se NON c'è nulla di esatto e il compatibile è UNO SOLO, si prende
+  //      quello — nessuna ambiguità da sbagliare;
+  //   4. altrimenti ci si ferma: meglio non pubblicare che pubblicare altrove.
+  const esc = cerca.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+");
+  const reEsatto = new RegExp(`^\\s*${esc}\\s*$`, "i");
+  const reConIndirizzo = new RegExp(`^\\s*${esc}\\s*[·|,\\n\\u2013\\u2014-]`, "i");
+  /** Il vecchio confronto largo: resta solo come ultima spiaggia, se è l'unico. */
+  const reLargo = new RegExp(
     cerca
       .replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
       .split(/\s+/)
       .join(".*"),
     "i",
   );
+
+  const norm = (s: string) => s.replace(/\s+/g, " ").trim();
   const sonoSuRecensioni = async () =>
     (await page.getByRole("button", { name: /Rispondi/i }).count().catch(() => 0)) > 0;
 
-  // Dump dei candidati + click del risultato-sede che corrisponde. Ritorna true
-  // se ha cliccato qualcosa.
-  const tentaRisultato = async (): Promise<boolean> => {
-    const possibili = await page
+  /** I testi dei risultati visibili, senza doppioni. */
+  const candidati = async (): Promise<string[]> => {
+    const grezzi = await page
       .$$eval("[role=option], [role=menuitem], a, li", (els) =>
         els
           .map((e) => (e.textContent || "").replace(/\s+/g, " ").trim())
           .filter((t) => t && t.length < 60),
       )
       .catch(() => []);
-    log(`risultati visibili (primi 15): ${JSON.stringify([...new Set(possibili)].slice(0, 15))}`);
+    return [...new Set(grezzi.map(norm))];
+  };
+
+  /** Prova a cliccare il primo risultato che combacia con `re`. */
+  const clicca = async (re: RegExp, come: string): Promise<boolean> => {
     for (const loc of [
       page.getByRole("option", { name: re }),
       page.getByRole("menuitem", { name: re }),
@@ -876,8 +897,34 @@ export async function apriSedePerNome(
       if ((await r.count().catch(() => 0)) === 0) continue;
       if (!(await r.isVisible().catch(() => false))) continue;
       await r.click({ timeout: 6000 }).catch(() => {});
-      log(`cliccato un risultato per «${cerca}»`);
+      log(`cliccato «${cerca}» (${come})`);
       return true;
+    }
+    return false;
+  };
+
+  /** L'ultimo motivo per cui non si è cliccato: finisce nell'esito. */
+  let motivoNo = "";
+
+  const tentaRisultato = async (): Promise<boolean> => {
+    const visti = await candidati();
+    log(`risultati visibili (primi 15): ${JSON.stringify(visti.slice(0, 15))}`);
+
+    if (await clicca(reEsatto, "nome esatto")) return true;
+    if (await clicca(reConIndirizzo, "nome esatto + indirizzo")) return true;
+
+    // Niente di esatto: si guarda quanti sono anche solo compatibili.
+    const compatibili = visti.filter((t) => reLargo.test(t));
+    if (compatibili.length === 1) {
+      log(`nessun nome esatto, ma un solo risultato compatibile: «${compatibili[0]}»`);
+      if (await clicca(reLargo, "unico compatibile")) return true;
+    }
+    if (compatibili.length > 1) {
+      motivoNo =
+        `nessun risultato si chiama esattamente «${cerca}», e ce ne sono ${compatibili.length} che gli somigliano ` +
+        `(${compatibili.slice(0, 4).map((c) => `«${c}»`).join(", ")}). Non scelgo a caso: ` +
+        `controlla il nome esatto dell'attività nel pannello Mapping.`;
+      log(motivoNo);
     }
     return false;
   };
@@ -895,8 +942,16 @@ export async function apriSedePerNome(
     cliccato = await tentaRisultato();
   }
 
-  // 3) L'Invio può portare DRITTO alle recensioni della sede (match unico):
-  //    in quel caso non c'è nulla da cliccare, ma va bene lo stesso.
+  // 3) Se non si è cliccato per AMBIGUITÀ ci si ferma qui, anche se la pagina
+  //    mostrasse già delle recensioni: l'Invio può aver aperto l'attività
+  //    sbagliata fra quelle simili, e proseguire vorrebbe dire rispondere sotto
+  //    le recensioni di un'altra. Meglio tornare indietro e farlo dire.
+  if (!cliccato && motivoNo) {
+    return { aperta: false, via: "nome-ambiguo", dettaglio: motivoNo };
+  }
+
+  // L'Invio può portare DRITTO alle recensioni della sede (match unico): in quel
+  // caso non c'è nulla da cliccare, ma va bene lo stesso.
   if (!cliccato && !(await sonoSuRecensioni())) {
     return {
       aperta: false,
