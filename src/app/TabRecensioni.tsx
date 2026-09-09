@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState, useTransition } from "react";
+import { useState, useTransition, type ReactNode } from "react";
 
 // I tab della home, con il RISCONTRO al clic.
 //
@@ -22,8 +22,15 @@ export type VoceTab = {
   etichetta: string;
   titolo: string;
   attivo: boolean;
-  /** Il numero nel pallino: null = nessun conteggio da mostrare. */
-  conteggio: number | null;
+  /**
+   * Il pallino col numero, già pronto — non il numero.
+   *
+   * Serve perché su «Da approvare» il conteggio esce dallo stesso lavoro lento
+   * della lista: la pagina lo passa avvolto in un confine di attesa, così i tab
+   * si vedono subito e il numero compare quando c'è. Qui dentro non si decide
+   * più se mostrarlo: lo decide chi lo costruisce (vedi Pallino in page.tsx).
+   */
+  conteggio: ReactNode;
 };
 
 export function TabRecensioni({ voci }: { voci: VoceTab[] }) {
@@ -57,11 +64,7 @@ export function TabRecensioni({ voci }: { voci: VoceTab[] }) {
             }}
           >
             {v.etichetta}
-            {suo ? (
-              <span className="spinner-mini" aria-hidden="true" />
-            ) : (
-              v.conteggio !== null && v.conteggio > 0 && <span className="chip-count">{v.conteggio}</span>
-            )}
+            {suo ? <span className="spinner-mini" aria-hidden="true" /> : v.conteggio}
           </Link>
         );
       })}

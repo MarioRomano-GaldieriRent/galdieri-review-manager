@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { Suspense } from "react";
 import { after } from "next/server";
 // La versione "con lingua già decisa": qui la lingua per le 5★ senza testo la
 // stabilisce l'IA (linguaRispostaIA), pre-calcolata in blocco più sotto.
@@ -26,7 +27,7 @@ import { ritentaChiusureInSospeso } from "@/server/pubblicazione";
 import { elencoInAttesa, elencoPronte, type Escalation } from "@/server/db/escalation";
 import { aggiornaAttese } from "@/server/reviews/rispostaCustomerCare";
 import { isFreshdeskConfigured } from "@/server/integrations/freshdesk";
-import { loadSettings } from "@/server/settings";
+import { loadSettings, type Label } from "@/server/settings";
 import { operatoreCorrente } from "@/server/auth/sessione";
 import {
   playAction,
@@ -58,6 +59,7 @@ import { Stelle, VoceCoda, VoceStorico } from "./da-pubblicare/Voci";
 import { TabRecensioni } from "./TabRecensioni";
 import { TastieraCoda } from "./da-pubblicare/TastieraCoda";
 import { FiltriDaApprovare } from "./FiltriDaApprovare";
+import { ScheletroLista } from "./_ui/segnaposti";
 
 // La home è la pipeline di una recensione, in un'unica pagina:
 //
@@ -316,315 +318,43 @@ export default async function HomePage({
 
   // --- Da approvare: solo qui si legge la posta (lenta). ---------------------
   const label = settings.labels[0] ?? null;
-  let graphOk = true;
-  let erroreGraph: string | null = null;
-  let daApprovare: {
-    r: Recensione;
-    regola: Regola | null;
-    rispostaPronta?: string | null;
-    /** Se la risposta è tornata «pronta» dal customer care: quando è tornata,
-     * da usare SOLO per ordinare la lista — non tocca né sostituisce la data
-     * di ricezione vera (r.ricevutaIl), che resta intatta. */
-    dataOrdinamento?: string;
-  }[] = [];
-  /** Le sole card della pagina corrente: quelle che si renderizzano davvero. */
-  let visibili: typeof daApprovare = [];
-  let numeroPagina = 1;
-  let totalePagine = 1;
-  let nApprovare: number | null = null;
-  /** Proposte AI già salvate, per chiave recensione (le mancanti se le chiede la card). */
-  let suggeritiAI = new Map<string, { testo: string }>();
-  /** Testi riscritti a mano e non ancora pubblicati: vincono su tutto il resto. */
-  let bozze = new Map<string, Bozza>();
-  /** Lingua decisa dall'IA per le 5★ senza testo (nessun altro segnale da cui riconoscerla). */
-  let linguaPerNome = new Map<string, "it" | "altra">();
-  let runAperta: Esecuzione | undefined;
   let archiviate: RecensioneArchiviata[] = [];
   let inAttesa: Escalation[] = [];
   let nAttesa: number | null = null;
-  /** Recensioni che Freshdesk non ha fatto in tempo a verificare (restano in lista). */
-  let nonVerificate = 0;
-  let erroreFreshdesk: string | null = null;
 
-  if (step === "approvare") {
-    graphOk = await isGraphConfigured();
-    const forza = sp.fresh === "1"; // «Aggiorna»: posta e ticket riletti davvero
+  // L'esecuzione appena conclusa da mostrare in cima (feedback dopo
+  // l'approvazione): una findOne per id, solo se richiesta. Sta FUORI dal
+  // lavoro pesante perché si mostra SOPRA i tab, cioè subito.
+  const runAperta: Esecuzione | undefined = sp.run
+    ? await caricaEsecuzione(sp.run)
+    : undefined;
 
-    // Tutto ciò che non dipende dalla posta parte INSIEME e si sovrappone
-    // all'ingest Graph, il pezzo lento: regole, chiavi già pubblicate/archiviate
-    // e l'eventuale esecuzione da mostrare sono letture Mongo da ~25 ms l'una,
-    // che prima stavano in fila una dietro l'altra. Le promise nascono qui e si
-    // consumano subito nel Promise.all (o hanno già il loro catch): un errore
-    // non resta mai senza gestore. La lista delle recensioni si legge DOPO
-    // l'ingest, perché è lui a portare in archivio i nuovi arrivi.
-    //
-    // INGEST leggero: da Graph si scarica solo una finestra piccola (le ~100
-    // email più recenti), giusto per portare nell'archivio i NUOVI arrivi — non
-    // più 200 email a ogni caricamento. La cache breve (90 s) resta: solo
-    // «Aggiorna» (fresh=1) rifa l'ingest davvero; l'auto-refresh la cavalca.
-    const pIngest: Promise<string | null> =
-      graphOk && label
-        ? caricaRecensioni(label, { top: 100, forza }).then(
-            () => null,
-            (e) => (e instanceof Error ? e.message : "Errore sconosciuto"),
-          )
-        : Promise.resolve(null);
-    // ESCALATION «In attesa»: cerca le risposte del customer care arrivate (le
-    // voci passano da «attesa» a «pronta»). Parla con Graph, quindi va in
-    // parallelo all'ingest; si attende più sotto, prima di leggere attese e
-    // pronte. Best-effort.
-    const pAttese: Promise<void> = graphOk
-      ? aggiornaAttese().then(
-          () => undefined,
-          (e) =>
-            console.warn("[attese] recupero risposte saltato:", e instanceof Error ? e.message : e),
-        )
-      : Promise.resolve();
+  // Il lavoro pesante di «Da approvare» comincia QUI ma NON si aspetta.
+  //
+  // La promessa la consumano due confini di attesa: il conteggio nel tab e la
+  // lista. Così la pagina — intestazione, tab, banner — arriva al browser
+  // subito, e le card si riempiono quando posta e Freshdesk hanno risposto:
+  // prima si aspettavano quei 6 secondi con lo schermo fermo sulla vista
+  // vecchia. Una promessa sola per due consumatori, quindi il lavoro si fa una
+  // volta: passarla già avviata è ciò che lo garantisce.
+  const datiApprovare =
+    step === "approvare"
+      ? caricaDatiApprovare({
+          sp,
+          label,
+          tutte,
+          regoleBeta,
+          dimensionePagina,
+          numeroPaginaRichiesta,
+          fdOk,
+        })
+      : null;
 
-    const [regoleBase, pubblicate, archiviateChiavi, segnalateChiavi, run, erroreIngest] = await Promise.all([
-      caricaRegole(),
-      chiaviPubblicate(),
-      chiaviArchiviate(),
-      chiaviSegnalate(),
-      // L'esecuzione appena conclusa da mostrare in cima (feedback dopo
-      // l'approvazione): una findOne per id, solo se richiesta.
-      sp.run ? caricaEsecuzione(sp.run) : Promise.resolve(undefined),
-      pIngest,
-    ]);
-    // Per questa persona le sue regole in anteprima contano come attive.
-    const regole = conBeta(regoleBase, regoleBeta);
-    runAperta = run;
-    erroreGraph = erroreIngest;
+  // Identifica la vista: è la chiave del confine di attesa. Senza, cambiando
+  // pagina o filtro React terrebbe a schermo la lista vecchia invece di
+  // mostrare che sta caricando.
+  const chiaveVista = `${sp.p ?? "1"}-${sp.n ?? ""}-${tutte ? "tutte" : "regole"}`;
 
-    // La LISTA viene dall'ARCHIVIO Mongo (query indicizzata, veloce), non dalla
-    // finestra della posta: ha TUTTO l'arretrato recente e non perde ciò che è
-    // scivolato oltre la finestra (era il caso di Arthur). Funziona anche se
-    // Graph è momentaneamente giù.
-    const recensioni: Recensione[] = await recensioniDaApprovare();
-
-    // Lista UNICA: le recensioni ancora da pubblicare su Google. Sparisce solo
-    // ciò che è già stato pubblicato (stato pubblicata/verificata); quelle
-    // "approvata" ma non ancora pubblicate (robot non riuscito) restano qui per
-    // riprovare col Play. Guidata dalle regole ATTIVE: oggi solo "5★ senza
-    // commento", accendendone altre in Impostazioni compaiono anche le loro.
-    daApprovare = recensioni
-      // Fuori dall'elenco:
-      //  - ciò che abbiamo già pubblicato noi (stato pubblicata/verificata);
-      //  - ciò a cui ha GIÀ RISPOSTO l'operatore a mano (haRisposta): gestita
-      //    fuori dal nostro flusso, e non finisce nemmeno nello Storico;
-      //  - ciò che è stato ARCHIVIATO a mano (es. impossibile da gestire): va
-      //    nella tab «Archiviati», da dove si può ripristinare;
-      //  - ciò che è stato SEGNALATO all'amministratore (tasto «?»): è in carico
-      //    a lui in Supervisione finché non lo rimette in coda.
-      //
-      // NB: qui NON si guarda l'email «ticket risolto» (segnale debole). Lo stato
-      // VERO del ticket su Freshdesk lo si controlla più sotto, con una sweep.
-      .filter(
-        (r) =>
-          !pubblicate.has(r.chiave) &&
-          !r.haRisposta &&
-          !archiviateChiavi.has(r.chiave) &&
-          !segnalateChiavi.has(r.chiave),
-      )
-      .map((r) => ({ r, regola: regolaPer(regole, r.stelle, haTesto(r)) }))
-      // Occhio spento: solo le recensioni coperte da una regola ATTIVA (default).
-      // Occhio acceso: TUTTE, anche quelle senza regola (regola === null).
-      .filter((x) => tutte || x.regola !== null);
-
-    // ESCALATION «In attesa»: finito il recupero delle risposte (avviato sopra,
-    // in parallelo), si separa. Le ATTESE (inoltrate, nessuna risposta) ESCONO
-    // dalla lista → vanno nel tab «In attesa». Le PRONTE (risposta arrivata)
-    // RESTANO, precompilate col testo, e SALTANO i filtri Freshdesk (devono
-    // comparire per essere pubblicate). Tutto best-effort.
-    let prontaMap = new Map<string, { testo: string | null; aggiornataIl: string }>();
-    await pAttese;
-    try {
-      const [attese, pronte] = await Promise.all([elencoInAttesa(), elencoPronte()]);
-      nAttesa = attese.length;
-      const attesaSet = new Set(attese.map((e) => e.chiave));
-      prontaMap = new Map(
-        pronte.map((p) => [
-          p.chiave,
-          { testo: p.rispostaTesto, aggiornataIl: p.rispostaTrovataIl ?? p.aggiornataIl },
-        ]),
-      );
-      daApprovare = daApprovare.filter((x) => !attesaSet.has(x.r.chiave));
-    } catch (e) {
-      console.warn("[attese] lettura saltata:", e instanceof Error ? e.message : e);
-    }
-
-    // Le NEGATIVE il cui thread di posta contiene già «Ticket Risolto» sono state
-    // gestite dal customer care: via subito, dal solo segnale dell'archivio, SENZA
-    // interrogare Freshdesk. Cattura anche i casi che la sweep NON aggancia —
-    // recensione vecchia / inoltro tardivo, es. Paula López (ticket fuori finestra).
-    const conInoltro = (x: (typeof daApprovare)[number]) =>
-      Boolean(x.regola?.azioni.some((a) => a.tipo === "email.inoltra"));
-    {
-      const prima = daApprovare.length;
-      // Le PRONTE non si toccano (devono comparire precompilate).
-      daApprovare = daApprovare.filter(
-        (x) => prontaMap.has(x.r.chiave) || !(conInoltro(x) && x.r.risolto),
-      );
-      if (prima !== daApprovare.length)
-        console.log(
-          `[da-approvare] negative già risolte (thread «ticket risolto»): nascoste ${prima - daApprovare.length}.`,
-        );
-    }
-
-    // Freshdesk toglie dalla lista ciò che è già gestito, con DUE criteri diversi
-    // (UNA sola sweep condivisa dei ticket, niente fan-out N×):
-    //  - «resto» (positive/scoperte): sparisce se il suo ticket è RISOLTO/CHIUSO
-    //    (gestita da fuori). Match del ticket SPECIFICO per nome, così nasconde
-    //    anche in sedi attive con altri ticket aperti (es. Bari).
-    //  - «negative» (regola con inoltro): sparisce se un ticket ESISTE già, a
-    //    QUALSIASI stato e a QUALSIASI ora — «ha un ticket» = «già inoltrata». Il
-    //    tempo non conta: la mail può essere un inoltro tardivo. Quelle SENZA
-    //    ticket (e non ancora risolte) restano, da inoltrare.
-    // Best-effort: se Freshdesk non risponde, non si nasconde nulla e lo si
-    // dice (banner). Oggi le sweep non chiamano Freshdesk (i corpi sono già
-    // nella lista): un 429 può arrivare solo dall'elenco, ed è tutto o niente.
-    // Se una sweep dovesse fermarsi a metà (ripiego getTicket), ciò che ha già
-    // CONFERMATO resta nascosto: si nasconde solo il provato, mai al contrario.
-    if (fdOk && daApprovare.length > 0) {
-      const perFd = (x: (typeof daApprovare)[number]) => ({
-        chiave: x.r.chiave,
-        oggetto: x.r.oggetto,
-        ricevutaIl: x.r.ricevutaIl,
-        nome: x.r.nome,
-      });
-      // Le PRONTE (con risposta) saltano la sweep: devono restare in lista.
-      const negativi = daApprovare
-        .filter((x) => conInoltro(x) && !prontaMap.has(x.r.chiave))
-        .map(perFd);
-      const resto = daApprovare.filter((x) => !conInoltro(x)).map(perFd);
-      // Lista ticket (col corpo) scaricata UNA volta e CONDIVISA fra le due
-      // sweep: con forza la cache non le farebbe riusare (sarebbero 12 GET
-      // invece di 6). Senza lista non si verifica nulla: tutte restano in vista.
-      let tickets: FdTicket[] | null = null;
-      try {
-        tickets = await elencoTicketRecenti(6, forza);
-      } catch (e) {
-        // Freshdesk non raggiungibile o a rate-limit (429): NON è un errore
-        // bloccante — le negative già RISOLTE sono comunque nascoste (dal segnale
-        // d'archivio, sopra). console.warn (non error) per non far scattare
-        // l'overlay.
-        erroreFreshdesk = e instanceof Error ? e.message : String(e);
-        nonVerificate = resto.length + negativi.length;
-        console.warn("[da-approvare] elenco ticket Freshdesk non disponibile:", erroreFreshdesk);
-      }
-      if (tickets) {
-        // Le sweep non sollevano: ognuna riporta le CONFERMATE e quante non è
-        // riuscita a verificare. Si applicano entrambe, anche se una è parziale.
-        const nascoste = new Set<string>();
-        const applica = (e: EsitoSweep) => {
-          for (const c of e.nascoste) nascoste.add(c);
-          nonVerificate += e.nonVerificate;
-          if (e.errore) erroreFreshdesk = e.errore;
-        };
-        if (resto.length > 0) applica(await recensioniConTicketRisolto(resto, { forza, tickets }));
-        if (negativi.length > 0) applica(await recensioniConTicket(negativi, { forza, tickets }));
-        const prima = daApprovare.length;
-        daApprovare = daApprovare.filter((x) => !nascoste.has(x.r.chiave));
-        console.log(
-          `[da-approvare] filtro Freshdesk: nascoste ${prima - daApprovare.length} su ${prima} (risolte o già inoltrate)${
-            nonVerificate > 0 ? `, non verificate ${nonVerificate} (${erroreFreshdesk})` : ""
-          }.`,
-        );
-      }
-    } else {
-      console.log(
-        `[da-approvare] filtro Freshdesk saltato (Freshdesk configurato: ${fdOk}, in coda: ${daApprovare.length}).`,
-      );
-    }
-
-    // Precompila le PRONTE col testo recuperato dal customer care: nella card
-    // comparirà il box già pieno, pronto da pubblicare su Google. Porta anche
-    // la data in cui la risposta è arrivata: serve solo per l'ordinamento qui
-    // sotto, non tocca r.ricevutaIl (che resta la data vera di arrivo).
-    if (prontaMap.size > 0) {
-      daApprovare = daApprovare.map((x) => {
-        const p = prontaMap.get(x.r.chiave);
-        return p ? { ...x, rispostaPronta: p.testo, dataOrdinamento: p.aggiornataIl } : x;
-      });
-    }
-
-    // La data su cui ordinare: per una recensione tornata «pronta» dal
-    // customer care conta QUANDO è tornata, non quando è arrivata in origine
-    // — altrimenti resterebbe sepolta fra recensioni più vecchie di lei, pur
-    // essendo di nuovo da lavorare oggi. Nessun dato si perde: è solo la
-    // CHIAVE DI ORDINAMENTO a cambiare, non r.ricevutaIl né altro sulla scheda.
-    const dataOrdine = (x: (typeof daApprovare)[number]) =>
-      new Date(x.dataOrdinamento ?? x.r.ricevutaIl).getTime();
-
-    // Con l'occhio acceso: ordine per stelle crescente (1★ … 5★, senza voto in
-    // fondo) e, a parità, per data di ordinamento (dalla più recente). Spento:
-    // stesso criterio ma senza raggruppare per stelle — la query Mongo arriva
-    // già ordinata per ricevutaIl, ma da sola non basta più: una «pronta» deve
-    // scavalcare recensioni ricevute dopo di lei ma rimaste ferme.
-    if (tutte) {
-      daApprovare.sort((a, b) => {
-        const sa = a.r.stelle ?? 99;
-        const sb = b.r.stelle ?? 99;
-        if (sa !== sb) return sa - sb;
-        return dataOrdine(b) - dataOrdine(a);
-      });
-    } else {
-      daApprovare.sort((a, b) => dataOrdine(b) - dataOrdine(a));
-    }
-    nApprovare = daApprovare.length;
-    // DOPO tutti i filtri e l'ordinamento: si divide in pagine solo ciò che
-    // resta. Un numero di pagina fuori range (link vecchio, dati cambiati nel
-    // frattempo) ripiega sull'ultima pagina che esiste, mai su una vuota.
-    totalePagine = Math.max(1, Math.ceil(daApprovare.length / dimensionePagina));
-    numeroPagina = Math.min(Math.max(1, numeroPaginaRichiesta), totalePagine);
-    visibili = daApprovare.slice(
-      (numeroPagina - 1) * dimensionePagina,
-      numeroPagina * dimensionePagina,
-    );
-
-    // Proposte AI GIÀ generate per le positive con commento fra quelle MOSTRATE:
-    // una sola query, e la card parte col box pieno. Quelle che mancano se le
-    // chiede il campo da solo, a pagina già visibile (vedi CampoRispostaAI).
-    const chiaviAI = visibili
-      .filter((x) => (x.r.stelle ?? 0) >= 4 && (x.r.originale || "").trim() && !x.rispostaPronta)
-      .map((x) => x.r.chiave);
-    if (chiaviAI.length > 0) {
-      try {
-        suggeritiAI = await suggerimentiPer(chiaviAI);
-      } catch (e) {
-        console.warn("[ai] lettura suggerimenti non riuscita:", e);
-      }
-    }
-
-    // Le bozze delle card MOSTRATE: una query sola. Best-effort come le
-    // proposte — se non si leggono, il riquadro riparte dalla proposta.
-    try {
-      bozze = await bozzePer(visibili.map((x) => x.r.chiave));
-    } catch (e) {
-      console.warn("[bozze] lettura non riuscita:", e);
-    }
-
-    // Le 5★ SENZA testo non hanno nessun segnale da cui riconoscere la lingua:
-    // chi decide "Grazie." o "Thank you." è il NOME, chiesto all'IA (con
-    // cache: uno stesso nome non ripaga mai la domanda due volte) invece che
-    // da una lista scritta a mano — vedi reviews/linguaNomeAI.ts. Calcolato UNA
-    // volta qui, non dentro il map() di rendering più sotto, così una pagina
-    // con più card fa al massimo N domande nuove, non una per ogni render.
-    const senzaTesto = visibili.filter((x) => !x.rispostaPronta && !haTesto(x.r));
-    if (senzaTesto.length > 0) {
-      try {
-        const risultati = await Promise.all(
-          senzaTesto.map(
-            async (x) =>
-              [x.r.chiave, await linguaRispostaIA(x.r.lingua, x.r.originale, x.r.nome)] as const,
-          ),
-        );
-        linguaPerNome = new Map(risultati);
-      } catch (e) {
-        console.warn("[lingua] riconoscimento IA del nome non riuscito:", e);
-      }
-    }
-  }
 
   if (step === "archiviati") {
     archiviate = await elencoArchiviate();
@@ -642,12 +372,6 @@ export default async function HomePage({
     nAttesa = inAttesa.length;
   }
 
-  // Per chi legge: niente codici HTTP. Il messaggio grezzo resta nei log.
-  const motivoFreshdesk = !erroreFreshdesk
-    ? ""
-    : /\b429\b/.test(erroreFreshdesk)
-      ? " (troppe richieste in questo minuto)"
-      : " (non risponde)";
 
   return (
     <main className="pipeline">
@@ -706,14 +430,28 @@ export default async function HomePage({
               etichetta: "Da approvare",
               titolo: "Recensioni coperte dalle regole attive, in attesa di una tua decisione",
               attivo: step === "approvare",
-              conteggio: nApprovare,
+              // Il conteggio esce dallo STESSO lavoro della lista: ha un suo
+              // confine di attesa, così i tab si vedono subito e il numero
+              // arriva quando c'è. `fallback={null}`: meglio niente che un
+              // numero sbagliato.
+              conteggio: datiApprovare ? (
+                <Suspense fallback={null}>
+                  <ContoApprovare dati={datiApprovare} />
+                </Suspense>
+              ) : null,
             },
             {
               href: "/?step=attesa",
               etichetta: "In attesa",
               titolo: "Recensioni negative inoltrate al customer care, in attesa della risposta",
               attivo: step === "attesa",
-              conteggio: nAttesa,
+              conteggio: datiApprovare ? (
+                <Suspense fallback={null}>
+                  <ContoAttesa dati={datiApprovare} />
+                </Suspense>
+              ) : (
+                <Pallino n={nAttesa} />
+              ),
             },
             {
               href: "/?step=ricontrollo",
@@ -734,7 +472,7 @@ export default async function HomePage({
         <Link
           href={
             step === "approvare"
-              ? urlLista({ fresh: true, n: dimensionePagina, p: numeroPagina })
+              ? urlLista({ fresh: true, n: dimensionePagina, p: numeroPaginaRichiesta })
               : step === "attesa"
                 ? "/?step=attesa"
                 : step === "ricontrollo"
@@ -774,351 +512,16 @@ export default async function HomePage({
       </nav>
 
       {/* =================================================== Da approvare === */}
-      {step === "approvare" && (
-        <section
-          className="dash-centro"
-          // Quante card ci sono davvero nella pagina rispetto al totale: chi
-          // cerca o filtra fra le card nel browser sa che vede solo le prime.
-          data-mostrate={visibili.length}
-          data-totale={daApprovare.length}
-        >
-          <AutoAggiorna />
-
-          {!graphOk && (
-            <section className="card">
-              <p className="form-error">
-                Microsoft Graph non è configurato: la lista qui sotto viene dall&apos;archivio, ma
-                senza posta non arrivano nuove recensioni.
-              </p>
-            </section>
-          )}
-          {erroreGraph && (
-            <section className="card">
-              <p className="form-error">Errore nella lettura della posta: {erroreGraph}</p>
-            </section>
-          )}
-          {nonVerificate > 0 && (
-            <section className="card">
-              <p className="notice">
-                ⚠{" "}
-                {nonVerificate === 1
-                  ? "1 recensione non verificata"
-                  : `${nonVerificate} recensioni non verificate`}{" "}
-                su Freshdesk{motivoFreshdesk}: se qualcuna è già stata gestita, per ora resta in
-                lista. Fra un minuto premi «Aggiorna».
-              </p>
-            </section>
-          )}
-
-          {/* Ricerca e filtro stelle: lavorano nel browser sulle card qui sotto,
-              senza ricaricare la pagina — un ricarico rifarebbe l'ingest della
-              posta e le sweep Freshdesk a ogni tasto premuto. */}
-          {daApprovare.length > 0 && <FiltriDaApprovare />}
-
-          {daApprovare.length === 0 ? (
-            <section className="card dash-vuoto">
-              {tutte
-                ? "Nessuna recensione da mostrare."
-                : "Nessuna recensione da approvare (nessuna coperta dalle regole attive)."}
-            </section>
-          ) : (
-            visibili.map(({ r, regola, rispostaPronta }) => {
-              const nodo = regola ? nodoRisposta(regola) : null;
-              const proposta = nodo
-                ? testoPerRecensioneConLingua(nodo, r, linguaPerNome.get(r.chiave) ?? null)
-                : null;
-              // Se il customer care ha già rimandato la risposta (voce «pronta»),
-              // il box è PRECOMPILATO con quel testo. Altrimenti: risposta "pronta"
-              // solo se il nodo propone davvero un testo — le 1-2★ hanno un
-              // google.rispondi VUOTO finché non arriva la risposta, così non
-              // compare il box né parte un «Grazie.» su una negativa.
-              const suggerito = rispostaPronta
-                ? { testo: rispostaPronta, lingua: proposta?.lingua ?? ("it" as const) }
-                : proposta && proposta.testo.trim()
-                  ? proposta
-                  : null;
-              const testo = testoRecensione(r);
-              const mostraOriginale = Boolean(
-                r.originale && !r.giaItaliano && r.originale !== testo,
-              );
-              // La proposta la scrive l'AI sulle recensioni CON commento dalle 3★
-              // in su: le 5★ senza testo hanno «Grazie.» di default, le 1-2★
-              // passano dal customer care (e lì il box porta la risposta di
-              // Cherubina). Le 3★ sono l'ibrido: proposta AI E tasto d'inoltro.
-              const conAI =
-                Boolean(suggerito) &&
-                !rispostaPronta &&
-                (r.stelle ?? 0) >= 3 &&
-                Boolean((r.originale || "").trim());
-              // Sotto la soglia delle positive (stesso confine di «positiva» in
-              // playAction) la card col box offre ANCHE l'inoltro al customer
-              // care: oggi sono le 3★ — le 1-2★ arrivano qui col box solo
-              // «pronte», quando l'inoltro è già stato fatto.
-              const offriInoltro = Boolean(suggerito) && !rispostaPronta && (r.stelle ?? 0) < 4;
-              const suggerimentoAI = conAI ? suggeritiAI.get(r.chiave) : undefined;
-              // La bozza scritta a mano è l'ultima parola: vince sulla proposta
-              // della regola e su quella dell'AI, perché è lavoro di una persona.
-              const bozza = bozze.get(r.chiave)?.testo ?? null;
-
-              return (
-                <article
-                  key={r.chiave}
-                  className="card dash-card"
-                  // Su cosa filtra la barra di ricerca (FiltriDaApprovare). Il
-                  // testo porta anche l'originale in lingua, così si trova sia
-                  // cercando la parola tradotta sia quella scritta dal cliente.
-                  data-nome={r.nome}
-                  data-sede={r.sede}
-                  data-stelle={r.stelle ?? ""}
-                  data-testo={[testo, r.originale].filter(Boolean).join(" ")}
-                >
-                  {/* Archiviazione: nessun campo, un solo tocco. Il form vive qui
-                      (fuori dal form "Rispondi", che non si può annidare) e il
-                      bottone «Archivia», messo tra le azioni classiche, lo invia
-                      via attributo form=. */}
-                  <form id={`arch-${r.chiave}`} action={archiviaAction} className="dash-arch-form">
-                    <input type="hidden" name="chiave" value={r.chiave} />
-                    <input type="hidden" name="label" value={label?.id ?? ""} />
-                  </form>
-                  {/* Inoltro al customer care dalle card ibride (3★): il tasto sta
-                      fra le azioni, dentro il form «Rispondi», e invia QUESTO via
-                      attributo form= — non la regola della recensione. */}
-                  {offriInoltro && (
-                    <form
-                      id={`inol-${r.chiave}`}
-                      action={inoltraAlCustomerCareAction}
-                      className="dash-arch-form"
-                    >
-                      <input type="hidden" name="chiave" value={r.chiave} />
-                    </form>
-                  )}
-
-                  <header className="dash-card-testa">
-                    <div className="dash-autore">
-                      <span className="dash-iniziale" aria-hidden="true">
-                        {(r.nome || "?").trim().charAt(0).toUpperCase()}
-                      </span>
-                      <div>
-                        <div className="dash-autore-riga">
-                          <span className="review-name">{r.nome || "senza nome"}</span>
-                          {r.lingua && r.lingua !== "it" && (
-                            <span className="dash-lingua">{r.lingua.toUpperCase()}</span>
-                          )}
-                        </div>
-                        <div className="dash-meta">
-                          {dataConGiorno(new Date(r.ricevutaIl))} ·{" "}
-                          {oraFmt.format(new Date(r.ricevutaIl))}
-                          {r.sede ? ` · ${r.sede}` : ""}
-                        </div>
-                      </div>
-                    </div>
-                    <div className="dash-scheda">
-                      <Stelle n={r.stelle} />
-                      {haTesto(r) && (
-                        <div className="dash-scheda-chips">
-                          <span className="dash-chip">💬 commento</span>
-                          {/* 📷 foto: quando l'email porterà l'informazione */}
-                        </div>
-                      )}
-                    </div>
-                  </header>
-
-                  {testo && <p className="review-comment">{testo}</p>}
-
-                  {mostraOriginale && (
-                    <details className="review-original">
-                      <summary>
-                        Testo originale del cliente
-                        {r.lingua ? ` (${r.lingua.toUpperCase()})` : ""}
-                      </summary>
-                      <p>{r.originale}</p>
-                    </details>
-                  )}
-
-                  {suggerito ? (
-                    // Box precompilato + flusso completo. Per le negative è la
-                    // RISPOSTA del customer care (voce «pronta»); per le 5★ senza
-                    // commento è il ringraziamento della regola.
-                    <form action={playAction} className="dash-proposta">
-                      {rispostaPronta && (
-                        <p className="notice flag-green-box">
-                          ✓ Risposta rimandata dal customer care — controlla e pubblicala su Google.
-                        </p>
-                      )}
-                      <input type="hidden" name="chiave" value={r.chiave} />
-                      <input type="hidden" name="label" value={label?.id ?? ""} />
-                      <input type="hidden" name="azioneId" value={nodo!.id} />
-                      {conAI ? (
-                        // CON commento (3-5★): la proposta la scrive l'AI sugli
-                        // esempi veri di Stefania (pannello Memoria). Il campo si
-                        // carica da solo a pagina già visibile; il testoOriginale
-                        // che porta è quello della regola (vedi CampoRispostaAI).
-                        <CampoRispostaAI
-                          chiave={r.chiave}
-                          iniziale={suggerimentoAI?.testo ?? null}
-                          ripiego={suggerito.testo}
-                          bozza={bozza}
-                        />
-                      ) : (
-                        <CampoRisposta
-                          chiave={r.chiave}
-                          iniziale={bozza ?? suggerito.testo}
-                          proposta={suggerito.testo}
-                        />
-                      )}
-                      <div className="dash-azioni">
-                        <BottoneRispondi />
-                        {operatore?.ruolo === "admin" && <BottoneTest chiave={r.chiave} />}
-                        {offriInoltro && (
-                          <button
-                            type="submit"
-                            form={`inol-${r.chiave}`}
-                            className="btn-mini"
-                            title="Passa la recensione al customer care (Cherubina): apre il ticket e la sposta in «In attesa»; la risposta tornerà qui quando arriva."
-                          >
-                            Inoltra al customer care
-                          </button>
-                        )}
-                        <AnteprimaFlusso titolo={`Cosa farà su «${r.nome || "questa recensione"}»`}>
-                          <ol className="ap-lista">
-                            {regola!.azioni.map((a) => (
-                              <PassoAnteprima key={a.id} azione={a} />
-                            ))}
-                          </ol>
-                        </AnteprimaFlusso>
-                        <VediMail id={r.messaggioId} icona />
-                        <BottoneArchivia chiave={r.chiave} />
-                        <BottoneSegnala chiave={r.chiave} />
-                      </div>
-                    </form>
-                  ) : regola ? (
-                    // Recensione NEGATIVA coperta dalla regola escalation (1-2★):
-                    // nessuna risposta automatica. Fase 1 = inoltro a Cherubina
-                    // (apre il ticket); la risposta tornerà qui quando la rimanda.
-                    <>
-                      <p className="notice dash-senza-regola">
-                        Recensione negativa: inoltrala al customer care per aprire la lavorazione —
-                        la risposta tornerà qui quando arriva.
-                      </p>
-                      <div className="dash-azioni">
-                        <form action={avviaEscalationAction} style={{ display: "contents" }}>
-                          <input type="hidden" name="chiave" value={r.chiave} />
-                          <input type="hidden" name="label" value={label?.id ?? ""} />
-                          <button type="submit" className="btn-primary">
-                            Inoltra al customer care
-                          </button>
-                        </form>
-                        <VediMail id={r.messaggioId} icona />
-                        <BottoneArchivia chiave={r.chiave} />
-                        <BottoneSegnala chiave={r.chiave} />
-                      </div>
-                    </>
-                  ) : tutte ? (
-                    // Con l'occhio acceso: recensione SENZA regola di risposta
-                    // (o senza regola). Box VUOTO da compilare e SOLO azioni
-                    // manuali: niente Rispondi, così non parte alcun flusso
-                    // automatico (né una pubblicazione «Grazie.» su una negativa).
-                    <form action={playAction} className="dash-proposta">
-                      <input type="hidden" name="chiave" value={r.chiave} />
-                      <input type="hidden" name="label" value={label?.id ?? ""} />
-                      <CampoRisposta chiave={r.chiave} iniziale={bozza ?? ""} proposta="" vuoto />
-                      <div className="dash-azioni">
-                        {operatore?.ruolo === "admin" && <BottoneTest chiave={r.chiave} />}
-                        <VediMail id={r.messaggioId} icona />
-                        <BottoneArchivia chiave={r.chiave} />
-                        <BottoneSegnala chiave={r.chiave} />
-                      </div>
-                    </form>
-                  ) : (
-                    <>
-                      <p className="notice dash-senza-regola">
-                        Nessuna regola di risposta copre questa recensione: accendi una regola da{" "}
-                        <Link href="/impostazioni#automazioni">Impostazioni</Link>.
-                      </p>
-                      <div className="dash-azioni">
-                        <VediMail id={r.messaggioId} icona />
-                        <BottoneArchivia chiave={r.chiave} />
-                        <BottoneSegnala chiave={r.chiave} />
-                      </div>
-                    </>
-                  )}
-                </article>
-              );
-            })
-          )}
-
-          {daApprovare.length > 0 && (totalePagine > 1 || dimensionePagina !== PAGINA_DEFAULT) && (
-            <nav className="appr-paginazione" aria-label="Pagine di «Da approvare»">
-              <p className="hint">
-                Pagina {numeroPagina} di {totalePagine} · {daApprovare.length} recensioni in tutto
-              </p>
-              <div className="appr-paginazione-pagine">
-                {numeroPagina > 1 ? (
-                  <Link
-                    href={urlLista({ n: dimensionePagina, p: numeroPagina - 1 })}
-                    className="btn-mini"
-                    aria-label="Pagina precedente"
-                  >
-                    ‹ Precedente
-                  </Link>
-                ) : (
-                  <span className="btn-mini is-disabilitato" aria-hidden="true">
-                    ‹ Precedente
-                  </span>
-                )}
-                {numeriPagina(numeroPagina, totalePagine).map((voce, i) =>
-                  voce === "…" ? (
-                    <span key={`ellissi-${i}`} className="appr-ellissi" aria-hidden="true">
-                      …
-                    </span>
-                  ) : (
-                    <Link
-                      key={voce}
-                      href={urlLista({ n: dimensionePagina, p: voce })}
-                      className={`btn-mini${voce === numeroPagina ? " is-active" : ""}`}
-                      aria-current={voce === numeroPagina ? "page" : undefined}
-                    >
-                      {voce}
-                    </Link>
-                  ),
-                )}
-                {numeroPagina < totalePagine ? (
-                  <Link
-                    href={urlLista({ n: dimensionePagina, p: numeroPagina + 1 })}
-                    className="btn-mini"
-                    aria-label="Pagina successiva"
-                  >
-                    Successiva ›
-                  </Link>
-                ) : (
-                  <span className="btn-mini is-disabilitato" aria-hidden="true">
-                    Successiva ›
-                  </span>
-                )}
-              </div>
-              <div className="appr-paginazione-dimensione">
-                <span className="hint">Per pagina:</span>
-                {PAGINE_SCELTE.map((k) => (
-                  <Link
-                    key={k}
-                    href={urlLista({ n: k })}
-                    className={`btn-mini${dimensionePagina === k ? " is-active" : ""}`}
-                    title={`Mostra ${k} recensioni per pagina`}
-                  >
-                    {k}
-                  </Link>
-                ))}
-                <Link
-                  href={urlLista({ n: PAGINA_MAX })}
-                  className={`btn-mini${dimensionePagina >= PAGINA_MAX ? " is-active" : ""}`}
-                  title="Tutte le recensioni in una pagina sola"
-                >
-                  Tutte
-                </Link>
-              </div>
-            </nav>
-          )}
-        </section>
+      {datiApprovare && (
+        <Suspense key={chiaveVista} fallback={<ScheletroLista />}>
+          <SezioneApprovare
+            dati={datiApprovare}
+            label={label}
+            tutte={tutte}
+            dimensionePagina={dimensionePagina}
+            operatore={operatore}
+          />
+        </Suspense>
       )}
 
       {/* ===================================================== In attesa === */}
@@ -1350,5 +753,779 @@ function BottoneArchivia({ chiave }: { chiave: string }) {
     >
       <IconaArchivio />
     </button>
+  );
+}
+
+
+// ============================================================ Da approvare ===
+// Il pezzo lento della home: la lettura dei dati e la vista che li mostra.
+// Stanno qui sotto, nello stesso file della pagina, per continuare a usare gli
+// aiutanti definiti sopra — urlLista, numeriPagina, nodoRisposta, i
+// formattatori — senza doverli esportare in giro solo per spostare del codice.
+
+/** Una voce della lista: la recensione e come va trattata. */
+type VoceApprovare = {
+  r: Recensione;
+  regola: Regola | null;
+  rispostaPronta?: string | null;
+  /** Se la risposta è tornata «pronta» dal customer care: quando è tornata,
+   * da usare SOLO per ordinare la lista — non tocca né sostituisce la data
+   * di ricezione vera (r.ricevutaIl), che resta intatta. */
+  dataOrdinamento?: string;
+};
+
+/** Il risultato del lavoro pesante, consumato dal conteggio e dalla lista. */
+type DatiApprovare = {
+  daApprovare: VoceApprovare[];
+  visibili: VoceApprovare[];
+  numeroPagina: number;
+  totalePagine: number;
+  nApprovare: number | null;
+  nAttesa: number | null;
+  suggeritiAI: Map<string, { testo: string }>;
+  bozze: Map<string, Bozza>;
+  linguaPerNome: Map<string, "it" | "altra">;
+  graphOk: boolean;
+  erroreGraph: string | null;
+  nonVerificate: number;
+  erroreFreshdesk: string | null;
+};
+
+/**
+ * Tutto il lavoro di «Da approvare»: posta, regole, escalation, sweep
+ * Freshdesk, paginazione, proposte AI. È la parte lenta della home — misurati
+ * ~3,5 s per la posta e ~2,5 s per Freshdesk a cache fredda — ed è per questo
+ * che sta dietro un confine di attesa invece che davanti alla pagina.
+ *
+ * Si chiama UNA volta e la promessa si passa a chi la deve leggere: chiamarla
+ * due volte (una per il conteggio, una per la lista) rifarebbe tutto due volte.
+ */
+async function caricaDatiApprovare({
+  sp,
+  label,
+  tutte,
+  regoleBeta,
+  dimensionePagina,
+  numeroPaginaRichiesta,
+  fdOk,
+}: {
+  sp: { fresh?: string };
+  label: Label | null;
+  tutte: boolean;
+  regoleBeta: string[];
+  dimensionePagina: number;
+  numeroPaginaRichiesta: number;
+  fdOk: boolean;
+}): Promise<DatiApprovare> {
+  let graphOk = true;
+  let erroreGraph: string | null = null;
+  let daApprovare: VoceApprovare[] = [];
+  /** Le sole card della pagina corrente: quelle che si renderizzano davvero. */
+  let visibili: VoceApprovare[] = [];
+  let numeroPagina = 1;
+  let totalePagine = 1;
+  let nApprovare: number | null = null;
+  /** Proposte AI già salvate, per chiave recensione (le mancanti se le chiede la card). */
+  let suggeritiAI = new Map<string, { testo: string }>();
+  /** Testi riscritti a mano e non ancora pubblicati: vincono su tutto il resto. */
+  let bozze = new Map<string, Bozza>();
+  /** Lingua decisa dall'IA per le 5★ senza testo (nessun altro segnale da cui riconoscerla). */
+  let linguaPerNome = new Map<string, "it" | "altra">();
+  let nAttesa: number | null = null;
+  /** Recensioni che Freshdesk non ha fatto in tempo a verificare (restano in lista). */
+  let nonVerificate = 0;
+  let erroreFreshdesk: string | null = null;
+
+
+  graphOk = await isGraphConfigured();
+  const forza = sp.fresh === "1"; // «Aggiorna»: posta e ticket riletti davvero
+
+  // Tutto ciò che non dipende dalla posta parte INSIEME e si sovrappone
+  // all'ingest Graph, il pezzo lento: regole, chiavi già pubblicate/archiviate
+  // e l'eventuale esecuzione da mostrare sono letture Mongo da ~25 ms l'una,
+  // che prima stavano in fila una dietro l'altra. Le promise nascono qui e si
+  // consumano subito nel Promise.all (o hanno già il loro catch): un errore
+  // non resta mai senza gestore. La lista delle recensioni si legge DOPO
+  // l'ingest, perché è lui a portare in archivio i nuovi arrivi.
+  //
+  // INGEST leggero: da Graph si scarica solo una finestra piccola (le ~100
+  // email più recenti), giusto per portare nell'archivio i NUOVI arrivi — non
+  // più 200 email a ogni caricamento. La cache breve (90 s) resta: solo
+  // «Aggiorna» (fresh=1) rifa l'ingest davvero; l'auto-refresh la cavalca.
+  const pIngest: Promise<string | null> =
+    graphOk && label
+      ? caricaRecensioni(label, { top: 100, forza }).then(
+          () => null,
+          (e) => (e instanceof Error ? e.message : "Errore sconosciuto"),
+        )
+      : Promise.resolve(null);
+  // ESCALATION «In attesa»: cerca le risposte del customer care arrivate (le
+  // voci passano da «attesa» a «pronta»). Parla con Graph, quindi va in
+  // parallelo all'ingest; si attende più sotto, prima di leggere attese e
+  // pronte. Best-effort.
+  const pAttese: Promise<void> = graphOk
+    ? aggiornaAttese().then(
+        () => undefined,
+        (e) =>
+          console.warn("[attese] recupero risposte saltato:", e instanceof Error ? e.message : e),
+      )
+    : Promise.resolve();
+
+  const [regoleBase, pubblicate, archiviateChiavi, segnalateChiavi, erroreIngest] = await Promise.all([
+    caricaRegole(),
+    chiaviPubblicate(),
+    chiaviArchiviate(),
+    chiaviSegnalate(),
+    pIngest,
+  ]);
+  // Per questa persona le sue regole in anteprima contano come attive.
+  const regole = conBeta(regoleBase, regoleBeta);
+  erroreGraph = erroreIngest;
+
+  // La LISTA viene dall'ARCHIVIO Mongo (query indicizzata, veloce), non dalla
+  // finestra della posta: ha TUTTO l'arretrato recente e non perde ciò che è
+  // scivolato oltre la finestra (era il caso di Arthur). Funziona anche se
+  // Graph è momentaneamente giù.
+  const recensioni: Recensione[] = await recensioniDaApprovare();
+
+  // Lista UNICA: le recensioni ancora da pubblicare su Google. Sparisce solo
+  // ciò che è già stato pubblicato (stato pubblicata/verificata); quelle
+  // "approvata" ma non ancora pubblicate (robot non riuscito) restano qui per
+  // riprovare col Play. Guidata dalle regole ATTIVE: oggi solo "5★ senza
+  // commento", accendendone altre in Impostazioni compaiono anche le loro.
+  daApprovare = recensioni
+    // Fuori dall'elenco:
+    //  - ciò che abbiamo già pubblicato noi (stato pubblicata/verificata);
+    //  - ciò a cui ha GIÀ RISPOSTO l'operatore a mano (haRisposta): gestita
+    //    fuori dal nostro flusso, e non finisce nemmeno nello Storico;
+    //  - ciò che è stato ARCHIVIATO a mano (es. impossibile da gestire): va
+    //    nella tab «Archiviati», da dove si può ripristinare;
+    //  - ciò che è stato SEGNALATO all'amministratore (tasto «?»): è in carico
+    //    a lui in Supervisione finché non lo rimette in coda.
+    //
+    // NB: qui NON si guarda l'email «ticket risolto» (segnale debole). Lo stato
+    // VERO del ticket su Freshdesk lo si controlla più sotto, con una sweep.
+    .filter(
+      (r) =>
+        !pubblicate.has(r.chiave) &&
+        !r.haRisposta &&
+        !archiviateChiavi.has(r.chiave) &&
+        !segnalateChiavi.has(r.chiave),
+    )
+    .map((r) => ({ r, regola: regolaPer(regole, r.stelle, haTesto(r)) }))
+    // Occhio spento: solo le recensioni coperte da una regola ATTIVA (default).
+    // Occhio acceso: TUTTE, anche quelle senza regola (regola === null).
+    .filter((x) => tutte || x.regola !== null);
+
+  // ESCALATION «In attesa»: finito il recupero delle risposte (avviato sopra,
+  // in parallelo), si separa. Le ATTESE (inoltrate, nessuna risposta) ESCONO
+  // dalla lista → vanno nel tab «In attesa». Le PRONTE (risposta arrivata)
+  // RESTANO, precompilate col testo, e SALTANO i filtri Freshdesk (devono
+  // comparire per essere pubblicate). Tutto best-effort.
+  let prontaMap = new Map<string, { testo: string | null; aggiornataIl: string }>();
+  await pAttese;
+  try {
+    const [attese, pronte] = await Promise.all([elencoInAttesa(), elencoPronte()]);
+    nAttesa = attese.length;
+    const attesaSet = new Set(attese.map((e) => e.chiave));
+    prontaMap = new Map(
+      pronte.map((p) => [
+        p.chiave,
+        { testo: p.rispostaTesto, aggiornataIl: p.rispostaTrovataIl ?? p.aggiornataIl },
+      ]),
+    );
+    daApprovare = daApprovare.filter((x) => !attesaSet.has(x.r.chiave));
+  } catch (e) {
+    console.warn("[attese] lettura saltata:", e instanceof Error ? e.message : e);
+  }
+
+  // Le NEGATIVE il cui thread di posta contiene già «Ticket Risolto» sono state
+  // gestite dal customer care: via subito, dal solo segnale dell'archivio, SENZA
+  // interrogare Freshdesk. Cattura anche i casi che la sweep NON aggancia —
+  // recensione vecchia / inoltro tardivo, es. Paula López (ticket fuori finestra).
+  const conInoltro = (x: (typeof daApprovare)[number]) =>
+    Boolean(x.regola?.azioni.some((a) => a.tipo === "email.inoltra"));
+  {
+    const prima = daApprovare.length;
+    // Le PRONTE non si toccano (devono comparire precompilate).
+    daApprovare = daApprovare.filter(
+      (x) => prontaMap.has(x.r.chiave) || !(conInoltro(x) && x.r.risolto),
+    );
+    if (prima !== daApprovare.length)
+      console.log(
+        `[da-approvare] negative già risolte (thread «ticket risolto»): nascoste ${prima - daApprovare.length}.`,
+      );
+  }
+
+  // Freshdesk toglie dalla lista ciò che è già gestito, con DUE criteri diversi
+  // (UNA sola sweep condivisa dei ticket, niente fan-out N×):
+  //  - «resto» (positive/scoperte): sparisce se il suo ticket è RISOLTO/CHIUSO
+  //    (gestita da fuori). Match del ticket SPECIFICO per nome, così nasconde
+  //    anche in sedi attive con altri ticket aperti (es. Bari).
+  //  - «negative» (regola con inoltro): sparisce se un ticket ESISTE già, a
+  //    QUALSIASI stato e a QUALSIASI ora — «ha un ticket» = «già inoltrata». Il
+  //    tempo non conta: la mail può essere un inoltro tardivo. Quelle SENZA
+  //    ticket (e non ancora risolte) restano, da inoltrare.
+  // Best-effort: se Freshdesk non risponde, non si nasconde nulla e lo si
+  // dice (banner). Oggi le sweep non chiamano Freshdesk (i corpi sono già
+  // nella lista): un 429 può arrivare solo dall'elenco, ed è tutto o niente.
+  // Se una sweep dovesse fermarsi a metà (ripiego getTicket), ciò che ha già
+  // CONFERMATO resta nascosto: si nasconde solo il provato, mai al contrario.
+  if (fdOk && daApprovare.length > 0) {
+    const perFd = (x: (typeof daApprovare)[number]) => ({
+      chiave: x.r.chiave,
+      oggetto: x.r.oggetto,
+      ricevutaIl: x.r.ricevutaIl,
+      nome: x.r.nome,
+    });
+    // Le PRONTE (con risposta) saltano la sweep: devono restare in lista.
+    const negativi = daApprovare
+      .filter((x) => conInoltro(x) && !prontaMap.has(x.r.chiave))
+      .map(perFd);
+    const resto = daApprovare.filter((x) => !conInoltro(x)).map(perFd);
+    // Lista ticket (col corpo) scaricata UNA volta e CONDIVISA fra le due
+    // sweep: con forza la cache non le farebbe riusare (sarebbero 12 GET
+    // invece di 6). Senza lista non si verifica nulla: tutte restano in vista.
+    let tickets: FdTicket[] | null = null;
+    try {
+      tickets = await elencoTicketRecenti(6, forza);
+    } catch (e) {
+      // Freshdesk non raggiungibile o a rate-limit (429): NON è un errore
+      // bloccante — le negative già RISOLTE sono comunque nascoste (dal segnale
+      // d'archivio, sopra). console.warn (non error) per non far scattare
+      // l'overlay.
+      erroreFreshdesk = e instanceof Error ? e.message : String(e);
+      nonVerificate = resto.length + negativi.length;
+      console.warn("[da-approvare] elenco ticket Freshdesk non disponibile:", erroreFreshdesk);
+    }
+    if (tickets) {
+      // Le sweep non sollevano: ognuna riporta le CONFERMATE e quante non è
+      // riuscita a verificare. Si applicano entrambe, anche se una è parziale.
+      const nascoste = new Set<string>();
+      const applica = (e: EsitoSweep) => {
+        for (const c of e.nascoste) nascoste.add(c);
+        nonVerificate += e.nonVerificate;
+        if (e.errore) erroreFreshdesk = e.errore;
+      };
+      if (resto.length > 0) applica(await recensioniConTicketRisolto(resto, { forza, tickets }));
+      if (negativi.length > 0) applica(await recensioniConTicket(negativi, { forza, tickets }));
+      const prima = daApprovare.length;
+      daApprovare = daApprovare.filter((x) => !nascoste.has(x.r.chiave));
+      console.log(
+        `[da-approvare] filtro Freshdesk: nascoste ${prima - daApprovare.length} su ${prima} (risolte o già inoltrate)${
+          nonVerificate > 0 ? `, non verificate ${nonVerificate} (${erroreFreshdesk})` : ""
+        }.`,
+      );
+    }
+  } else {
+    console.log(
+      `[da-approvare] filtro Freshdesk saltato (Freshdesk configurato: ${fdOk}, in coda: ${daApprovare.length}).`,
+    );
+  }
+
+  // Precompila le PRONTE col testo recuperato dal customer care: nella card
+  // comparirà il box già pieno, pronto da pubblicare su Google. Porta anche
+  // la data in cui la risposta è arrivata: serve solo per l'ordinamento qui
+  // sotto, non tocca r.ricevutaIl (che resta la data vera di arrivo).
+  if (prontaMap.size > 0) {
+    daApprovare = daApprovare.map((x) => {
+      const p = prontaMap.get(x.r.chiave);
+      return p ? { ...x, rispostaPronta: p.testo, dataOrdinamento: p.aggiornataIl } : x;
+    });
+  }
+
+  // La data su cui ordinare: per una recensione tornata «pronta» dal
+  // customer care conta QUANDO è tornata, non quando è arrivata in origine
+  // — altrimenti resterebbe sepolta fra recensioni più vecchie di lei, pur
+  // essendo di nuovo da lavorare oggi. Nessun dato si perde: è solo la
+  // CHIAVE DI ORDINAMENTO a cambiare, non r.ricevutaIl né altro sulla scheda.
+  const dataOrdine = (x: (typeof daApprovare)[number]) =>
+    new Date(x.dataOrdinamento ?? x.r.ricevutaIl).getTime();
+
+  // Con l'occhio acceso: ordine per stelle crescente (1★ … 5★, senza voto in
+  // fondo) e, a parità, per data di ordinamento (dalla più recente). Spento:
+  // stesso criterio ma senza raggruppare per stelle — la query Mongo arriva
+  // già ordinata per ricevutaIl, ma da sola non basta più: una «pronta» deve
+  // scavalcare recensioni ricevute dopo di lei ma rimaste ferme.
+  if (tutte) {
+    daApprovare.sort((a, b) => {
+      const sa = a.r.stelle ?? 99;
+      const sb = b.r.stelle ?? 99;
+      if (sa !== sb) return sa - sb;
+      return dataOrdine(b) - dataOrdine(a);
+    });
+  } else {
+    daApprovare.sort((a, b) => dataOrdine(b) - dataOrdine(a));
+  }
+  nApprovare = daApprovare.length;
+  // DOPO tutti i filtri e l'ordinamento: si divide in pagine solo ciò che
+  // resta. Un numero di pagina fuori range (link vecchio, dati cambiati nel
+  // frattempo) ripiega sull'ultima pagina che esiste, mai su una vuota.
+  totalePagine = Math.max(1, Math.ceil(daApprovare.length / dimensionePagina));
+  numeroPagina = Math.min(Math.max(1, numeroPaginaRichiesta), totalePagine);
+  visibili = daApprovare.slice(
+    (numeroPagina - 1) * dimensionePagina,
+    numeroPagina * dimensionePagina,
+  );
+
+  // Proposte AI GIÀ generate per le positive con commento fra quelle MOSTRATE:
+  // una sola query, e la card parte col box pieno. Quelle che mancano se le
+  // chiede il campo da solo, a pagina già visibile (vedi CampoRispostaAI).
+  const chiaviAI = visibili
+    .filter((x) => (x.r.stelle ?? 0) >= 4 && (x.r.originale || "").trim() && !x.rispostaPronta)
+    .map((x) => x.r.chiave);
+  if (chiaviAI.length > 0) {
+    try {
+      suggeritiAI = await suggerimentiPer(chiaviAI);
+    } catch (e) {
+      console.warn("[ai] lettura suggerimenti non riuscita:", e);
+    }
+  }
+
+  // Le bozze delle card MOSTRATE: una query sola. Best-effort come le
+  // proposte — se non si leggono, il riquadro riparte dalla proposta.
+  try {
+    bozze = await bozzePer(visibili.map((x) => x.r.chiave));
+  } catch (e) {
+    console.warn("[bozze] lettura non riuscita:", e);
+  }
+
+  // Le 5★ SENZA testo non hanno nessun segnale da cui riconoscere la lingua:
+  // chi decide "Grazie." o "Thank you." è il NOME, chiesto all'IA (con
+  // cache: uno stesso nome non ripaga mai la domanda due volte) invece che
+  // da una lista scritta a mano — vedi reviews/linguaNomeAI.ts. Calcolato UNA
+  // volta qui, non dentro il map() di rendering più sotto, così una pagina
+  // con più card fa al massimo N domande nuove, non una per ogni render.
+  const senzaTesto = visibili.filter((x) => !x.rispostaPronta && !haTesto(x.r));
+  if (senzaTesto.length > 0) {
+    try {
+      const risultati = await Promise.all(
+        senzaTesto.map(
+          async (x) =>
+            [x.r.chiave, await linguaRispostaIA(x.r.lingua, x.r.originale, x.r.nome)] as const,
+        ),
+      );
+      linguaPerNome = new Map(risultati);
+    } catch (e) {
+      console.warn("[lingua] riconoscimento IA del nome non riuscito:", e);
+    }
+  }
+
+  return {
+    daApprovare,
+    visibili,
+    numeroPagina,
+    totalePagine,
+    nApprovare,
+    nAttesa,
+    suggeritiAI,
+    bozze,
+    linguaPerNome,
+    graphOk,
+    erroreGraph,
+    nonVerificate,
+    erroreFreshdesk,
+  };
+}
+
+/** Il pallino col numero accanto al nome del tab. Zero e assente non si mostrano. */
+function Pallino({ n }: { n: number | null }) {
+  return n !== null && n > 0 ? <span className="chip-count">{n}</span> : null;
+}
+
+/** Il conteggio di «Da approvare»: esce dallo stesso lavoro della lista. */
+async function ContoApprovare({ dati }: { dati: Promise<DatiApprovare> }) {
+  return <Pallino n={(await dati).nApprovare} />;
+}
+
+/** Il conteggio di «In attesa» quando si sta guardando «Da approvare». */
+async function ContoAttesa({ dati }: { dati: Promise<DatiApprovare> }) {
+  return <Pallino n={(await dati).nAttesa} />;
+}
+
+/**
+ * La lista «Da approvare». Aspetta il lavoro pesante: finché non è pronto, al
+ * suo posto si vedono gli scheletri — il resto della pagina è già a schermo.
+ */
+async function SezioneApprovare({
+  dati,
+  label,
+  tutte,
+  dimensionePagina,
+  operatore,
+}: {
+  dati: Promise<DatiApprovare>;
+  label: Label | null;
+  tutte: boolean;
+  dimensionePagina: number;
+  operatore: Awaited<ReturnType<typeof operatoreCorrente>>;
+}) {
+  const {
+    daApprovare,
+    visibili,
+    numeroPagina,
+    totalePagine,
+    suggeritiAI,
+    bozze,
+    linguaPerNome,
+    graphOk,
+    erroreGraph,
+    nonVerificate,
+    erroreFreshdesk,
+  } = await dati;
+
+  // Per chi legge: niente codici HTTP. Il messaggio grezzo resta nei log.
+  const motivoFreshdesk = !erroreFreshdesk
+    ? ""
+    : /429/.test(erroreFreshdesk)
+      ? " (troppe richieste in questo minuto)"
+      : " (non risponde)";
+
+  return (
+
+    <section
+      className="dash-centro"
+      // Quante card ci sono davvero nella pagina rispetto al totale: chi
+      // cerca o filtra fra le card nel browser sa che vede solo le prime.
+      data-mostrate={visibili.length}
+      data-totale={daApprovare.length}
+    >
+      <AutoAggiorna />
+
+      {!graphOk && (
+        <section className="card">
+          <p className="form-error">
+            Microsoft Graph non è configurato: la lista qui sotto viene dall&apos;archivio, ma
+            senza posta non arrivano nuove recensioni.
+          </p>
+        </section>
+      )}
+      {erroreGraph && (
+        <section className="card">
+          <p className="form-error">Errore nella lettura della posta: {erroreGraph}</p>
+        </section>
+      )}
+      {nonVerificate > 0 && (
+        <section className="card">
+          <p className="notice">
+            ⚠{" "}
+            {nonVerificate === 1
+              ? "1 recensione non verificata"
+              : `${nonVerificate} recensioni non verificate`}{" "}
+            su Freshdesk{motivoFreshdesk}: se qualcuna è già stata gestita, per ora resta in
+            lista. Fra un minuto premi «Aggiorna».
+          </p>
+        </section>
+      )}
+
+      {/* Ricerca e filtro stelle: lavorano nel browser sulle card qui sotto,
+          senza ricaricare la pagina — un ricarico rifarebbe l'ingest della
+          posta e le sweep Freshdesk a ogni tasto premuto. */}
+      {daApprovare.length > 0 && <FiltriDaApprovare />}
+
+      {daApprovare.length === 0 ? (
+        <section className="card dash-vuoto">
+          {tutte
+            ? "Nessuna recensione da mostrare."
+            : "Nessuna recensione da approvare (nessuna coperta dalle regole attive)."}
+        </section>
+      ) : (
+        visibili.map(({ r, regola, rispostaPronta }) => {
+          const nodo = regola ? nodoRisposta(regola) : null;
+          const proposta = nodo
+            ? testoPerRecensioneConLingua(nodo, r, linguaPerNome.get(r.chiave) ?? null)
+            : null;
+          // Se il customer care ha già rimandato la risposta (voce «pronta»),
+          // il box è PRECOMPILATO con quel testo. Altrimenti: risposta "pronta"
+          // solo se il nodo propone davvero un testo — le 1-2★ hanno un
+          // google.rispondi VUOTO finché non arriva la risposta, così non
+          // compare il box né parte un «Grazie.» su una negativa.
+          const suggerito = rispostaPronta
+            ? { testo: rispostaPronta, lingua: proposta?.lingua ?? ("it" as const) }
+            : proposta && proposta.testo.trim()
+              ? proposta
+              : null;
+          const testo = testoRecensione(r);
+          const mostraOriginale = Boolean(
+            r.originale && !r.giaItaliano && r.originale !== testo,
+          );
+          // La proposta la scrive l'AI sulle recensioni CON commento dalle 3★
+          // in su: le 5★ senza testo hanno «Grazie.» di default, le 1-2★
+          // passano dal customer care (e lì il box porta la risposta di
+          // Cherubina). Le 3★ sono l'ibrido: proposta AI E tasto d'inoltro.
+          const conAI =
+            Boolean(suggerito) &&
+            !rispostaPronta &&
+            (r.stelle ?? 0) >= 3 &&
+            Boolean((r.originale || "").trim());
+          // Sotto la soglia delle positive (stesso confine di «positiva» in
+          // playAction) la card col box offre ANCHE l'inoltro al customer
+          // care: oggi sono le 3★ — le 1-2★ arrivano qui col box solo
+          // «pronte», quando l'inoltro è già stato fatto.
+          const offriInoltro = Boolean(suggerito) && !rispostaPronta && (r.stelle ?? 0) < 4;
+          const suggerimentoAI = conAI ? suggeritiAI.get(r.chiave) : undefined;
+          // La bozza scritta a mano è l'ultima parola: vince sulla proposta
+          // della regola e su quella dell'AI, perché è lavoro di una persona.
+          const bozza = bozze.get(r.chiave)?.testo ?? null;
+
+          return (
+            <article
+              key={r.chiave}
+              className="card dash-card"
+              // Su cosa filtra la barra di ricerca (FiltriDaApprovare). Il
+              // testo porta anche l'originale in lingua, così si trova sia
+              // cercando la parola tradotta sia quella scritta dal cliente.
+              data-nome={r.nome}
+              data-sede={r.sede}
+              data-stelle={r.stelle ?? ""}
+              data-testo={[testo, r.originale].filter(Boolean).join(" ")}
+            >
+              {/* Archiviazione: nessun campo, un solo tocco. Il form vive qui
+                  (fuori dal form "Rispondi", che non si può annidare) e il
+                  bottone «Archivia», messo tra le azioni classiche, lo invia
+                  via attributo form=. */}
+              <form id={`arch-${r.chiave}`} action={archiviaAction} className="dash-arch-form">
+                <input type="hidden" name="chiave" value={r.chiave} />
+                <input type="hidden" name="label" value={label?.id ?? ""} />
+              </form>
+              {/* Inoltro al customer care dalle card ibride (3★): il tasto sta
+                  fra le azioni, dentro il form «Rispondi», e invia QUESTO via
+                  attributo form= — non la regola della recensione. */}
+              {offriInoltro && (
+                <form
+                  id={`inol-${r.chiave}`}
+                  action={inoltraAlCustomerCareAction}
+                  className="dash-arch-form"
+                >
+                  <input type="hidden" name="chiave" value={r.chiave} />
+                </form>
+              )}
+
+              <header className="dash-card-testa">
+                <div className="dash-autore">
+                  <span className="dash-iniziale" aria-hidden="true">
+                    {(r.nome || "?").trim().charAt(0).toUpperCase()}
+                  </span>
+                  <div>
+                    <div className="dash-autore-riga">
+                      <span className="review-name">{r.nome || "senza nome"}</span>
+                      {r.lingua && r.lingua !== "it" && (
+                        <span className="dash-lingua">{r.lingua.toUpperCase()}</span>
+                      )}
+                    </div>
+                    <div className="dash-meta">
+                      {dataConGiorno(new Date(r.ricevutaIl))} ·{" "}
+                      {oraFmt.format(new Date(r.ricevutaIl))}
+                      {r.sede ? ` · ${r.sede}` : ""}
+                    </div>
+                  </div>
+                </div>
+                <div className="dash-scheda">
+                  <Stelle n={r.stelle} />
+                  {haTesto(r) && (
+                    <div className="dash-scheda-chips">
+                      <span className="dash-chip">💬 commento</span>
+                      {/* 📷 foto: quando l'email porterà l'informazione */}
+                    </div>
+                  )}
+                </div>
+              </header>
+
+              {testo && <p className="review-comment">{testo}</p>}
+
+              {mostraOriginale && (
+                <details className="review-original">
+                  <summary>
+                    Testo originale del cliente
+                    {r.lingua ? ` (${r.lingua.toUpperCase()})` : ""}
+                  </summary>
+                  <p>{r.originale}</p>
+                </details>
+              )}
+
+              {suggerito ? (
+                // Box precompilato + flusso completo. Per le negative è la
+                // RISPOSTA del customer care (voce «pronta»); per le 5★ senza
+                // commento è il ringraziamento della regola.
+                <form action={playAction} className="dash-proposta">
+                  {rispostaPronta && (
+                    <p className="notice flag-green-box">
+                      ✓ Risposta rimandata dal customer care — controlla e pubblicala su Google.
+                    </p>
+                  )}
+                  <input type="hidden" name="chiave" value={r.chiave} />
+                  <input type="hidden" name="label" value={label?.id ?? ""} />
+                  <input type="hidden" name="azioneId" value={nodo!.id} />
+                  {conAI ? (
+                    // CON commento (3-5★): la proposta la scrive l'AI sugli
+                    // esempi veri di Stefania (pannello Memoria). Il campo si
+                    // carica da solo a pagina già visibile; il testoOriginale
+                    // che porta è quello della regola (vedi CampoRispostaAI).
+                    <CampoRispostaAI
+                      chiave={r.chiave}
+                      iniziale={suggerimentoAI?.testo ?? null}
+                      ripiego={suggerito.testo}
+                      bozza={bozza}
+                    />
+                  ) : (
+                    <CampoRisposta
+                      chiave={r.chiave}
+                      iniziale={bozza ?? suggerito.testo}
+                      proposta={suggerito.testo}
+                    />
+                  )}
+                  <div className="dash-azioni">
+                    <BottoneRispondi />
+                    {operatore?.ruolo === "admin" && <BottoneTest chiave={r.chiave} />}
+                    {offriInoltro && (
+                      <button
+                        type="submit"
+                        form={`inol-${r.chiave}`}
+                        className="btn-mini"
+                        title="Passa la recensione al customer care (Cherubina): apre il ticket e la sposta in «In attesa»; la risposta tornerà qui quando arriva."
+                      >
+                        Inoltra al customer care
+                      </button>
+                    )}
+                    <AnteprimaFlusso titolo={`Cosa farà su «${r.nome || "questa recensione"}»`}>
+                      <ol className="ap-lista">
+                        {regola!.azioni.map((a) => (
+                          <PassoAnteprima key={a.id} azione={a} />
+                        ))}
+                      </ol>
+                    </AnteprimaFlusso>
+                    <VediMail id={r.messaggioId} icona />
+                    <BottoneArchivia chiave={r.chiave} />
+                    <BottoneSegnala chiave={r.chiave} />
+                  </div>
+                </form>
+              ) : regola ? (
+                // Recensione NEGATIVA coperta dalla regola escalation (1-2★):
+                // nessuna risposta automatica. Fase 1 = inoltro a Cherubina
+                // (apre il ticket); la risposta tornerà qui quando la rimanda.
+                <>
+                  <p className="notice dash-senza-regola">
+                    Recensione negativa: inoltrala al customer care per aprire la lavorazione —
+                    la risposta tornerà qui quando arriva.
+                  </p>
+                  <div className="dash-azioni">
+                    <form action={avviaEscalationAction} style={{ display: "contents" }}>
+                      <input type="hidden" name="chiave" value={r.chiave} />
+                      <input type="hidden" name="label" value={label?.id ?? ""} />
+                      <button type="submit" className="btn-primary">
+                        Inoltra al customer care
+                      </button>
+                    </form>
+                    <VediMail id={r.messaggioId} icona />
+                    <BottoneArchivia chiave={r.chiave} />
+                    <BottoneSegnala chiave={r.chiave} />
+                  </div>
+                </>
+              ) : tutte ? (
+                // Con l'occhio acceso: recensione SENZA regola di risposta
+                // (o senza regola). Box VUOTO da compilare e SOLO azioni
+                // manuali: niente Rispondi, così non parte alcun flusso
+                // automatico (né una pubblicazione «Grazie.» su una negativa).
+                <form action={playAction} className="dash-proposta">
+                  <input type="hidden" name="chiave" value={r.chiave} />
+                  <input type="hidden" name="label" value={label?.id ?? ""} />
+                  <CampoRisposta chiave={r.chiave} iniziale={bozza ?? ""} proposta="" vuoto />
+                  <div className="dash-azioni">
+                    {operatore?.ruolo === "admin" && <BottoneTest chiave={r.chiave} />}
+                    <VediMail id={r.messaggioId} icona />
+                    <BottoneArchivia chiave={r.chiave} />
+                    <BottoneSegnala chiave={r.chiave} />
+                  </div>
+                </form>
+              ) : (
+                <>
+                  <p className="notice dash-senza-regola">
+                    Nessuna regola di risposta copre questa recensione: accendi una regola da{" "}
+                    <Link href="/impostazioni#automazioni">Impostazioni</Link>.
+                  </p>
+                  <div className="dash-azioni">
+                    <VediMail id={r.messaggioId} icona />
+                    <BottoneArchivia chiave={r.chiave} />
+                    <BottoneSegnala chiave={r.chiave} />
+                  </div>
+                </>
+              )}
+            </article>
+          );
+        })
+      )}
+
+      {daApprovare.length > 0 && (totalePagine > 1 || dimensionePagina !== PAGINA_DEFAULT) && (
+        <nav className="appr-paginazione" aria-label="Pagine di «Da approvare»">
+          <p className="hint">
+            Pagina {numeroPagina} di {totalePagine} · {daApprovare.length} recensioni in tutto
+          </p>
+          <div className="appr-paginazione-pagine">
+            {numeroPagina > 1 ? (
+              <Link
+                href={urlLista({ n: dimensionePagina, p: numeroPagina - 1 })}
+                className="btn-mini"
+                aria-label="Pagina precedente"
+              >
+                ‹ Precedente
+              </Link>
+            ) : (
+              <span className="btn-mini is-disabilitato" aria-hidden="true">
+                ‹ Precedente
+              </span>
+            )}
+            {numeriPagina(numeroPagina, totalePagine).map((voce, i) =>
+              voce === "…" ? (
+                <span key={`ellissi-${i}`} className="appr-ellissi" aria-hidden="true">
+                  …
+                </span>
+              ) : (
+                <Link
+                  key={voce}
+                  href={urlLista({ n: dimensionePagina, p: voce })}
+                  className={`btn-mini${voce === numeroPagina ? " is-active" : ""}`}
+                  aria-current={voce === numeroPagina ? "page" : undefined}
+                >
+                  {voce}
+                </Link>
+              ),
+            )}
+            {numeroPagina < totalePagine ? (
+              <Link
+                href={urlLista({ n: dimensionePagina, p: numeroPagina + 1 })}
+                className="btn-mini"
+                aria-label="Pagina successiva"
+              >
+                Successiva ›
+              </Link>
+            ) : (
+              <span className="btn-mini is-disabilitato" aria-hidden="true">
+                Successiva ›
+              </span>
+            )}
+          </div>
+          <div className="appr-paginazione-dimensione">
+            <span className="hint">Per pagina:</span>
+            {PAGINE_SCELTE.map((k) => (
+              <Link
+                key={k}
+                href={urlLista({ n: k })}
+                className={`btn-mini${dimensionePagina === k ? " is-active" : ""}`}
+                title={`Mostra ${k} recensioni per pagina`}
+              >
+                {k}
+              </Link>
+            ))}
+            <Link
+              href={urlLista({ n: PAGINA_MAX })}
+              className={`btn-mini${dimensionePagina >= PAGINA_MAX ? " is-active" : ""}`}
+              title="Tutte le recensioni in una pagina sola"
+            >
+              Tutte
+            </Link>
+          </div>
+        </nav>
+      )}
+    </section>
   );
 }
