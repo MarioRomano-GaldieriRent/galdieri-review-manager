@@ -160,7 +160,7 @@ export default async function SupervisionePage({
           <span className="muted">{dataConGiorno(al)}</span>
         </div>
         <div className="stat-griglia">
-          <Riquadro titolo="Recensioni chiuse oggi" valore={oggi.totale} base="dalla mezzanotte" />
+          <Riquadro titolo="Recensioni gestite oggi" valore={oggi.totale} base="dalla mezzanotte" />
           <Riquadro
             titolo="Dal portale"
             valore={oggi.dalPortale}
@@ -173,12 +173,15 @@ export default async function SupervisionePage({
           />
         </div>
         <p className="hint">
-          «Dal portale» sono le risposte pubblicate da questo sito oggi. «Dalla posta» sono quelle
-          che il portale ha visto arrivare nella casella scritte da qualcuno di Galdieri senza
-          passare di qui: ci rientra anche l&apos;inoltro al customer care, che è lavoro fatto
-          fuori ma non è una recensione chiusa. La data è quella in cui il portale se n&apos;è
-          accorto — rilegge la posta ogni pochi minuti — non per forza l&apos;istante dell&apos;invio.
-          Chi compare da tutte e due le parti è contato una volta sola.
+          «Gestite» non vuol dire «chiuse». «Dal portale» sì: sono le risposte pubblicate da questo
+          sito oggi, e quelle sono finite. «Dalla posta» sono le recensioni su cui qualcuno di
+          Galdieri ha scritto dalla casella senza passare di qui, e lì dentro finiscono due cose
+          diverse: la risposta vera al cliente e il semplice inoltro al customer care, che è lavoro
+          fatto ma lascia la recensione ancora da chiudere. La posta non permette di distinguerle
+          in modo affidabile, quindi il numero le tiene insieme: è la misura di quanto lavoro passa
+          ancora fuori dal portale, non di quanto è concluso. La data è quella in cui il portale se
+          n&apos;è accorto — rilegge la posta ogni pochi minuti — non per forza l&apos;istante
+          dell&apos;invio. Chi compare da tutte e due le parti è contato una volta sola.
         </p>
       </section>
 
