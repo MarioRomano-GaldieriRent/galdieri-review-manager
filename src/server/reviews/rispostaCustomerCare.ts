@@ -5,7 +5,7 @@ import {
   registraInoltro,
   salvaRisposta,
 } from "@/server/db/escalation";
-import { chiaviGiaChiuse } from "@/server/db/recensioni";
+import { chiaviGiaChiuse, correggiDataArrivo } from "@/server/db/recensioni";
 import { chiaviPubblicate } from "@/server/db/pubblicazioni";
 import { htmlToText } from "./parse";
 import type { Recensione } from "./load";
@@ -174,9 +174,41 @@ export async function registraRitorniCustomerCare(recensioni: Recensione[]): Pro
       inoltrataIl: new Date(rep.quando),
     });
     await salvaRisposta(r.chiave, rep.testo, rep.ticket, rep.quando);
+    await correggiData(r.chiave);
     registrate++;
   }
   return registrate;
+}
+
+/**
+ * Rimette la data di arrivo giusta leggendo il thread INTERO.
+ *
+ * Queste recensioni si scoprono solo perché il customer care ha risposto, e la
+ * risposta arriva settimane dopo: l'email originale è ormai fuori dalla
+ * finestra di posta che l'ingest legge, quindi la recensione viene schedata con
+ * la data della risposta. Silvia Endrizzi è del 25 agosto e risultava del 7
+ * settembre — sullo schermo sembrava nuova, e nelle statistiche cadeva nella
+ * coorte sbagliata.
+ *
+ * `getConversation` invece il thread ce l'ha tutto, email originale compresa:
+ * la data buona è quella del messaggio più vecchio. È UNA chiamata, e solo alla
+ * prima registrazione di ogni ritorno — non a ogni caricamento. Se fallisce non
+ * si tocca niente: una data vecchia e sbagliata è meglio di una registrazione
+ * persa.
+ */
+async function correggiData(chiave: string, mailbox?: string): Promise<void> {
+  try {
+    const messaggi = await getConversation(chiave, mailbox);
+    if (messaggi.length === 0) return;
+    const prima = new Date(
+      Math.min(...messaggi.map((m) => new Date(m.receivedDateTime).getTime())),
+    );
+    if (Number.isNaN(prima.getTime())) return;
+    if (await correggiDataArrivo(chiave, prima))
+      console.log(`[ritorni] data di «${chiave.slice(0, 12)}…» riportata al ${prima.toISOString()}.`);
+  } catch (e) {
+    console.warn("[ritorni] data non corretta:", e instanceof Error ? e.message : e);
+  }
 }
 
 const piatto = (s: string) => (s || "").toLowerCase().replace(/\s+/g, " ").trim();

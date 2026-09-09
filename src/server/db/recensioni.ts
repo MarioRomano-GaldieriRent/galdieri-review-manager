@@ -383,6 +383,51 @@ export async function segnaGestitaFuoriPortale(chiave: string, motivo: string): 
 }
 
 /**
+ * Riporta la data di arrivo a quella VERA, quando la si scopre dopo.
+ *
+ * Succede con le recensioni la cui email originale è fuori dalla finestra di
+ * posta che si legge: di quel thread si vedono solo gli ultimi messaggi, e la
+ * recensione viene schedata con la data del più vecchio fra QUELLI. Una
+ * recensione del 25 agosto finiva così datata 7 settembre — il giorno in cui il
+ * customer care ha risposto — e da lì in poi sbagliava due cose: sullo schermo
+ * sembrava nuova, e nelle statistiche cadeva nella coorte di settembre.
+ *
+ * `$min` non è una precauzione, è la regola: la data di arrivo può solo
+ * ANDARE INDIETRO man mano che si scopre altro. Così la funzione si può
+ * rilanciare quante volte si vuole, e una data sbagliata in avanti non può
+ * entrare. Le colonne derivate (giorno locale, settimana ISO, giorno della
+ * settimana) si ricalcolano qui, altrimenti resterebbero quelle vecchie.
+ *
+ * Torna `true` se la data è stata davvero spostata.
+ */
+export async function correggiDataArrivo(chiave: string, quando: Date): Promise<boolean> {
+  const r = await (await coll("recensioni")).updateOne({ _id: chiave, ricevutaIl: { $gt: quando } }, [
+    { $set: { ricevutaIl: { $min: ["$ricevutaIl", quando] } } },
+    // Le stesse tre fasi di salvaRecensioni, nello stesso ordine: dalla data
+    // nasce la stringa locale, e dalla stringa locale nascono anno-mese, data e
+    // ora. Il validator della collezione controlla proprio che si corrispondano
+    // — aggiornarne solo una parte fa rifiutare la scrittura, ed è giusto così.
+    {
+      $set: {
+        ricevutaIlLocale: {
+          $dateToString: { date: "$ricevutaIl", format: "%Y-%m-%dT%H:%M:%S", timezone: FUSO },
+        },
+        settimanaIso: { $dateToString: { date: "$ricevutaIl", format: "%G-W%V", timezone: FUSO } },
+        giornoSettimana: { $subtract: [{ $dayOfWeek: { date: "$ricevutaIl", timezone: FUSO } }, 1] },
+      },
+    },
+    {
+      $set: {
+        annoMese: { $substrBytes: ["$ricevutaIlLocale", 0, 7] },
+        dataLocale: { $substrBytes: ["$ricevutaIlLocale", 0, 10] },
+        oraLocale: { $toInt: { $substrBytes: ["$ricevutaIlLocale", 11, 2] } },
+      },
+    },
+  ]);
+  return r.modifiedCount > 0;
+}
+
+/**
  * Fra le chiavi date, quelle su cui il discorso è CHIUSO: già gestite
  * (`haRisposta`) o archiviate. Serve a chi vuole riaprire una lavorazione — non
  * la si riapre su una recensione che qualcuno ha già chiuso a mano.

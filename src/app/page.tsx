@@ -41,6 +41,7 @@ import { BottoneTest } from "./BottoneTest";
 import {
   chiaviArchiviate,
   elencoArchiviate,
+  leggiRecensione,
   recensioniDaApprovare,
   type RecensioneArchiviata,
 } from "@/server/db/recensioni";
@@ -935,6 +936,33 @@ async function caricaDatiApprovare({
       ]),
     );
     daApprovare = daApprovare.filter((x) => !attesaSet.has(x.r.chiave));
+
+    // Una PRONTA non deve mai cadere fuori per anzianità né per i filtri della
+    // coda: la risposta di Cherubina è arrivata ADESSO, anche se la recensione
+    // è di un mese fa, e finché non è pubblicata su Google il lavoro non è
+    // finito. `recensioniDaApprovare` guarda solo gli ultimi 30 giorni e scarta
+    // chi ha `haRisposta` — e l'inoltro a mano di Stefania conta come
+    // «haRisposta», quindi proprio le più vecchie sparivano portandosi via il
+    // testo del customer care. Qui si rimettono, saltando quei due criteri ma
+    // non gli altri: pubblicata, archiviata o segnalata resta fuori.
+    const mancanti = pronte.filter((p) => !daApprovare.some((x) => x.r.chiave === p.chiave));
+    if (mancanti.length > 0) {
+      const ripescate = (await Promise.all(mancanti.map((p) => leggiRecensione(p.chiave))))
+        .filter((r): r is RecensioneArchiviata => r !== null)
+        .filter(
+          (r) =>
+            !pubblicate.has(r.chiave) &&
+            !archiviateChiavi.has(r.chiave) &&
+            !segnalateChiavi.has(r.chiave),
+        )
+        .map((r) => ({ r, regola: regolaPer(regole, r.stelle, haTesto(r)) }));
+      if (ripescate.length > 0) {
+        daApprovare = [...daApprovare, ...ripescate];
+        console.log(
+          `[da-approvare] risposte del customer care ripescate fuori finestra: ${ripescate.length}.`,
+        );
+      }
+    }
   } catch (e) {
     console.warn("[attese] lettura saltata:", e instanceof Error ? e.message : e);
   }
