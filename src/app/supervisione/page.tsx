@@ -10,6 +10,7 @@ import {
   type Segnalazione,
 } from "@/server/db/segnalazioni";
 import { gestionePerStelle, modifichePerStelle, type Intervallo } from "@/server/statistiche/query";
+import { BottoneTest } from "../BottoneTest";
 import { Stelle } from "../da-pubblicare/Voci";
 import { VediMail } from "../VediMail";
 import { rimettiInCodaSegnalazioneAction, risolviSegnalazioneAction } from "./actions";
@@ -238,7 +239,9 @@ export default async function SupervisionePage({
         <p className="hint">
           Recensioni che un operatore ha passato a te col tasto «?» perché non riusciva a
           gestirle. Finché stanno qui, lui non le vede più. «Risolta» le lascia fuori dalla sua
-          coda; «Rimetti in coda» le fa ricomparire in «Da approvare».
+          coda; «Rimetti in coda» le fa ricomparire in «Da approvare». «Test» manda il robot a
+          cercare QUELLA recensione su Google e ti riporta il passo-passo, senza pubblicare
+          niente: è il modo per capire un «non lo trova» invece di indovinarlo.
         </p>
         {aperte.length === 0 ? (
           <p className="dash-vuoto">Nessuna segnalazione aperta.</p>
@@ -354,6 +357,11 @@ function CardSegnalazione({ s, chi, ticket }: { s: Segnalazione; chi: string; ti
           >
             ↩ Rimetti in coda
           </button>
+          {/* Il perché di una segnalazione è quasi sempre «il robot non la
+              trova»: il Test lo manda a cercarla e riporta il passo-passo, qui
+              dove si decide, senza dover tornare in coda. Non pubblica nulla e
+              l'azione ricontrolla da sé che chi la lancia sia admin. */}
+          <BottoneTest chiave={s.chiave} />
           <VediMail id={s.messaggioId} className="btn-mini" />
         </div>
       </form>
