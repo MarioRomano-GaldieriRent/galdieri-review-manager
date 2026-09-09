@@ -13,7 +13,7 @@ import { gestionePerStelle, modifichePerStelle, type Intervallo } from "@/server
 import { BottoneTest } from "../BottoneTest";
 import { Stelle } from "../da-pubblicare/Voci";
 import { VediMail } from "../VediMail";
-import { rimettiInCodaSegnalazioneAction, risolviSegnalazioneAction } from "./actions";
+import { chiudiGiaGestitaAction, rimettiInCodaSegnalazioneAction } from "./actions";
 
 // Supervisione: riservata all'amministratore. Due cose sole:
 //   1. i numeri del periodo scelto (recensioni gestite per punteggio,
@@ -238,10 +238,14 @@ export default async function SupervisionePage({
         </div>
         <p className="hint">
           Recensioni che un operatore ha passato a te col tasto «?» perché non riusciva a
-          gestirle. Finché stanno qui, lui non le vede più. «Risolta» le lascia fuori dalla sua
-          coda; «Rimetti in coda» le fa ricomparire in «Da approvare». «Test» manda il robot a
-          cercare QUELLA recensione su Google e ti riporta il passo-passo, senza pubblicare
-          niente: è il modo per capire un «non lo trova» invece di indovinarlo.
+          gestirle. Finché stanno qui, lui non le vede più.{" "}
+          <strong>«Chiudi: già gestita»</strong> la chiude davvero — risulta gestita anche nelle
+          statistiche e finisce in «Archiviate», dove resta leggibile col motivo e si può
+          ripristinare: è il tasto per quando ti dicono «questa era già fatta».{" "}
+          <strong>«Rimetti in coda»</strong> la fa ricomparire in «Da approvare» dell&apos;operatore.{" "}
+          <strong>«Test»</strong> manda il robot a cercare QUELLA recensione su Google e ti riporta
+          il passo-passo, senza pubblicare niente: è il modo per capire un «non lo trova» invece di
+          indovinarlo.
         </p>
         {aperte.length === 0 ? (
           <p className="dash-vuoto">Nessuna segnalazione aperta.</p>
@@ -265,7 +269,7 @@ export default async function SupervisionePage({
                   <span className="review-name">{s.nomeCliente || "senza nome"}</span>
                   <Stelle n={s.stelle} />
                   <span className={`flag ${s.stato === "risolta" ? "flag-green" : "flag-gray"}`}>
-                    {s.stato === "risolta" ? "risolta" : "rimessa in coda"}
+                    {s.stato === "risolta" ? "chiusa: già gestita" : "rimessa in coda"}
                   </span>
                 </div>
                 <div className="dash-meta">
@@ -335,19 +339,23 @@ function CardSegnalazione({ s, chi, ticket }: { s: Segnalazione; chi: string; ti
         </p>
       )}
 
-      <form action={risolviSegnalazioneAction} className="segnalazione-chiusura">
+      <form action={chiudiGiaGestitaAction} className="segnalazione-chiusura">
         <input type="hidden" name="chiave" value={s.chiave} />
         <textarea
           name="nota"
           className="dash-testo"
           rows={2}
           maxLength={1000}
-          placeholder="Qual era il problema e come l'hai risolto (facoltativo)…"
+          placeholder="Cos'era e perché la chiudi (finisce sotto la card in «Archiviate»)…"
           aria-label="Nota di chiusura"
         />
         <div className="dash-azioni">
-          <button type="submit" className="btn-primary">
-            ✓ Risolta
+          <button
+            type="submit"
+            className="btn-primary"
+            title="La recensione risulta gestita e va in «Archiviate»: non torna né a te né all'operatore"
+          >
+            ✓ Chiudi: già gestita
           </button>
           <button
             type="submit"

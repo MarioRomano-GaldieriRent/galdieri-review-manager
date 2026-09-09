@@ -5,7 +5,8 @@ import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { after } from "next/server";
 import { richiediAdmin, richiediOperatore } from "@/server/auth/sessione";
-import { leggiRecensione } from "@/server/db/recensioni";
+import { segnaChiusa } from "@/server/db/escalation";
+import { leggiRecensione, segnaGestitaFuoriPortale } from "@/server/db/recensioni";
 import { chiudiSegnalazione, leggiSegnalazione, segnala } from "@/server/db/segnalazioni";
 import { avvisaAdminDiSegnalazione } from "@/server/notifiche/segnalazione";
 
@@ -104,11 +105,39 @@ export async function segnalaAction(chiave: string, notaGrezza: string): Promise
   };
 }
 
-/** L'admin ha sistemato: la recensione resta fuori dalla coda dell'operatore. */
-export async function risolviSegnalazioneAction(formData: FormData): Promise<void> {
+/**
+ * L'admin CHIUDE: la recensione è già stata gestita e non deve più tornare da
+ * nessuna parte.
+ *
+ * Chiude su tutti e tre i fronti, perché su tutti e tre una recensione può
+ * ricomparire:
+ *   1. la segnalazione passa a «risolta» → fuori dalla coda dell'operatore;
+ *   2. la recensione è segnata come gestita e archiviata → non può più rientrare
+ *      in «Da approvare» (che filtra su `haRisposta: false`) e nelle statistiche
+ *      smette di risultare non gestita; resta leggibile in «Archiviate», col
+ *      motivo e il tasto «Ripristina»;
+ *   3. l'eventuale escalation passa a «chiusa» → non resta appesa una voce
+ *      «pronta» o «in attesa» nel ciclo del customer care.
+ *
+ * Prima si chiudeva solo il punto 1: spariva dalla vista di Stefania ma per il
+ * sistema restava aperta, continuava a contare fra le non gestite e — se la
+ * segnalazione veniva rimessa in coda — poteva ripresentarsi.
+ */
+export async function chiudiGiaGestitaAction(formData: FormData): Promise<void> {
   const admin = await richiediAdmin();
   const chiave = str(formData, "chiave");
-  if (chiave) await chiudiSegnalazione(chiave, "risolta", str(formData, "nota").slice(0, 1000), admin._id);
+  if (chiave) {
+    const nota = str(formData, "nota").slice(0, 1000);
+    await chiudiSegnalazione(chiave, "risolta", nota, admin._id);
+    // Il motivo finisce sotto la card in «Archiviate»: se l'admin non scrive
+    // nulla ci va comunque una frase che dica da dove arriva la chiusura,
+    // altrimenti fra un mese quella riga è muta.
+    await segnaGestitaFuoriPortale(
+      chiave,
+      nota || "Chiusa dalla Supervisione: già gestita fuori dal portale.",
+    );
+    await segnaChiusa(chiave);
+  }
   revalidatePath("/supervisione");
   revalidatePath("/");
   redirect("/supervisione");

@@ -348,6 +348,36 @@ export async function archiviaRecensione(chiave: string, motivo: string): Promis
   );
 }
 
+/**
+ * La recensione è stata gestita FUORI dal portale — risposta pubblicata a mano
+ * su Google, lavorazione conclusa dal customer care, ticket chiuso giorni prima
+ * — e va chiusa per sempre.
+ *
+ * Le due scritture servono INSIEME e per motivi diversi:
+ *  - `haRisposta` è ciò che la toglie dalla coda in modo definitivo
+ *    (`recensioniDaApprovare` filtra proprio su `haRisposta: false`) e ciò che
+ *    la fa contare fra le «gestite» nelle statistiche invece che fra le aperte;
+ *  - l'archiviazione le lascia una traccia visibile nella tab «Archiviate», col
+ *    motivo scritto e il tasto «Ripristina» se ci si è sbagliati. Con la sola
+ *    `haRisposta` sparirebbe senza che da nessuna parte resti scritto perché.
+ *
+ * Idempotente: rilanciarla non sposta le date già registrate.
+ */
+export async function segnaGestitaFuoriPortale(chiave: string, motivo: string): Promise<void> {
+  const ora = new Date();
+  await (await coll("recensioni")).updateOne({ _id: chiave }, [
+    {
+      $set: {
+        haRisposta: true,
+        rispostaRilevataIl: { $ifNull: ["$rispostaRilevataIl", ora] },
+        archiviataIl: { $ifNull: ["$archiviataIl", ora] },
+        motivoArchiviazione: motivo,
+      },
+    },
+    { $set: { archiviata: true } },
+  ]);
+}
+
 /** Le chiavi delle recensioni archiviate: servono alla home per toglierle dall'elenco. */
 export async function chiaviArchiviate(): Promise<Set<string>> {
   const righe = (await (
