@@ -1,6 +1,14 @@
 import { getConversation, getMessage, listInbox } from "@/server/graph/client";
-import { elencoInAttesa, salvaRisposta } from "@/server/db/escalation";
+import {
+  chiaviConEscalation,
+  elencoInAttesa,
+  registraInoltro,
+  salvaRisposta,
+} from "@/server/db/escalation";
+import { chiaviGiaChiuse } from "@/server/db/recensioni";
+import { chiaviPubblicate } from "@/server/db/pubblicazioni";
 import { htmlToText } from "./parse";
+import type { Recensione } from "./load";
 
 // Recupero della risposta del customer care a una recensione negativa inoltrata.
 //
@@ -56,10 +64,19 @@ export function estraiRisposta(corpoTesto: string): { testo: string; ticket: num
   return testo.length >= 10 ? { testo, ticket } : null;
 }
 
-/** È una notifica automatica di Freshdesk, non una risposta vera? */
-function eNotifica(subject: string): boolean {
-  const s = subject.toLowerCase();
-  return s.startsWith("ticket creato") || s.startsWith("ticket risolto") || s.startsWith("ticket chiuso");
+/**
+ * È una notifica automatica di Freshdesk, non una risposta vera?
+ *
+ * Freshdesk mette lo stato del ticket in testa all'oggetto — e non sempre in
+ * italiano: nella casella ci sono 98 «Ticket Risolto» e 3 «Ticket Closed».
+ * Finché qui c'era solo l'elenco italiano, una notifica inglese passava per una
+ * risposta di Cherubina: il suo testo («Your ticket … has been closed») sarebbe
+ * finito nel riquadro da pubblicare su Google.
+ */
+export function eNotifica(subject: string): boolean {
+  return /^\s*ticket\s+(creato|aperto|risolto|chiuso|riaperto|aggiornato|created|opened|resolved|closed|reopened|updated)\b/i.test(
+    subject || "",
+  );
 }
 
 /**
@@ -105,6 +122,61 @@ export async function aggiornaAttese(mailbox?: string): Promise<number> {
     }
   }
   return trovate;
+}
+
+/** Chi risulta aver registrato la voce: non un operatore, il sistema. */
+const SISTEMA = 1;
+
+/**
+ * Riconosce i ritorni del customer care su inoltri fatti A MANO, fuori dal
+ * portale, e li porta nel flusso normale: voce «pronta», riquadro
+ * precompilato col testo di Cherubina in «Da approvare».
+ *
+ * Perché serve. `aggiornaAttese` aggiorna solo le escalation che il portale ha
+ * registrato lui. Ma per mesi gli inoltri li ha fatti Stefania a mano, e quelle
+ * risposte tornano adesso: nel portale non esiste nessuna voce da aggiornare.
+ * Il risultato era una recensione che compariva in coda come «mai gestita»
+ * proprio nel momento in cui la risposta era arrivata — è il caso di viktoria
+ * koe e edwin blok (inoltrate a mano il 25 agosto, risposte il 9 settembre).
+ *
+ * Il segnale è la risposta stessa, letta dal thread durante l'ingest: non
+ * «Ticket Risolto», che è vero per quasi tutte le recensioni e non dice se
+ * qualcuno ha davvero scritto al cliente. Vale a ogni livello di stelle —
+ * conta che Cherubina abbia risposto, non quante stelle avesse la recensione.
+ *
+ * Non tocca: chi ha già una voce escalation (ha la sua storia), chi il portale
+ * ha già pubblicato, e chi è già stato chiuso a mano. Il testo NON viene
+ * pubblicato da qui: finisce nel riquadro, e resta all'operatore approvarlo —
+ * anche perché una mail del customer care può essere una nota interna e non
+ * una risposta per il cliente.
+ */
+export async function registraRitorniCustomerCare(recensioni: Recensione[]): Promise<number> {
+  const candidate = recensioni.filter((r) => r.rispostaCustomerCare);
+  if (candidate.length === 0) return 0;
+
+  const [conEscalation, pubblicate, giaChiuse] = await Promise.all([
+    chiaviConEscalation(),
+    chiaviPubblicate(),
+    chiaviGiaChiuse(candidate.map((r) => r.chiave)),
+  ]);
+
+  let registrate = 0;
+  for (const r of candidate) {
+    if (conEscalation.has(r.chiave) || pubblicate.has(r.chiave) || giaChiuse.has(r.chiave)) continue;
+    const rep = r.rispostaCustomerCare!;
+    // La data dell'inoltro è quella VERA solo quando il portale l'ha fatto lui.
+    // Qui non la sappiamo — l'inoltro è avvenuto in Outlook — e scriverne una
+    // finta renderebbe bugiardo il registro: si tiene la data della risposta,
+    // che è l'unico istante certo di questa lavorazione.
+    await registraInoltro(r, {
+      ticketId: rep.ticket,
+      operatoreId: SISTEMA,
+      inoltrataIl: new Date(rep.quando),
+    });
+    await salvaRisposta(r.chiave, rep.testo, rep.ticket, rep.quando);
+    registrate++;
+  }
+  return registrate;
 }
 
 const piatto = (s: string) => (s || "").toLowerCase().replace(/\s+/g, " ").trim();

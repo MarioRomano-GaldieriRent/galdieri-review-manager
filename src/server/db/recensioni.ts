@@ -295,6 +295,10 @@ function componi(d: DocRec): RecensioneArchiviata {
     numeroMessaggi: d.numeroMessaggi,
     haRisposta: d.haRisposta,
     risolto: d.risolto,
+    // Segnale dell'ingest, non dell'archivio: si legge dai thread di posta al
+    // momento della lettura e non si salva qui. Quello che se ne ricava è già
+    // stato trasformato in una voce escalation «pronta».
+    rispostaCustomerCare: null,
     primaVistaIl: d.primaVistaIl.toISOString(),
     archiviataIl: d.archiviataIl ? d.archiviataIl.toISOString() : null,
     motivoArchiviazione: d.motivoArchiviazione ?? "",
@@ -376,6 +380,24 @@ export async function segnaGestitaFuoriPortale(chiave: string, motivo: string): 
     },
     { $set: { archiviata: true } },
   ]);
+}
+
+/**
+ * Fra le chiavi date, quelle su cui il discorso è CHIUSO: già gestite
+ * (`haRisposta`) o archiviate. Serve a chi vuole riaprire una lavorazione — non
+ * la si riapre su una recensione che qualcuno ha già chiuso a mano.
+ */
+export async function chiaviGiaChiuse(chiavi: string[]): Promise<Set<string>> {
+  if (chiavi.length === 0) return new Set();
+  const righe = (await (
+    await coll("recensioni")
+  )
+    .find(
+      { _id: { $in: chiavi }, $or: [{ haRisposta: true }, { archiviata: true }] },
+      { projection: { _id: 1 } },
+    )
+    .toArray()) as { _id: string }[];
+  return new Set(righe.map((r) => r._id));
 }
 
 /** Le chiavi delle recensioni archiviate: servono alla home per toglierle dall'elenco. */

@@ -78,12 +78,20 @@ function componi(d: DocEsc): Escalation {
   };
 }
 
-/** Registra (o aggiorna) l'inoltro di una recensione negativa: stato «attesa». */
+/**
+ * Registra (o aggiorna) l'inoltro di una recensione negativa: stato «attesa».
+ *
+ * `inoltrataIl` si passa solo quando l'inoltro NON l'ha fatto il portale e la
+ * sua data la conosciamo da altro (una risposta ricostruita dalla posta):
+ * scrivere «adesso» su una cosa successa settimane fa renderebbe bugiardo il
+ * registro. Normalmente si omette ed è l'istante della chiamata.
+ */
 export async function registraInoltro(
   r: Recensione,
-  opts: { ticketId: number | null; operatoreId: number },
+  opts: { ticketId: number | null; operatoreId: number; inoltrataIl?: Date },
 ): Promise<void> {
   const ora = new Date();
+  const quandoInoltrata = opts.inoltrataIl ?? ora;
   await (await escalations()).updateOne(
     { _id: r.chiave },
     {
@@ -97,7 +105,7 @@ export async function registraInoltro(
         originale: r.originale,
         idGoogle: r.idGoogle,
         ticketId: opts.ticketId,
-        inoltrataIl: ora,
+        inoltrataIl: quandoInoltrata,
         operatoreId: opts.operatoreId,
         aggiornataIl: ora,
       },
@@ -147,6 +155,12 @@ export async function elencoPronte(): Promise<Escalation[]> {
     .sort({ rispostaTrovataIl: -1 })
     .toArray();
   return righe.map(componi);
+}
+
+/** Chiavi con una voce escalation, in QUALSIASI stato: hanno già una loro storia. */
+export async function chiaviConEscalation(): Promise<Set<string>> {
+  const righe = await (await escalations()).find({}, { projection: { _id: 1 } }).toArray();
+  return new Set(righe.map((d) => d._id));
 }
 
 /** Chiavi ancora nel ciclo escalation (attesa o pronta): NON riproporle come «da inoltrare». */

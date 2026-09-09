@@ -1,6 +1,7 @@
 import { salvaRecensioni } from "@/server/db/recensioni";
 import { searchMessages, type MailDetail } from "@/server/graph/client";
 import { htmlToText, locationFromSubject, parseReview, splitTranslation } from "./parse";
+import { eNotifica, estraiRisposta, registraRitorniCustomerCare } from "./rispostaCustomerCare";
 import { activeMailbox, type Label } from "@/server/settings";
 import { translateToItalian } from "@/server/translate";
 
@@ -31,6 +32,16 @@ export type Recensione = {
   numeroMessaggi: number;
   haRisposta: boolean;
   risolto: boolean;
+  /**
+   * La risposta del customer care trovata NEL THREAD di questa recensione:
+   * Cherubina ha già scritto il testo da pubblicare. Si legge qui, dalle email
+   * che l'ingest ha in mano, e non costa nulla in più.
+   *
+   * Serve a riconoscere i ritorni di un inoltro fatto A MANO, fuori dal
+   * portale: lì non esiste nessuna voce «in attesa» da aggiornare, e senza
+   * questo segnale la recensione sembra semplicemente non gestita.
+   */
+  rispostaCustomerCare: { testo: string; ticket: number | null; quando: string } | null;
 };
 
 /** Il testo da mostrare e su cui ragionare: italiano se c'è, altrimenti l'originale. */
@@ -40,6 +51,27 @@ export function testoRecensione(r: Recensione): string {
 
 export function haTesto(r: Recensione): boolean {
   return testoRecensione(r).length > 0;
+}
+
+/**
+ * Nel gruppo c'è una risposta VERA del customer care? (non «Ticket Creato» né
+ * «Ticket Risolto», che sono notifiche automatiche di Freshdesk).
+ *
+ * Si guarda dalla più recente e si prende la prima da cui `estraiRisposta`
+ * riesce a isolare un testo: è quello che Cherubina ha scritto per il cliente.
+ * Il corpo delle email è già in memoria — l'ingest lo carica comunque per
+ * leggere la recensione — quindi qui non si paga nessuna chiamata in più.
+ */
+function rispostaNelGruppo(
+  gruppo: MailDetail[],
+): { testo: string; ticket: number | null; quando: string } | null {
+  for (const m of [...gruppo].sort((a, b) => (a.receivedDateTime < b.receivedDateTime ? 1 : -1))) {
+    if (!m.fromAddress.toLowerCase().includes("customer.care")) continue;
+    if (eNotifica(m.subject)) continue;
+    const est = estraiRisposta(m.bodyIsHtml ? htmlToText(m.bodyContent) : m.bodyContent);
+    if (est) return { ...est, quando: m.receivedDateTime };
+  }
+  return null;
 }
 
 /** Raggruppa i messaggi per conversazione e ne ricava una recensione per flusso. */
@@ -64,6 +96,7 @@ function raggruppa(messaggi: MailDetail[], label: Label) {
     numeroMessaggi: number;
     haRisposta: boolean;
     risolto: boolean;
+    rispostaCustomerCare: { testo: string; ticket: number | null; quando: string } | null;
   }[] = [];
 
   for (const [chiave, gruppo] of perConversazione) {
@@ -117,6 +150,7 @@ function raggruppa(messaggi: MailDetail[], label: Label) {
           a.endsWith("@galdierirent.it") && !a.startsWith("customer.care") && !a.includes("zapier")
         );
       }),
+      rispostaCustomerCare: rispostaNelGruppo(gruppo),
     });
   }
 
@@ -192,6 +226,7 @@ export async function caricaRecensioni(
     numeroMessaggi: g.numeroMessaggi,
     haRisposta: g.haRisposta,
     risolto: g.risolto,
+    rispostaCustomerCare: g.rispostaCustomerCare,
   }));
 
   // Archiviazione: da qui in poi la recensione esiste anche quando uscirà
@@ -206,6 +241,17 @@ export async function caricaRecensioni(
     interpretati,
     scartati: Math.max(0, conversazioni - interpretati),
   });
+
+  // Ritorni del customer care su inoltri fatti A MANO: si registrano qui,
+  // subito dopo l'archiviazione, perché è qui che i thread completi ci sono
+  // ancora. Fuori dal percorso critico, come l'archiviazione: se fallisce lo
+  // dice in console e la pagina si carica lo stesso.
+  try {
+    const n = await registraRitorniCustomerCare(recensioni);
+    if (n > 0) console.log(`[ritorni] risposte del customer care riconosciute e precompilate: ${n}.`);
+  } catch (e) {
+    console.warn("[ritorni] registrazione saltata:", e instanceof Error ? e.message : e);
+  }
 
   const dati = { recensioni, analizzate: messaggi.length };
   cacheCarico.set(chiaveCache, { at: Date.now(), dati });
