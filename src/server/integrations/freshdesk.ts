@@ -603,20 +603,26 @@ export async function recensioniConTicketRisolto(
       );
       if (candidati.length === 0) continue;
 
-      // Casella tutta risolta: gratis, nessun corpo da guardare.
-      if (candidati.every(risolto)) {
-        esito.nascoste.add(r.chiave);
-        continue;
-      }
-
       // Se NESSUN candidato è risolto, questa recensione non può essere «già
       // gestita» tramite loro: inutile guardare i corpi. Taglia il caso delle 5★
       // ancora da pubblicare in una sede con soli ticket negativi aperti.
       if (!candidati.some(risolto)) continue;
 
-      // Qualcuno risolto e qualcuno aperto: trova il ticket SPECIFICO della
-      // recensione (per nome) e guarda lo stato di QUELLO, dal più vicino nel
-      // tempo, al primo match.
+      // Si cerca SEMPRE il ticket specifico della recensione, per nome.
+      //
+      // Qui c'era una scorciatoia: se TUTTI i candidati erano risolti, si
+      // nascondeva la recensione senza guardare i corpi. Sembrava sicura e non
+      // lo era, perché l'oggetto dell'email è PER SEDE, non per cliente: i
+      // «candidati» sono i ticket della stessa sede nati nella stessa finestra,
+      // e possono benissimo essere di altri clienti. Caso reale del 9/9/2026:
+      // la 5★ di Giovanni Rota Gelpi (Bari, arrivata alle 09:35) è sparita
+      // dalla coda perché l'unico candidato era il ticket #59765 di Francisco
+      // Barco, creato 70 secondi prima e nel frattempo risolto. Nascondere una
+      // recensione mai risposta è il danno peggiore che questo filtro possa
+      // fare, quindi si paga sempre il controllo del nome — che non costa
+      // chiamate: i corpi arrivano già con l'elenco.
+      //
+      // Dal più vicino nel tempo, al primo match.
       const nomeConfr = perConfronto(r.nome || "");
       if (!nomeConfr) continue; // senza nome non disambiguo: prudente, la tengo
       const perTempo = [...candidati].sort(
