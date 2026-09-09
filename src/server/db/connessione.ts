@@ -34,10 +34,17 @@ if (typeof window !== "undefined") {
 const URI = process.env.MONGODB_URI ?? "mongodb://127.0.0.1:27017";
 const NOME_DB = process.env.MONGODB_DB ?? "galdieri_recensioni";
 
-// Rete di sicurezza: il database di un'altra applicazione vive sullo stesso
-// mongod, senza password. Un MONGODB_DB sbagliato non deve poter puntare lì.
-if (["portale_assenze", "admin", "local", "config"].includes(NOME_DB)) {
-  throw new Error(`MONGODB_DB=${NOME_DB}: non è il database di questa applicazione.`);
+// Rete di sicurezza: sul cluster Atlas vivono anche i database del CRM
+// (crm-galdierirent, test-crm-galdierirent, crm_ai, crm_pay) e l'utente del
+// database li vede tutti. Lista bianca e non lista nera: un MONGODB_DB che non
+// sia il nostro non apre nemmeno la connessione, così un refuso non può
+// scrivere nei dati di un'altra applicazione.
+const DB_AMMESSI = ["galdieri_recensioni"];
+if (!DB_AMMESSI.includes(NOME_DB)) {
+  throw new Error(
+    `MONGODB_DB=${NOME_DB}: non è il database di questa applicazione ` +
+      `(ammesso solo ${DB_AMMESSI.join(", ")}).`,
+  );
 }
 
 /** Scrittura che deve essere durevole prima di proseguire (storico, versioni). */
