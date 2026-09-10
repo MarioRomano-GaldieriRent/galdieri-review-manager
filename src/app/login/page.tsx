@@ -4,7 +4,6 @@ import { accediAction } from "./actions";
 import { BottoneEntra } from "./BottoneEntra";
 
 export const dynamic = "force-dynamic";
-export const metadata = { title: "Accesso — GaldieriReviews" };
 
 const MESSAGGI: Record<string, string> = {
   credenziali: "Username o password non corretti.",

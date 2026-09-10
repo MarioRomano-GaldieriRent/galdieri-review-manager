@@ -14,7 +14,6 @@ import { Aggiorna } from "../_ui/Aggiorna";
 import { eliminaEsecuzioneAction, eseguiSuRecensioneAction, svuotaRegistroAction } from "./actions";
 
 export const dynamic = "force-dynamic";
-export const metadata = { title: "Automazioni — Galdieri rent" };
 
 const fmt = new Intl.DateTimeFormat("it-IT", { dateStyle: "short", timeStyle: "short" });
 

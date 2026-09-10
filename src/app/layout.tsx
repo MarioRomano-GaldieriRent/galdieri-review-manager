@@ -8,7 +8,11 @@ import { operatoreCorrente } from "@/server/auth/sessione";
 import { contaAperte } from "@/server/db/segnalazioni";
 
 export const metadata: Metadata = {
-  title: "GaldieriReviews",
+  // Fisso su ogni pagina: in Next.js un `metadata.title` di pagina VINCE
+  // sempre su quello del layout, indipendentemente da template/default — per
+  // questo le pagine (statistiche, impostazioni, ecc.) non hanno più un loro
+  // title. Se una ne aggiunge uno nuovo, questo smette di essere "sempre".
+  title: "Galdieri Reviews",
   description:
     "Gestione delle recensioni Google e Trustpilot: coda di pubblicazione, automazioni e posta monitorata.",
 };

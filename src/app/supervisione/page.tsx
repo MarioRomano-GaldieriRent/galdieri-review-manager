@@ -28,7 +28,6 @@ import { ListaSegnalazioni } from "./ListaSegnalazioni";
 //      statistica storica).
 
 export const dynamic = "force-dynamic";
-export const metadata = { title: "Supervisione — GaldieriReviews" };
 
 const fmt = new Intl.DateTimeFormat("it-IT", { dateStyle: "medium", timeStyle: "short" });
 const data = new Intl.DateTimeFormat("it-IT", { dateStyle: "medium" });

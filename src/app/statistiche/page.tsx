@@ -24,7 +24,6 @@ import { settimanaIso } from "@/server/tempo";
 // mostrare un grafico convincente.
 
 export const dynamic = "force-dynamic";
-export const metadata = { title: "Statistiche — Galdieri rent" };
 
 const data = new Intl.DateTimeFormat("it-IT", { dateStyle: "medium" });
 const dataOra = new Intl.DateTimeFormat("it-IT", { dateStyle: "medium", timeStyle: "short" });

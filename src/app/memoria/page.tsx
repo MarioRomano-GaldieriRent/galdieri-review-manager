@@ -35,7 +35,6 @@ import {
 // Si riempie con `npm run memoria:importa -- 12` (ultimi 12 mesi di Posta inviata).
 
 export const dynamic = "force-dynamic";
-export const metadata = { title: "Memoria — GaldieriReviews" };
 
 const fmt = new Intl.DateTimeFormat("it-IT", { dateStyle: "medium" });
 const PER_PAGINA = 40;

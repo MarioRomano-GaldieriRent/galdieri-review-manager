@@ -7,7 +7,6 @@ import { importaCsvAction, salvaLinkSedeAction } from "./actions";
 // compilarle tutte in una volta.
 
 export const dynamic = "force-dynamic";
-export const metadata = { title: "Sedi — Galdieri rent" };
 
 function livelloLink(s: Sede): { testo: string; classe: string } {
   if (s.googleReviewsUrl) return { testo: "link diretto", classe: "conn-ok" };

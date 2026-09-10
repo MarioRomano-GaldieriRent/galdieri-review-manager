@@ -43,7 +43,6 @@ import {
 } from "./actions";
 
 export const dynamic = "force-dynamic";
-export const metadata = { title: "Impostazioni — Galdieri rent" };
 
 const SEGRETO = "•••••••• (impostato — lascia vuoto per non cambiarlo)";
 

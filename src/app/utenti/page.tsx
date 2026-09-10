@@ -10,7 +10,6 @@ import {
 } from "./actions";
 
 export const dynamic = "force-dynamic";
-export const metadata = { title: "Utenti — GaldieriReviews" };
 
 export default async function UtentiPage({
   searchParams,

@@ -10,7 +10,6 @@ import {
 } from "@/server/integrations/freshdesk";
 
 export const dynamic = "force-dynamic";
-export const metadata = { title: "Ticket — Galdieri rent" };
 
 const fmt = new Intl.DateTimeFormat("it-IT", { dateStyle: "short", timeStyle: "short" });
 const PAGE_SIZE = 30;

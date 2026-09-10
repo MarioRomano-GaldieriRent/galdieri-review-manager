@@ -78,7 +78,6 @@ import { ScheletroLista } from "./_ui/segnaposti";
 // tastiera — restano immediati e non aspettano la posta a ogni Invio.
 
 export const dynamic = "force-dynamic";
-export const metadata = { title: "GaldieriReviews" };
 
 const fmt = new Intl.DateTimeFormat("it-IT", { dateStyle: "medium", timeStyle: "short" });
 const oraFmt = new Intl.DateTimeFormat("it-IT", { hour: "2-digit", minute: "2-digit" });
