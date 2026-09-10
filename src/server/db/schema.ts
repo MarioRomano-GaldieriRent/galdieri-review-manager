@@ -104,6 +104,23 @@ export const COLLEZIONI: DefColl[] = [
               motivoArchiviazione: stringaOFalsa,
               testoTroncato: boolo,
               impronta: stringaO,
+              // La conferma della sweep Freshdesk, resa PERMANENTE: «il ticket #id
+              // era risolto (o esisteva, per le negative) quando l'ho guardato».
+              // Senza, la recensione tornava in coda appena il ticket usciva dalla
+              // finestra dei 600 scaricati (~9 giorni), pur non essendo cambiato
+              // nulla. Non è haRisposta — «ticket chiuso» e «risposto al cliente»
+              // sono due fatti diversi — perciò ha un campo suo.
+              ticketConfermato: {
+                bsonType: ["object", "null"],
+                required: ["id", "stato", "tipo", "il"],
+                additionalProperties: false,
+                properties: {
+                  id: { bsonType: "int", minimum: 1 },
+                  stato: { bsonType: "int", minimum: 0 },
+                  tipo: { enum: ["risolto", "inoltrato"] },
+                  il: { bsonType: "date" },
+                },
+              },
             },
           },
         },

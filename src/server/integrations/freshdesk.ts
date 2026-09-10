@@ -1,4 +1,5 @@
 import { resolveFreshdesk } from "@/server/settings";
+import type { ConfermaTicket } from "@/server/db/recensioni";
 
 // Integrazione Freshdesk (ticketing) — SOLA LETTURA.
 // Tutte le chiamate qui sotto sono GET: nessuna funzione crea, modifica o
@@ -565,6 +566,12 @@ export async function elencoTicketRecenti(pagine: number, forza = false): Promis
 export type EsitoSweep = {
   /** Chiavi delle recensioni confermate (risolte / già inoltrate): da nascondere. */
   nascoste: Set<string>;
+  /**
+   * Per ogni nascosta, QUALE ticket l'ha confermata e in che stato: è ciò che la
+   * home rende permanente (confermaTicket), così la recensione resta fuori dalla
+   * coda anche quando quel ticket esce dalla finestra dei 600 scaricati.
+   */
+  conferme: ConfermaTicket[];
   /** Recensioni che non si è riusciti a verificare: restano visibili. */
   nonVerificate: number;
   /** L'ultimo errore incontrato, per dirlo a chi guarda la lista. */
@@ -590,7 +597,7 @@ export async function recensioniConTicketRisolto(
   recensioni: { chiave: string; oggetto: string; ricevutaIl: string; nome: string }[],
   opts: { pagine?: number; candidatiMax?: number; forza?: boolean; tickets?: FdTicket[] } = {},
 ): Promise<EsitoSweep> {
-  const esito: EsitoSweep = { nascoste: new Set(), nonVerificate: 0, errore: null };
+  const esito: EsitoSweep = { nascoste: new Set(), conferme: [], nonVerificate: 0, errore: null };
   if (recensioni.length === 0) return esito;
 
   // La lista può essere condivisa dal chiamante (scaricata UNA volta per le due
@@ -645,7 +652,10 @@ export async function recensioniConTicketRisolto(
       for (const t of perTempo.slice(0, opts.candidatiMax ?? 25)) {
         const completo = await conCorpo(t, opts.forza);
         if (nomeNelCorpo(perConfronto(soloTesto(completo.descriptionHtml)), nomeConfr)) {
-          if (risolto(completo)) esito.nascoste.add(r.chiave);
+          if (risolto(completo)) {
+            esito.nascoste.add(r.chiave);
+            esito.conferme.push({ chiave: r.chiave, ticketId: completo.id, stato: completo.status, tipo: "risolto" });
+          }
           break; // trovato il suo ticket: lo stato di quello è la risposta
         }
       }
@@ -685,7 +695,7 @@ export async function recensioniConTicket(
   recensioni: { chiave: string; oggetto: string; ricevutaIl: string; nome: string }[],
   opts: { pagine?: number; candidatiMax?: number; forza?: boolean; tickets?: FdTicket[] } = {},
 ): Promise<EsitoSweep> {
-  const esito: EsitoSweep = { nascoste: new Set(), nonVerificate: 0, errore: null };
+  const esito: EsitoSweep = { nascoste: new Set(), conferme: [], nonVerificate: 0, errore: null };
   if (recensioni.length === 0) return esito;
 
   let tutti: FdTicket[];
@@ -723,6 +733,7 @@ export async function recensioniConTicket(
         const completo = await conCorpo(t, opts.forza);
         if (nomeNelCorpo(perConfronto(soloTesto(completo.descriptionHtml)), nomeConfr)) {
           esito.nascoste.add(r.chiave); // il suo ticket esiste: è già stata inoltrata
+          esito.conferme.push({ chiave: r.chiave, ticketId: completo.id, stato: completo.status, tipo: "inoltrato" });
           break;
         }
       }

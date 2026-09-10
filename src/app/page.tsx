@@ -40,9 +40,11 @@ import { BottoneRispondi } from "./BottoneRispondi";
 import { BottoneTest } from "./BottoneTest";
 import {
   chiaviArchiviate,
+  confermaTicket,
   elencoArchiviate,
   leggiRecensione,
   recensioniDaApprovare,
+  type ConfermaTicket,
   type RecensioneArchiviata,
 } from "@/server/db/recensioni";
 import { VediMail } from "./VediMail";
@@ -886,7 +888,8 @@ async function caricaDatiApprovare({
   // finestra della posta: ha TUTTO l'arretrato recente e non perde ciò che è
   // scivolato oltre la finestra (era il caso di Arthur). Funziona anche se
   // Graph è momentaneamente giù.
-  const recensioni: Recensione[] = await recensioniDaApprovare();
+  // Il tipo dell'archivio, non il generico Recensione: serve `ticketConfermato`.
+  const recensioni: RecensioneArchiviata[] = await recensioniDaApprovare();
 
   // Lista UNICA: le recensioni ancora da pubblicare su Google. Sparisce solo
   // ciò che è già stato pubblicato (stato pubblicata/verificata); quelle
@@ -901,7 +904,11 @@ async function caricaDatiApprovare({
     //  - ciò che è stato ARCHIVIATO a mano (es. impossibile da gestire): va
     //    nella tab «Archiviati», da dove si può ripristinare;
     //  - ciò che è stato SEGNALATO all'amministratore (tasto «?»): è in carico
-    //    a lui in Supervisione finché non lo rimette in coda.
+    //    a lui in Supervisione finché non lo rimette in coda;
+    //  - ciò che la sweep Freshdesk ha GIÀ CONFERMATO in un giro precedente
+    //    (ticketConfermato): ticket risolto o già inoltrata. Senza questo, la
+    //    recensione tornava in coda il giorno in cui il suo ticket usciva dalla
+    //    finestra dei 600 scaricati — 106 stavano per riaffiorare il 10/9/2026.
     //
     // NB: qui NON si guarda l'email «ticket risolto» (segnale debole). Lo stato
     // VERO del ticket su Freshdesk lo si controlla più sotto, con una sweep.
@@ -909,6 +916,7 @@ async function caricaDatiApprovare({
       (r) =>
         !pubblicate.has(r.chiave) &&
         !r.haRisposta &&
+        !r.ticketConfermato &&
         !archiviateChiavi.has(r.chiave) &&
         !segnalateChiavi.has(r.chiave),
     )
@@ -1029,8 +1037,10 @@ async function caricaDatiApprovare({
       // Le sweep non sollevano: ognuna riporta le CONFERMATE e quante non è
       // riuscita a verificare. Si applicano entrambe, anche se una è parziale.
       const nascoste = new Set<string>();
+      const conferme: ConfermaTicket[] = [];
       const applica = (e: EsitoSweep) => {
         for (const c of e.nascoste) nascoste.add(c);
+        conferme.push(...e.conferme);
         nonVerificate += e.nonVerificate;
         if (e.errore) erroreFreshdesk = e.errore;
       };
@@ -1038,6 +1048,21 @@ async function caricaDatiApprovare({
       if (negativi.length > 0) applica(await recensioniConTicket(negativi, { forza, tickets }));
       const prima = daApprovare.length;
       daApprovare = daApprovare.filter((x) => !nascoste.has(x.r.chiave));
+
+      // Ciò che la sweep ha confermato ADESSO si salva sulla recensione, così
+      // al prossimo giro non entra nemmeno in lista e — soprattutto — non
+      // riaffiora quando il suo ticket esce dalla finestra. Dopo la risposta,
+      // non davanti a chi guarda: è una scrittura di cui la pagina non ha bisogno.
+      if (conferme.length > 0) {
+        after(async () => {
+          try {
+            const n = await confermaTicket(conferme);
+            if (n > 0) console.log(`[da-approvare] conferme Freshdesk rese permanenti: ${n}.`);
+          } catch (e) {
+            console.warn("[da-approvare] conferme non salvate:", e instanceof Error ? e.message : e);
+          }
+        });
+      }
       console.log(
         `[da-approvare] filtro Freshdesk: nascoste ${prima - daApprovare.length} su ${prima} (risolte o già inoltrate)${
           nonVerificate > 0 ? `, non verificate ${nonVerificate} (${erroreFreshdesk})` : ""

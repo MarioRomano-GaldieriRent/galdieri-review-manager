@@ -250,6 +250,8 @@ export type RecensioneArchiviata = Recensione & {
   archiviataIl: string | null;
   motivoArchiviazione: string;
   testoTroncato: boolean;
+  /** La sweep Freshdesk l'ha già confermata gestita: resta fuori dalla coda anche quando il ticket esce dalla finestra. */
+  ticketConfermato: { id: number; stato: number; tipo: TipoConferma; il: string } | null;
 };
 
 type DocRec = {
@@ -274,7 +276,13 @@ type DocRec = {
   archiviataIl: Date | null;
   motivoArchiviazione?: string;
   testoTroncato: boolean;
+  ticketConfermato?: { id: number; stato: number; tipo: TipoConferma; il: Date } | null;
 };
+
+/** Cosa ha confermato la sweep Freshdesk: ticket risolto (positive) o ticket esistente = già inoltrata (negative). */
+export type TipoConferma = "risolto" | "inoltrato";
+
+export type ConfermaTicket = { chiave: string; ticketId: number; stato: number; tipo: TipoConferma };
 
 function componi(d: DocRec): RecensioneArchiviata {
   return {
@@ -303,7 +311,42 @@ function componi(d: DocRec): RecensioneArchiviata {
     archiviataIl: d.archiviataIl ? d.archiviataIl.toISOString() : null,
     motivoArchiviazione: d.motivoArchiviazione ?? "",
     testoTroncato: d.testoTroncato,
+    ticketConfermato: d.ticketConfermato
+      ? { ...d.ticketConfermato, il: d.ticketConfermato.il.toISOString() }
+      : null,
   };
+}
+
+/**
+ * Rende PERMANENTE ciò che la sweep Freshdesk ha appena confermato.
+ *
+ * Il problema che risolve. La sweep guarda gli ultimi 600 ticket (~9 giorni):
+ * una recensione col ticket risolto è nascosta finché il ticket sta lì dentro,
+ * e ricompare in coda come «da fare» il giorno in cui ne esce — senza che su
+ * di lei sia cambiato nulla. Il 10/9/2026 ne stavano per riaffiorare 106,
+ * 18 il giorno dopo. Qui si scrive sulla recensione «ticket #X, stato Y, visto
+ * il Z», e da quel momento non serve più che il ticket sia nella finestra.
+ *
+ * Solo la PRIMA conferma: una successiva non riscrive la data. Se un ticket
+ * confermato risolto viene poi riaperto la recensione resta fuori — è il caso
+ * raro, e il ritorno del customer care la ripesca comunque come «pronta».
+ * Best-effort in blocco: chi chiama non aspetta questa scrittura per
+ * mostrare la lista.
+ */
+export async function confermaTicket(conferme: ConfermaTicket[]): Promise<number> {
+  if (conferme.length === 0) return 0;
+  const ora = new Date();
+  const res = await (await coll("recensioni")).bulkWrite(
+    conferme.map((c) => ({
+      updateOne: {
+        // `null` in un filtro Mongo combacia sia con il campo assente sia con null.
+        filter: { _id: c.chiave, ticketConfermato: null },
+        update: { $set: { ticketConfermato: { id: c.ticketId, stato: c.stato, tipo: c.tipo, il: ora } } },
+      },
+    })),
+    { ordered: false },
+  );
+  return res.modifiedCount;
 }
 
 export async function leggiRecensione(chiave: string): Promise<RecensioneArchiviata | null> {
