@@ -118,6 +118,19 @@ export async function elencoUtenti(): Promise<(OperatoreDoc & { haCredenziali: b
   return ops.map((o) => ({ ...o, haCredenziali: conCred.has(o._id) }));
 }
 
+/**
+ * Gli indirizzi degli admin attivi. Un solo posto per questa domanda: la
+ * segnalazione a Supervisione e il report giornaliero devono contattare
+ * esattamente le stesse persone, e in futuro anche altre notifiche verso
+ * "l'amministrazione".
+ */
+export async function emailAdminAttivi(): Promise<string[]> {
+  const righe = (await (await operatori())
+    .find({ tipo: "persona", attivo: true, ruolo: "admin" })
+    .toArray()) as unknown as OperatoreDoc[];
+  return righe.map((o) => (o.email ?? "").trim()).filter((e) => e.includes("@"));
+}
+
 // ------------------------------------------------------- creazione utente
 
 /**

@@ -419,7 +419,16 @@ export async function gestione(): Promise<Gestione> {
   return { ricevute, conRisposta, dalSistema };
 }
 
-export type GestiteNelGiorno = { totale: number; dalPortale: number; dallaPosta: number };
+/** Ordine di lettura comune a ogni riepilogo per punteggio: 5★ → 1★, poi le senza voto. */
+const LIVELLI_STELLE: (number | null)[] = [5, 4, 3, 2, 1, null];
+
+export type GestiteNelGiorno = {
+  totale: number;
+  dalPortale: number;
+  dallaPosta: number;
+  /** Il TOTALE di sopra, spaccato per punteggio — stesso ordine di LIVELLI_STELLE. */
+  perStella: { stelle: number | null; conteggio: number }[];
+};
 
 /**
  * Quante recensioni sono state CHIUSE in una giornata, e quante lo sono state
@@ -456,16 +465,35 @@ export async function gestiteNelGiorno(dal: Date, al: Date): Promise<GestiteNelG
       .toArray() as Promise<{ _id: string }[]>,
   ]);
   const dalPortale = new Set(pubb.map((d) => d._id));
-  const dallaPosta = posta.filter((d) => !dalPortale.has(d._id)).length;
-  return { totale: dalPortale.size + dallaPosta, dalPortale: dalPortale.size, dallaPosta };
+  const idsDallaPosta = posta.map((d) => d._id).filter((id) => !dalPortale.has(id));
+
+  // Il punteggio si legge dall'ARCHIVIO (recensioni), non dalla pubblicazione:
+  // è la fonte unica, e chi arriva dalla posta un documento in pubblicazioni
+  // potrebbe anche non averlo. Un'unica query sull'unione delle chiavi, mai
+  // sopra qualche decina di documenti per una finestra di un giorno.
+  const tutteLeChiavi = [...dalPortale, ...idsDallaPosta];
+  const conStelle =
+    tutteLeChiavi.length > 0
+      ? ((await (await coll("recensioni"))
+          .find({ _id: { $in: tutteLeChiavi } }, { projection: { stelle: 1 } })
+          .toArray()) as { _id: string; stelle: number | null }[])
+      : [];
+  const perLivello = new Map<number | null, number>();
+  for (const d of conStelle) perLivello.set(d.stelle, (perLivello.get(d.stelle) ?? 0) + 1);
+  const perStella = LIVELLI_STELLE.map((stelle) => ({ stelle, conteggio: perLivello.get(stelle) ?? 0 }));
+
+  return {
+    totale: dalPortale.size + idsDallaPosta.length,
+    dalPortale: dalPortale.size,
+    dallaPosta: idsDallaPosta.length,
+    perStella,
+  };
 }
 
 export type RigaStelle = Gestione & { stelle: number | null };
 
 /** Una finestra temporale [dal, al). `dal: null` = da sempre (nessun filtro). */
 export type Intervallo = { dal: Date | null; al: Date };
-
-const LIVELLI_STELLE: (number | null)[] = [5, 4, 3, 2, 1, null];
 
 /**
  * La stessa gestione spaccata per punteggio, da 5★ a 1★ più la riga delle

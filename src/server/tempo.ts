@@ -57,11 +57,23 @@ export function aOraItaliana(isoUtc: string): string {
  * momento — così l'ora legale non va gestita a parte.
  */
 export function inizioGiornoItaliano(ora: Date = new Date()): Date {
+  return oraLocaleDiOggi(ora, 0, 0);
+}
+
+/**
+ * Generalizza `inizioGiornoItaliano` (che è il caso ore=0, minuti=0): l'istante
+ * di una certa ora del giorno in cui cade `ora`, letta a Roma. Serve a finestre
+ * come «dalle 9 alle 18» per il report giornaliero — stessa tecnica, stesso
+ * comportamento a cavallo di mezzanotte e dell'ora legale.
+ */
+export function oraLocaleDiOggi(ora: Date, oreLocali: number, minutiLocali = 0): Date {
   const locale = aOraItaliana(ora.toISOString()); // "2026-09-09T15:40:00"
   if (!locale) return ora;
   const scarto = new Date(`${locale}Z`).getTime() - ora.getTime();
-  const mezzanotteLocale = new Date(`${locale.slice(0, 10)}T00:00:00Z`).getTime();
-  return new Date(mezzanotteLocale - scarto);
+  const hh = String(oreLocali).padStart(2, "0");
+  const mm = String(minutiLocali).padStart(2, "0");
+  const istanteLocale = new Date(`${locale.slice(0, 10)}T${hh}:${mm}:00Z`).getTime();
+  return new Date(istanteLocale - scarto);
 }
 
 /**

@@ -65,7 +65,8 @@
     "analizza:casella": "tsx --tsconfig tsconfig.json scripts/analizza-casella.ts",
     "memoria:importa": "tsx --tsconfig tsconfig.json scripts/memoria-importa.ts",
     "memoria:analisi": "tsx --tsconfig tsconfig.json scripts/memoria-analisi.ts",
-    "ai:prova": "tsx --tsconfig tsconfig.json scripts/ai-prova.ts"
+    "ai:prova": "tsx --tsconfig tsconfig.json scripts/ai-prova.ts",
+    "report:giornaliero": "tsx --tsconfig tsconfig.json scripts/report-giornaliero.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.123.0",
