@@ -25,13 +25,48 @@ const azione = (id: string, tipo: TipoAzione, parametri: Record<string, string> 
 });
 
 /**
+ * 4 stelle SENZA testo: si ringrazia e basta, esattamente come le 5 stelle
+ * senza testo — «Grazie.» o «Thank you.», con la lingua decisa dal nome.
+ *
+ * Esiste da sola perché la regola «4 stelle» copriva sia le recensioni con
+ * commento sia quelle senza, e su una 4★ vuota proponeva un testo pensato per
+ * un commento che non c'è («Siamo a disposizione per rendere il prossimo
+ * noleggio ancora migliore…»). Stessa struttura della 5★ senza testo, solo
+ * classificata «4 stelle». Esportata perché la usa anche lo script che divide
+ * la regola nel database (scripts/dividi-regola-4.ts).
+ */
+export function regola4SenzaTesto(agenteMarketing: string, tipoTicket: string): Regola {
+  return {
+    id: "4-stelle-senza-testo",
+    nome: "4 stelle senza testo",
+    attiva: false,
+    condizione: { stelle: [4], testo: "senza" },
+    azioni: [
+      // È la risposta all'email ad aprire il ticket, come per le 5★.
+      azione("g1", "email.rispondi", { a: "", testo: "Grazie.", testoInglese: "Thank you." }),
+      azione("g2", "freshdesk.trovaTicket"),
+      azione("g3", "freshdesk.classifica", {
+        tipo: tipoTicket,
+        specifica1: "positiva",
+        specifica2: "4 stelle",
+      }),
+      azione("g4", "freshdesk.tag", { tag: "{sede}" }),
+      azione("g5", "freshdesk.assegna", { agenteId: agenteMarketing }),
+      azione("g6", "google.rispondi", { testo: "Grazie.", testoInglese: "Thank you." }),
+      azione("g7", "freshdesk.stato", { stato: "4" }),
+    ],
+  };
+}
+
+/**
  * Regole iniziali: ricalcano ciò che oggi viene fatto a mano.
  *
  *  5 stelle senza testo → classifica positiva, tag sede, assegna Marketing,
  *                         ringrazia su Google, risolve il ticket.
  *  5 stelle con testo   → come sopra ma con ringraziamento personalizzato e
  *                         tag "personale" quando il cliente cita qualcuno.
- *  4 stelle             → ringraziamento e ticket risolto.
+ *  4 stelle senza testo → come le 5 senza testo: «Grazie.» e ticket risolto.
+ *  4 stelle con testo   → ringraziamento (proposta AI nel box) e ticket risolto.
  *  3 stelle             → nessuna risposta automatica: passa a Cherubina.
  *  1-2 stelle           → inoltro a Cherubina con "Si trasmette per quanto di
  *                         competenza", ticket aperto, attesa della risposta.
@@ -112,11 +147,14 @@ export function regoleDiDefault(): Regola[] {
         azione("b6", "freshdesk.stato", { stato: "4" }),
       ],
     },
+    regola4SenzaTesto(AGENTE_MARKETING, TIPO_TICKET_GMB),
     {
+      // L'id resta «4-stelle» anche ora che copre solo le recensioni CON testo:
+      // esecuzioni e versioni già registrate puntano a questo nome.
       id: "4-stelle",
-      nome: "4 stelle",
+      nome: "4 stelle con testo",
       attiva: false,
-      condizione: { stelle: [4], testo: "qualsiasi" },
+      condizione: { stelle: [4], testo: "con" },
       azioni: [
         // Come sopra: è questo nodo a far nascere il ticket.
         azione("c0", "email.rispondi", {
