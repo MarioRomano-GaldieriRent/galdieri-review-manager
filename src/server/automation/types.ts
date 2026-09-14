@@ -207,10 +207,10 @@ export type Automazione = {
    */
   pausa?: { daOra: number; aOra: number } | null;
   /**
-   * Da quando l'automazione è accesa (ISO). Le recensioni arrivate PRIMA
-   * restano al lavoro manuale: accendendola, il pilota non deve buttarsi
-   * sull'arretrato — lì dentro ci sono recensioni già risposte a mano su Google
-   * che il portale non sa riconoscere, e ognuna diventerebbe una segnalazione.
+   * Da quando l'automazione è accesa (ISO). Solo informativa: il pilota lavora
+   * anche le recensioni arrivate prima, arretrato compreso (decisione di Mario,
+   * 14/9/2026). Quelle già risposte a mano su Google il robot le riconosce —
+   * la card non ha «Rispondi» — e il pilota le chiude come gestite.
    */
   attivaDal?: string | null;
 };
@@ -254,6 +254,15 @@ export function dentroFascia(a: Automazione, giorno: number, ora: number): boole
  */
 export function regolaAutomatizzabile(r: Regola): boolean {
   return r.condizione.testo === "senza" && r.condizione.stelle.every((s) => s >= 4);
+}
+
+/**
+ * La regola è in mano al pilota: in automatico E automatizzabile. Una regola
+ * con testo messa in automatico per errore NON lo è — il pilota la rifiuta —
+ * quindi le sue recensioni devono restare visibili a una persona.
+ */
+export function regolaInAutomatico(r: Regola): boolean {
+  return automazioneDi(r).modo !== "manuale" && regolaAutomatizzabile(r);
 }
 
 /** Vero se la recensione ricade nella condizione della regola. */

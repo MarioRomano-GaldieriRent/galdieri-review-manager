@@ -369,9 +369,9 @@ export function AutomazioneRegola({ regola }: { regola: Regola }) {
       )}
       {a.attivaDal && a.modo !== "manuale" && (
         <p className="hint">
-          Automatico dal {new Date(a.attivaDal).toLocaleString("it-IT", { timeZone: "Europe/Rome" })}:
-          le recensioni arrivate prima restano da lavorare a mano. Serve AUTOPILOTA=1 nel .env del
-          server.
+          Automatico dal {new Date(a.attivaDal).toLocaleString("it-IT", { timeZone: "Europe/Rome" })}.
+          Lavora tutte le recensioni della regola ancora da rispondere, una dopo l'altra, e finché è
+          acceso non le mostra in «Da approvare». Serve AUTOPILOTA=1 nel .env del server.
         </p>
       )}
 

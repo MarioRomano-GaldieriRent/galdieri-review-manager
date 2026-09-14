@@ -62,6 +62,8 @@ import { Stelle, VoceCoda, VoceStorico } from "./da-pubblicare/Voci";
 import { TabRecensioni } from "./TabRecensioni";
 import { TastieraCoda } from "./da-pubblicare/TastieraCoda";
 import { FiltriDaApprovare } from "./FiltriDaApprovare";
+import { pilotaVivo } from "@/server/automation/pilota";
+import { regolaInAutomatico } from "@/server/automation/types";
 import { ScheletroLista } from "./_ui/segnaposti";
 
 // La home è la pipeline di una recensione, in un'unica pagina:
@@ -873,13 +875,15 @@ async function caricaDatiApprovare({
       )
     : Promise.resolve();
 
-  const [regoleBase, pubblicate, archiviateChiavi, segnalateChiavi, erroreIngest] = await Promise.all([
-    caricaRegole(),
-    chiaviPubblicate(),
-    chiaviArchiviate(),
-    chiaviSegnalate(),
-    pIngest,
-  ]);
+  const [regoleBase, pubblicate, archiviateChiavi, segnalateChiavi, erroreIngest, pilotaAcceso] =
+    await Promise.all([
+      caricaRegole(),
+      chiaviPubblicate(),
+      chiaviArchiviate(),
+      chiaviSegnalate(),
+      pIngest,
+      pilotaVivo(),
+    ]);
   // Per questa persona le sue regole in anteprima contano come attive.
   const regole = conBeta(regoleBase, regoleBeta);
   erroreGraph = erroreIngest;
@@ -923,7 +927,13 @@ async function caricaDatiApprovare({
     .map((r) => ({ r, regola: regolaPer(regole, r.stelle, haTesto(r)) }))
     // Occhio spento: solo le recensioni coperte da una regola ATTIVA (default).
     // Occhio acceso: TUTTE, anche quelle senza regola (regola === null).
-    .filter((x) => tutte || x.regola !== null);
+    .filter((x) => tutte || x.regola !== null)
+    // Le recensioni di una regola in AUTOMATICO le risponde il pilota: non sono
+    // lavoro per una persona e non compaiono. Solo finché il pilota è vivo —
+    // se tace (server senza AUTOPILOTA, pilota piantato) tornano visibili, così
+    // non restano senza risposta di nascosto. Le «pronte» non c'entrano: sono
+    // negative, e le regole automatiche sono solo 4-5★ senza testo.
+    .filter((x) => !(pilotaAcceso && x.regola && regolaInAutomatico(x.regola)));
 
   // ESCALATION «In attesa»: finito il recupero delle risposte (avviato sopra,
   // in parallelo), si separa. Le ATTESE (inoltrate, nessuna risposta) ESCONO

@@ -7,7 +7,6 @@ import path from "node:path";
 // accendere AUTOPILOTA=1, o a capire perché una recensione non è partita.
 //
 //   npm run pilota:prova
-//   npm run pilota:prova -- --giorni 3   → come se fosse accesa da 3 giorni
 
 function loadEnv() {
   const txt = readFileSync(path.join(process.cwd(), ".env"), "utf8");
@@ -54,12 +53,7 @@ async function main() {
     );
   }
 
-  const iGiorni = process.argv.indexOf("--giorni");
-  const giorni = iGiorni > 0 ? Number(process.argv[iGiorni + 1]) : 0;
-  const daProva = giorni > 0 ? new Date(ora.getTime() - giorni * 86_400_000) : undefined;
-  if (daProva) console.log(`
-(prova: come se l'automazione fosse accesa da ${giorni} giorni)`);
-  const e = await giroPilota({ prova: true, daProva });
+  const e = await giroPilota({ prova: true });
   console.log(`\n${e.messaggio}`);
   for (const c of e.candidate ?? []) {
     console.log(

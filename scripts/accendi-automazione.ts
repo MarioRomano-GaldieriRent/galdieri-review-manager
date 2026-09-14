@@ -13,8 +13,8 @@ import type { Automazione } from "@/server/automation/types";
 // («dalle 9:00 alle 13:00 e dalle 14:00 alle 18:00»).
 //
 // Scrivere qui NON fa partire niente da solo: il pilota gira solo sul server che
-// ha AUTOPILOTA=1 nel .env e il codice nuovo. `attivaDal` = adesso: le recensioni
-// arrivate prima restano da lavorare a mano.
+// ha AUTOPILOTA=1 nel .env e il codice nuovo. Una volta acceso lavora TUTTE le
+// recensioni della regola ancora da rispondere, arretrato compreso.
 //
 //   npx tsx --tsconfig tsconfig.json scripts/accendi-automazione.ts            → PROVA
 //   npx tsx --tsconfig tsconfig.json scripts/accendi-automazione.ts --scrivi   → scrive

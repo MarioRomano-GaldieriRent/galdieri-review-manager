@@ -11,6 +11,7 @@ import {
   chiaviArchiviate,
   confermaTicket,
   recensioniDaApprovare,
+  segnaGestitaFuoriPortale,
   type RecensioneArchiviata,
 } from "@/server/db/recensioni";
 import { chiaviPubblicate } from "@/server/db/pubblicazioni";
@@ -33,8 +34,14 @@ import { aOraItaliana, giornoSettimana } from "@/server/tempo";
 //   2. legge la posta nuova (così le recensioni arrivano in archivio anche se
 //      nessuno apre il portale) e ritenta le chiusure Freshdesk rimaste appese;
 //   3. sceglie le recensioni: coperte dalla regola, arrivate da almeno
-//      `ritardoMinuti`, dopo l'accensione, mai toccate da nessuno;
-//   4. per ognuna percorre rispondiERegistra — lo STESSO codice del tasto.
+//      `ritardoMinuti`, mai toccate da nessuno — anche quelle arretrate;
+//   4. le lavora TUTTE, una dopo l'altra, con rispondiERegistra — lo STESSO
+//      codice del tasto — ricontrollando prima di ognuna fascia oraria, robot
+//      libero e Chrome chiuso: se nel frattempo scatta la pausa o qualcuno
+//      preme «Rispondi», il giro si ferma lì e riprende al successivo.
+//
+// Le recensioni di una regola automatica NON compaiono in «Da approvare»
+// finché il pilota è vivo (vedi pilotaVivo): non sono lavoro per una persona.
 //
 // Quando qualcosa va storto la recensione passa in SUPERVISIONE: si apre una
 // segnalazione (che la toglie dalla coda, quindi non si riprova all'infinito) e
@@ -47,8 +54,6 @@ import { aOraItaliana, giornoSettimana } from "@/server/tempo";
 // una persona la legga. Una regola CON testo messa in automatico pubblicherebbe
 // un testo non riletto: il pilota la rifiuta anche se qualcuno la configura.
 
-/** Al massimo tante recensioni per giro: il robot non deve mai restare occupato a lungo. */
-const MAX_PER_GIRO = 3;
 /** Un giro che tiene il lucchetto oltre questo tempo è morto (crash, riavvio): si riprende. */
 const LUCCHETTO_SCADUTO_MS = 20 * 60 * 1000;
 const NOME_LUCCHETTO = "pilota:giro";
@@ -59,6 +64,8 @@ export type EsitoGiro = {
   messaggio: string;
   pubblicate: number;
   segnalate: number;
+  /** Trovate già risposte su Google: chiuse come gestite, senza pubblicare. */
+  giaRisposte: number;
   /** Solo in prova: le recensioni che il giro avrebbe lavorato. */
   candidate?: { nome: string; stelle: number | null; regola: string; ricevutaIl: string }[];
 };
@@ -92,6 +99,16 @@ async function prendiLucchetto(): Promise<boolean> {
   }
 }
 
+/**
+ * Il giro è vivo: sposta in avanti l'ora del lucchetto. Senza, un giro che
+ * lavora molte recensioni supererebbe i 20 minuti e verrebbe creduto morto.
+ */
+async function rinnovaLucchetto(): Promise<void> {
+  await (await coll<{ _id: string; preso: Date }>("lucchetti"))
+    .updateOne({ _id: NOME_LUCCHETTO }, { $set: { preso: new Date() } })
+    .catch(() => {});
+}
+
 async function lasciaLucchetto(): Promise<void> {
   await (await coll("lucchetti")).deleteOne({ _id: NOME_LUCCHETTO }).catch(() => {});
 }
@@ -120,6 +137,25 @@ export type StatoPilota = { ultimoGiro: string; messaggio: string } | null;
 export async function leggiStatoPilota(): Promise<StatoPilota> {
   const d = await (await coll<DocStatoPilota>("pilota")).findOne({ _id: "stato" });
   return d?.ultimoGiro ? { ultimoGiro: d.ultimoGiro.toISOString(), messaggio: d.messaggio ?? "" } : null;
+}
+
+/** Un giro parte ogni 5 minuti, anche fuori fascia: oltre questo silenzio il pilota è fermo. */
+const PILOTA_VIVO_ENTRO_MS = 15 * 60 * 1000;
+
+/**
+ * Il pilota sta girando? Serve alla home per decidere se nascondere le
+ * recensioni delle regole automatiche.
+ *
+ * Nasconderle SEMPRE sarebbe pericoloso: su un server senza AUTOPILOTA=1, o
+ * col pilota piantato, sparirebbero da «Da approvare» senza che nessuno le
+ * risponda mai. Il pilota invece lascia traccia a OGNI giro — anche fuori
+ * fascia, anche quando non trova niente — quindi un ultimo giro recente è la
+ * prova che è vivo. Se tace da più di 15 minuti le recensioni tornano visibili:
+ * il lavoro non si perde.
+ */
+export async function pilotaVivo(ora: Date = new Date()): Promise<boolean> {
+  const s = await leggiStatoPilota().catch(() => null);
+  return s !== null && ora.getTime() - new Date(s.ultimoGiro).getTime() < PILOTA_VIVO_ENTRO_MS;
 }
 
 /** L'indirizzo del portale per il tasto nella mail: qui non c'è una richiesta da cui ricavarlo. */
@@ -151,19 +187,15 @@ async function passaInSupervisione(r: RecensioneArchiviata, nota: string): Promi
  * lancia il robot, non scrive niente se non la lettura della posta. Serve a
  * vedere cosa farebbe prima di accenderlo.
  */
-export async function giroPilota(
-  opts: {
-    prova?: boolean;
-    ora?: Date;
-    /**
-     * Solo in prova: considera accesa l'automazione da questa data invece che da
-     * `attivaDal`. Serve a vedere cosa avrebbe fatto negli ultimi giorni.
-     */
-    daProva?: Date;
-  } = {},
-): Promise<EsitoGiro> {
+export async function giroPilota(opts: { prova?: boolean; ora?: Date } = {}): Promise<EsitoGiro> {
   const ora = opts.ora ?? new Date();
-  const esito: EsitoGiro = { quando: ora.toISOString(), messaggio: "", pubblicate: 0, segnalate: 0 };
+  const esito: EsitoGiro = {
+    quando: ora.toISOString(),
+    messaggio: "",
+    pubblicate: 0,
+    segnalate: 0,
+    giaRisposte: 0,
+  };
   const fine = async (messaggio: string): Promise<EsitoGiro> => {
     esito.messaggio = messaggio;
     if (!opts.prova) await registraStato(esito);
@@ -232,8 +264,6 @@ export async function giroPilota(
         const a = automazioneDi(regola);
         const arrivata = new Date(r.ricevutaIl).getTime();
         if (arrivata > ora.getTime() - a.ritardoMinuti * 60_000) continue; // non ancora il suo momento
-        const dal = opts.prova && opts.daProva ? opts.daProva.getTime() : a.attivaDal ? new Date(a.attivaDal).getTime() : null;
-        if (dal !== null && arrivata < dal) continue; // arretrato: resta manuale
         candidate.push({ r, regola });
       }
 
@@ -277,8 +307,25 @@ export async function giroPilota(
       if (candidate.length === 0) return await fine("Nessuna recensione da lavorare.");
 
       // --- il lavoro ----------------------------------------------------------
-      for (const { r, regola } of candidate.slice(0, MAX_PER_GIRO)) {
-        if (robotOccupato()) break; // qualcuno ha premuto «Rispondi» nel frattempo
+      let fermato = "";
+      for (const { r, regola } of candidate) {
+        // Prima di OGNUNA: un giro con molte recensioni dura parecchi minuti, e
+        // nel frattempo può scattare la pausa, qualcuno può premere «Rispondi»
+        // o può aprirsi Chrome sul server.
+        const adesso = adessoARoma(new Date());
+        if (!dentroFascia(automazioneDi(regola), adesso.giorno, adesso.oraDecimale)) {
+          fermato = "la fascia oraria si è chiusa";
+          break;
+        }
+        if (robotOccupato()) {
+          fermato = "il robot è stato occupato da qualcun altro";
+          break;
+        }
+        if (chromeInEsecuzione()) {
+          fermato = "si è aperto Chrome sul server";
+          break;
+        }
+        await rinnovaLucchetto();
 
         // Lo stesso testo che la card mostrerebbe: quello della regola, nella
         // lingua decisa dal nome. Così un ritocco al testo in Impostazioni vale
@@ -304,7 +351,23 @@ export async function giroPilota(
           }
           if (e.tipo === "google-ko") {
             // Il robot occupato non è un errore della recensione: si riprova dopo.
-            if (e.robot.stato === "occupato") break;
+            if (e.robot.stato === "occupato") {
+              fermato = "il robot è stato occupato da qualcun altro";
+              break;
+            }
+            // Su Google la risposta c'è già (data a mano, prima che arrivasse il
+            // pilota): la recensione è GESTITA, non in errore. Si chiude come le
+            // gestite fuori dal portale — risulta risposta e va in «Archiviate»
+            // col motivo, dove si può ripristinare — invece di aprire una
+            // segnalazione per una cosa che non chiede niente a nessuno.
+            if (/ha già una risposta/i.test(e.robot.messaggio)) {
+              await segnaGestitaFuoriPortale(
+                r.chiave,
+                "🤖 Automazione: su Google la recensione aveva già una risposta. Chiusa senza pubblicare niente.",
+              );
+              esito.giaRisposte++;
+              continue;
+            }
             const nota = `🤖 Automazione: il robot non ha pubblicato su Google (${e.robot.stato}). ${e.robot.messaggio}`;
             if (await passaInSupervisione(r, nota.slice(0, 1000))) esito.segnalate++;
             // Senza sessione Google falliranno tutte allo stesso modo: inutile insistere.
@@ -333,10 +396,10 @@ export async function giroPilota(
         }
       }
 
-      const resto = Math.max(0, candidate.length - MAX_PER_GIRO);
       return await fine(
         `Pubblicate ${esito.pubblicate}, passate in Supervisione ${esito.segnalate}` +
-          (resto > 0 ? `, ${resto} al prossimo giro.` : "."),
+          (esito.giaRisposte > 0 ? `, già risposte su Google ${esito.giaRisposte}` : "") +
+          (fermato ? ` — fermo perché ${fermato}, riprendo al prossimo giro.` : "."),
       );
     } finally {
       if (!opts.prova) await lasciaLucchetto();
