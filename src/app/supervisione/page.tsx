@@ -16,6 +16,7 @@ import {
   type Intervallo,
 } from "@/server/statistiche/query";
 import { inizioGiornoItaliano } from "@/server/tempo";
+import { leggiStatoPilota } from "@/server/automation/pilota";
 import { Stelle } from "../da-pubblicare/Voci";
 import { ListaSegnalazioni } from "./ListaSegnalazioni";
 
@@ -102,7 +103,7 @@ export default async function SupervisionePage({
   // corso e non deve cambiare quando si sfoglia 7/30/90 giorni.
   const inizioOggi = inizioGiornoItaliano(al);
 
-  const [righe, modifiche, apertePeriodo, gestitePeriodo, oggi, aperte, chiuse, utenti] =
+  const [righe, modifiche, apertePeriodo, gestitePeriodo, oggi, aperte, chiuse, utenti, pilota] =
     await Promise.all([
       gestionePerStelle(intervallo),
       modifichePerStelle(intervallo),
@@ -112,6 +113,7 @@ export default async function SupervisionePage({
       elencoAperte(),
       elencoChiuse(),
       elencoUtenti(),
+      leggiStatoPilota(),
     ]);
   const nomeDi = new Map<number, string>(utenti.map((u) => [u._id, u.nome]));
   const chiPer = (id: number | null) => (id === null ? "—" : nomeDi.get(id) ?? (id === 1 ? "Sistema" : `#${id}`));
@@ -161,7 +163,11 @@ export default async function SupervisionePage({
           <Riquadro
             titolo="Dal portale"
             valore={oggi.dalPortale}
-            base={quotaOggi(oggi.dalPortale, oggi.totale)}
+            base={
+              oggi.automatiche > 0
+                ? `${quotaOggi(oggi.dalPortale, oggi.totale)} · ${oggi.automatiche} dal sistema`
+                : quotaOggi(oggi.dalPortale, oggi.totale)
+            }
           />
           <Riquadro
             titolo="Dalla posta"
@@ -169,6 +175,15 @@ export default async function SupervisionePage({
             base={quotaOggi(oggi.dallaPosta, oggi.totale)}
           />
         </div>
+        {/* Senza questa riga un pilota fermo — Chrome aperto sul server, sessione
+            Google scaduta, AUTOPILOTA non impostato — sarebbe invisibile: le
+            recensioni resterebbero lì e nessuno saprebbe perché. */}
+        <p className="hint">
+          🤖 Automazione:{" "}
+          {pilota
+            ? `ultimo giro alle ${oraFmt.format(new Date(pilota.ultimoGiro))} — ${pilota.messaggio}`
+            : "non è mai partita su questo server (serve AUTOPILOTA=1 nel .env)."}
+        </p>
         <p className="hint">
           «Gestite» non vuol dire «chiuse». «Dal portale» sì: sono le risposte pubblicate da questo
           sito oggi, e quelle sono finite. «Dalla posta» sono le recensioni su cui qualcuno di

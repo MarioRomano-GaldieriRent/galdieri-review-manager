@@ -1331,6 +1331,13 @@ code {
   background: var(--g-green);
 }
 
+/* Pubblicata dall'automazione: il colore del portale, perché a colpo d'occhio
+   nello Storico si distingua il lavoro fatto da solo da quello premuto a mano. */
+.flag-sistema {
+  color: #fff;
+  background: var(--g-blue);
+}
+
 /* ---------- Impostazioni ---------- */
 .label-row {
   border: 1px solid var(--border);

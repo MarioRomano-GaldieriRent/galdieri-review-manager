@@ -1,5 +1,6 @@
 import {
   automazioneDi,
+  regolaAutomatizzabile,
   CATALOGO,
   type Azione,
   type EsitoNodo,
@@ -321,6 +322,28 @@ export function AutomazioneRegola({ regola }: { regola: Regola }) {
             </select>
           </label>
           <label className="auto-campo">
+            Pausa dalle
+            <select name="pausaDa" defaultValue={a.pausa ? String(a.pausa.daOra) : ""}>
+              <option value="">nessuna</option>
+              {ore.slice(0, 24).map((h) => (
+                <option key={h} value={h}>
+                  {String(h).padStart(2, "0")}:00
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="auto-campo">
+            alle
+            <select name="pausaA" defaultValue={a.pausa ? String(a.pausa.aOra) : ""}>
+              <option value="">—</option>
+              {ore.slice(1).map((h) => (
+                <option key={h} value={h}>
+                  {String(h).padStart(2, "0")}:00
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="auto-campo">
             Attesa dall&apos;arrivo
             <input
               type="number"
@@ -336,6 +359,21 @@ export function AutomazioneRegola({ regola }: { regola: Regola }) {
           </label>
         </div>
       </fieldset>
+
+      {!regolaAutomatizzabile(regola) && a.modo !== "manuale" && (
+        <p className="form-error">
+          Questa regola NON parte da sola anche se è impostata in automatico: il pilota lavora solo
+          le regole «senza testo» dalle 4 stelle in su, le uniche in cui «Grazie.» è la risposta
+          giusta senza che una persona la rilegga.
+        </p>
+      )}
+      {a.attivaDal && a.modo !== "manuale" && (
+        <p className="hint">
+          Automatico dal {new Date(a.attivaDal).toLocaleString("it-IT", { timeZone: "Europe/Rome" })}:
+          le recensioni arrivate prima restano da lavorare a mano. Serve AUTOPILOTA=1 nel .env del
+          server.
+        </p>
+      )}
 
       <button type="submit" className="btn-secondary">
         Salva automazione

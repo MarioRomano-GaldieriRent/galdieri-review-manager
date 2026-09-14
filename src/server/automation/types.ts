@@ -201,6 +201,18 @@ export type Automazione = {
   aOra: number;
   /** Attesa dall'arrivo della recensione prima di rispondere, in minuti. */
   ritardoMinuti: number;
+  /**
+   * Pausa dentro la fascia (es. 13 → 14): in quelle ore non parte niente.
+   * Assente o null = nessuna pausa.
+   */
+  pausa?: { daOra: number; aOra: number } | null;
+  /**
+   * Da quando l'automazione è accesa (ISO). Le recensioni arrivate PRIMA
+   * restano al lavoro manuale: accendendola, il pilota non deve buttarsi
+   * sull'arretrato — lì dentro ci sono recensioni già risposte a mano su Google
+   * che il portale non sa riconoscere, e ognuna diventerebbe una segnalazione.
+   */
+  attivaDal?: string | null;
 };
 
 export const AUTOMAZIONE_DEFAULT: Automazione = {
@@ -209,11 +221,39 @@ export const AUTOMAZIONE_DEFAULT: Automazione = {
   daOra: 9,
   aOra: 19,
   ritardoMinuti: 0,
+  pausa: null,
+  attivaDal: null,
 };
 
 /** L'automazione della regola, coi valori di default per i campi mancanti. */
 export function automazioneDi(r: Regola): Automazione {
   return { ...AUTOMAZIONE_DEFAULT, ...(r.automazione ?? {}) };
+}
+
+/**
+ * Il pilota può agire ADESSO per questa automazione? Giorno e ora si leggono a
+ * Roma — `giorno` 0=domenica…6=sabato, `ora` in ore decimali (13.5 = 13:30) —
+ * così la funzione resta pura e si prova senza orologio.
+ *
+ * La fascia è [daOra, aOra): alle 18:00 in punto è già chiusa. La pausa,
+ * uguale: dalle 13:00 alle 13:59 ferma, alle 14:00 riparte.
+ */
+export function dentroFascia(a: Automazione, giorno: number, ora: number): boolean {
+  if (a.modo === "manuale") return false;
+  if (a.modo === "immediato") return true;
+  if (a.giorni.length > 0 && !a.giorni.includes(giorno)) return false;
+  if (ora < a.daOra || ora >= a.aOra) return false;
+  if (a.pausa && ora >= a.pausa.daOra && ora < a.pausa.aOra) return false;
+  return true;
+}
+
+/**
+ * Una regola può andare in automatico? Solo «senza testo» e solo positive
+ * (4-5★): sono le uniche in cui il testo fisso della regola («Grazie.» /
+ * «Thank you.») è la risposta giusta senza che una persona la rilegga.
+ */
+export function regolaAutomatizzabile(r: Regola): boolean {
+  return r.condizione.testo === "senza" && r.condizione.stelle.every((s) => s >= 4);
 }
 
 /** Vero se la recensione ricade nella condizione della regola. */

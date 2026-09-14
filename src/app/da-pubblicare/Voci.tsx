@@ -214,6 +214,14 @@ export function VoceStorico({ v, numero }: { v: VocePubblicazione; numero: numbe
               pubblicata il {fmtData.format(new Date(v.pubblicataIl))}
             </span>
           )}
+          {v.metodoPubblicazione === "automatico" && (
+            <span
+              className="flag flag-sistema"
+              title="Pubblicata dall'automazione, senza che nessuno premesse «Rispondi»"
+            >
+              🤖 fatta dal sistema
+            </span>
+          )}
           {v.ticketId != null && <span className="flag flag-gray">ticket #{v.ticketId}</span>}
           {v.freshdeskEsito === "ok" && <span className="flag flag-green">ticket chiuso</span>}
           {v.freshdeskEsito === "noniniziato" && (

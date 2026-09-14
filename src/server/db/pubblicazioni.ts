@@ -30,6 +30,13 @@ export type DatiApprovazione = {
   ticketId: number | null;
 };
 
+/**
+ * Chi ha fatto la pubblicazione: «manuale» = una persona ha premuto Rispondi;
+ * «automatico» = l'ha fatta il pilota da solo, nei giorni e negli orari della
+ * regola. È il dato del badge nello Storico.
+ */
+export type MetodoPubblicazione = "manuale" | "automatico";
+
 export type VocePubblicazione = {
   chiave: string;
   origine: "google" | "trustpilot";
@@ -52,6 +59,8 @@ export type VocePubblicazione = {
   /** Quando è programmata la (prossima) risoluzione del ticket. */
   freshdeskProssimoTentativoIl: string | null;
   photoChecked: boolean;
+  /** "" (non ancora pubblicata), "manuale" o "automatico". */
+  metodoPubblicazione: string;
   approvataIl: string;
   pubblicataIl: string | null;
   promemoriaVerificaIl: string | null;
@@ -82,6 +91,7 @@ type DocPub = {
   ripubblicazioni: number;
   googleReviewsUrl?: string;
   placeId?: string;
+  metodoPubblicazione?: string;
 };
 
 function componi(d: DocPub): VocePubblicazione {
@@ -107,6 +117,7 @@ function componi(d: DocPub): VocePubblicazione {
       ? d.freshdeskProssimoTentativoIl.toISOString()
       : null,
     photoChecked: d.photoChecked,
+    metodoPubblicazione: d.metodoPubblicazione ?? "",
     approvataIl: d.approvataIl.toISOString(),
     pubblicataIl: d.pubblicataIl ? d.pubblicataIl.toISOString() : null,
     promemoriaVerificaIl: d.promemoriaVerificaIl ? d.promemoriaVerificaIl.toISOString() : null,
@@ -209,6 +220,7 @@ export async function segnaPubblicata(
   chiave: string,
   operatoreId = OPERATORE_SISTEMA,
   photoChecked = false,
+  metodo: MetodoPubblicazione = "manuale",
 ): Promise<boolean> {
   const ora = new Date();
   const promemoria = new Date(ora.getTime() + ORE_RICONTROLLO * 3600 * 1000);
@@ -221,7 +233,7 @@ export async function segnaPubblicata(
         stato: "pubblicata",
         pubblicataIl: ora,
         pubblicataDa: operatoreId,
-        metodoPubblicazione: "manuale",
+        metodoPubblicazione: metodo,
         promemoriaVerificaIl: promemoria,
         photoChecked,
         aggiornataIl: ora,
@@ -233,7 +245,10 @@ export async function segnaPubblicata(
     operatoreId,
     oggettoTipo: "recensione",
     oggettoId: chiave,
-    dettaglio: `Segnata come pubblicata a mano. Ricontrollo previsto dopo ${ORE_RICONTROLLO}h.`,
+    dettaglio:
+      metodo === "automatico"
+        ? `Pubblicata dall'automazione. Ricontrollo previsto dopo ${ORE_RICONTROLLO}h.`
+        : `Segnata come pubblicata a mano. Ricontrollo previsto dopo ${ORE_RICONTROLLO}h.`,
   });
   return true;
 }

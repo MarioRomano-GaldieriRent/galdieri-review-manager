@@ -425,6 +425,8 @@ const LIVELLI_STELLE: (number | null)[] = [5, 4, 3, 2, 1, null];
 export type GestiteNelGiorno = {
   totale: number;
   dalPortale: number;
+  /** Di quelle dal portale, quante le ha fatte l'automazione da sola. */
+  automatiche: number;
   dallaPosta: number;
   /** Il TOTALE di sopra, spaccato per punteggio — stesso ordine di LIVELLI_STELLE. */
   perStella: { stelle: number | null; conteggio: number }[];
@@ -457,9 +459,9 @@ export async function gestiteNelGiorno(dal: Date, al: Date): Promise<GestiteNelG
     (await coll("pubblicazioni"))
       .find(
         { pubblicataIl: { $gte: dal, $lt: al }, stato: { $in: ["pubblicata", "verificata"] } },
-        { projection: { _id: 1 } },
+        { projection: { _id: 1, metodoPubblicazione: 1 } },
       )
-      .toArray() as Promise<{ _id: string }[]>,
+      .toArray() as Promise<{ _id: string; metodoPubblicazione?: string }[]>,
     (await coll("recensioni"))
       .find({ rispostaRilevataIl: { $gte: dal, $lt: al } }, { projection: { _id: 1 } })
       .toArray() as Promise<{ _id: string }[]>,
@@ -485,6 +487,7 @@ export async function gestiteNelGiorno(dal: Date, al: Date): Promise<GestiteNelG
   return {
     totale: dalPortale.size + idsDallaPosta.length,
     dalPortale: dalPortale.size,
+    automatiche: pubb.filter((d) => d.metodoPubblicazione === "automatico").length,
     dallaPosta: idsDallaPosta.length,
     perStella,
   };

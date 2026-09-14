@@ -125,7 +125,32 @@ export async function salvaAutomazioneRegolaAction(formData: FormData): Promise<
   const valore = Math.max(0, Math.round(Number(str(formData, "ritardo")) || 0));
   const ritardoMinuti = str(formData, "ritardoUnita") === "ore" ? valore * 60 : valore;
 
-  r.automazione = { modo, giorni, daOra: ora("daOra", 9), aOra: ora("aOra", 19), ritardoMinuti };
+  // Pausa: due ore (es. 13 → 14). Vuota, o non sensata, = nessuna pausa.
+  const pausaDa = str(formData, "pausaDa");
+  const pausaA = str(formData, "pausaA");
+  const pausa =
+    pausaDa !== "" && pausaA !== "" && Number(pausaA) > Number(pausaDa)
+      ? { daOra: ora("pausaDa", 13), aOra: ora("pausaA", 14) }
+      : null;
+
+  // Da quando è accesa: si fissa nel momento in cui passa da manuale ad
+  // automatico, e si CONSERVA ai salvataggi successivi. Le recensioni arrivate
+  // prima restano al lavoro manuale — riscriverla a ogni salvataggio farebbe
+  // perdere al pilota recensioni legittime.
+  const prima = r.automazione;
+  const eraManuale = !prima || prima.modo === "manuale";
+  const attivaDal =
+    modo === "manuale" ? null : eraManuale || !prima?.attivaDal ? new Date().toISOString() : prima.attivaDal;
+
+  r.automazione = {
+    modo,
+    giorni,
+    daOra: ora("daOra", 9),
+    aOra: ora("aOra", 19),
+    ritardoMinuti,
+    pausa,
+    attivaDal,
+  };
   await salvaRegole(regole);
   refresh();
 }

@@ -16,5 +16,15 @@ export async function register(): Promise<void> {
       // L'avvio riproverà alla prima operazione: non impedire a Next di partire.
       console.error("[instrumentation] avvio database rimandato:", e);
     }
+
+    // Il pilota automatico parte SOLO dove è chiesto esplicitamente
+    // (AUTOPILOTA=1 nel .env del PC-server). Il database è condiviso: senza
+    // questo interruttore partirebbe anche su ogni portatile che avvia il
+    // portale, e il robot aprirebbe Chrome sul PC sbagliato. Mai durante la
+    // build: lì non c'è un server da tenere acceso.
+    if (process.env.AUTOPILOTA === "1" && process.env.NEXT_PHASE !== "phase-production-build") {
+      const { avviaPilota } = await import("@/server/automation/pilota");
+      avviaPilota();
+    }
   }
 }
