@@ -24,7 +24,12 @@ import {
   type VocePubblicazione,
 } from "@/server/db/pubblicazioni";
 import { ritentaChiusureInSospeso } from "@/server/pubblicazione";
-import { elencoInAttesa, elencoPronte, type Escalation } from "@/server/db/escalation";
+import {
+  elencoInAttesa,
+  elencoPronte,
+  paginaInAttesa,
+  type Escalation,
+} from "@/server/db/escalation";
 import { aggiornaAttese } from "@/server/reviews/rispostaCustomerCare";
 import { isFreshdeskConfigured } from "@/server/integrations/freshdesk";
 import { loadSettings, type Label } from "@/server/settings";
@@ -324,8 +329,7 @@ export default async function HomePage({
   // --- Da approvare: solo qui si legge la posta (lenta). ---------------------
   const label = settings.labels[0] ?? null;
   let archiviate: RecensioneArchiviata[] = [];
-  let inAttesa: Escalation[] = [];
-  let nAttesa: number | null = null;
+  const nAttesa: number | null = null;
 
   // L'esecuzione appena conclusa da mostrare in cima (feedback dopo
   // l'approvazione): una findOne per id, solo se richiesta. Sta FUORI dal
@@ -365,17 +369,10 @@ export default async function HomePage({
     archiviate = await elencoArchiviate();
   }
 
-  if (step === "attesa") {
-    // Cerca prima le risposte arrivate (attesa → pronta), poi elenca ciò che
-    // resta in attesa. Best-effort sul recupero.
-    try {
-      await aggiornaAttese();
-    } catch (e) {
-      console.warn("[attese] recupero risposte saltato:", e instanceof Error ? e.message : e);
-    }
-    inAttesa = await elencoInAttesa();
-    nAttesa = inAttesa.length;
-  }
+  // «In attesa»: come la lista, il lavoro parte qui ma NON si aspetta. La
+  // promessa la consumano il conteggio nel tab e la pagina, dentro i loro
+  // confini di attesa: il tab si apre subito.
+  const datiAttesa = step === "attesa" ? caricaDatiAttesa(numeroPaginaRichiesta) : null;
 
 
   return (
@@ -454,6 +451,10 @@ export default async function HomePage({
                 <Suspense fallback={null}>
                   <ContoAttesa dati={datiApprovare} />
                 </Suspense>
+              ) : datiAttesa ? (
+                <Suspense fallback={null}>
+                  <ContoInAttesa dati={datiAttesa} />
+                </Suspense>
               ) : (
                 <Pallino n={nAttesa} />
               ),
@@ -530,57 +531,10 @@ export default async function HomePage({
       )}
 
       {/* ===================================================== In attesa === */}
-      {step === "attesa" && (
-        <section className="dash-centro">
-          <AutoAggiorna />
-          {inAttesa.length === 0 ? (
-            <section className="card dash-vuoto">
-              Nessuna recensione in attesa. Le negative inoltrate al customer care restano qui
-              finché non arriva la risposta, poi tornano da sole in «Da approvare» precompilate.
-            </section>
-          ) : (
-            inAttesa.map((e) => (
-              <article key={e.chiave} className="card dash-card">
-                <header className="dash-card-testa">
-                  <div className="dash-autore">
-                    <span className="dash-iniziale" aria-hidden="true">
-                      {(e.nomeCliente || "?").trim().charAt(0).toUpperCase()}
-                    </span>
-                    <div>
-                      <div className="dash-autore-riga">
-                        <span className="review-name">{e.nomeCliente || "senza nome"}</span>
-                      </div>
-                      <div className="dash-meta">
-                        {dataConGiorno(new Date(e.ricevutaIl))} ·{" "}
-                        {oraFmt.format(new Date(e.ricevutaIl))}
-                        {e.sedeNome ? ` · ${e.sedeNome}` : ""}
-                      </div>
-                    </div>
-                  </div>
-                  <div className="dash-scheda">
-                    <Stelle n={e.stelle} />
-                  </div>
-                </header>
-
-                {e.originale && <p className="review-comment">{e.originale}</p>}
-
-                <p className="notice">
-                  ⏳ Inoltrata al customer care il {dataConGiorno(new Date(e.inoltrataIl))} · in
-                  attesa della risposta.
-                  {e.ticketId ? (
-                    <>
-                      {" · ticket "}
-                      <Link href={`/ticket/${e.ticketId}`}>#{e.ticketId}</Link>
-                    </>
-                  ) : null}
-                </p>
-                <div className="dash-azioni">
-                  <VediMail id={e.messaggioId} className="btn-mini" />
-                </div>
-              </article>
-            ))
-          )}
-        </section>
+      {datiAttesa && (
+        <Suspense key={`attesa-${numeroPaginaRichiesta}`} fallback={<ScheletroLista />}>
+          <SezioneAttesa dati={datiAttesa} pagina={numeroPaginaRichiesta} />
+        </Suspense>
       )}
 
       {/* ================================================== Da pubblicare === */}
@@ -861,13 +815,19 @@ async function caricaDatiApprovare({
   // voci passano da «attesa» a «pronta»). Parla con Graph, quindi va in
   // parallelo all'ingest; si attende più sotto, prima di leggere attese e
   // pronte. Best-effort.
-  const pAttese: Promise<void> = graphOk
-    ? aggiornaAttese().then(
-        () => undefined,
-        (e) =>
-          console.warn("[attese] recupero risposte saltato:", e instanceof Error ? e.message : e),
-      )
-    : Promise.resolve();
+  //
+  // Col pilota vivo la ricerca la fa il suo giro ogni 5 minuti: rifarla qui
+  // costava ~0,1 s per ogni voce in attesa (25 oggi) a ogni caricamento.
+  const pPilota = pilotaVivo();
+  const pAttese: Promise<void> = pPilota.then((vivo) =>
+    vivo || !graphOk
+      ? undefined
+      : aggiornaAttese().then(
+          () => undefined,
+          (e) =>
+            console.warn("[attese] recupero risposte saltato:", e instanceof Error ? e.message : e),
+        ),
+  );
 
   const [regoleBase, pubblicate, archiviateChiavi, segnalateChiavi, erroreIngest, pilotaAcceso] =
     await Promise.all([
@@ -876,7 +836,7 @@ async function caricaDatiApprovare({
       chiaviArchiviate(),
       chiaviSegnalate(),
       pIngest,
-      pilotaVivo(),
+      pPilota,
     ]);
   // Per questa persona le sue regole in anteprima contano come attive.
   const regole = conBeta(regoleBase, regoleBeta);
@@ -1227,49 +1187,191 @@ async function SezioneStorico({ pagina }: { pagina: number }) {
         </ol>
       )}
 
-      {totalePagine > 1 && (
-        <nav className="appr-paginazione" aria-label="Pagine dello Storico">
-          <p className="hint">
-            Pagina {pagina} di {totalePagine} · {totale} risposte pubblicate in tutto
-          </p>
-          <div className="appr-paginazione-pagine">
-            {pagina > 1 ? (
-              <Link href={urlStorico(pagina - 1)} className="btn-mini" aria-label="Pagina precedente">
-                ‹ Precedente
-              </Link>
-            ) : (
-              <span className="btn-mini is-disabilitato" aria-hidden="true">
-                ‹ Precedente
-              </span>
-            )}
-            {numeriPagina(pagina, totalePagine).map((voce, i) =>
-              voce === "…" ? (
-                <span key={`ellissi-${i}`} className="appr-ellissi" aria-hidden="true">
-                  …
+      <BarraPagine
+        pagina={pagina}
+        totalePagine={totalePagine}
+        etichetta="Pagine dello Storico"
+        riassunto={`${totale} risposte pubblicate in tutto`}
+        url={urlStorico}
+      />
+    </section>
+  );
+}
+
+/**
+ * La barra delle pagine di Storico e «In attesa»: stessa forma e stesso stile di
+ * quella di «Da approvare» (appr-paginazione), senza la scelta di quante per
+ * pagina. Una sola copia: due barre scritte a mano finirebbero per divergere.
+ * Con una pagina sola non compare.
+ */
+function BarraPagine({
+  pagina,
+  totalePagine,
+  etichetta,
+  riassunto,
+  url,
+}: {
+  pagina: number;
+  totalePagine: number;
+  etichetta: string;
+  riassunto: string;
+  url: (pagina: number) => string;
+}) {
+  if (totalePagine <= 1) return null;
+  return (
+    <nav className="appr-paginazione" aria-label={etichetta}>
+      <p className="hint">
+        Pagina {pagina} di {totalePagine} · {riassunto}
+      </p>
+      <div className="appr-paginazione-pagine">
+        {pagina > 1 ? (
+          <Link href={url(pagina - 1)} className="btn-mini" aria-label="Pagina precedente">
+            ‹ Precedente
+          </Link>
+        ) : (
+          <span className="btn-mini is-disabilitato" aria-hidden="true">
+            ‹ Precedente
+          </span>
+        )}
+        {numeriPagina(pagina, totalePagine).map((voce, i) =>
+          voce === "…" ? (
+            <span key={`ellissi-${i}`} className="appr-ellissi" aria-hidden="true">
+              …
+            </span>
+          ) : (
+            <Link
+              key={voce}
+              href={url(voce)}
+              className={`btn-mini${voce === pagina ? " is-active" : ""}`}
+              aria-current={voce === pagina ? "page" : undefined}
+            >
+              {voce}
+            </Link>
+          ),
+        )}
+        {pagina < totalePagine ? (
+          <Link href={url(pagina + 1)} className="btn-mini" aria-label="Pagina successiva">
+            Successiva ›
+          </Link>
+        ) : (
+          <span className="btn-mini is-disabilitato" aria-hidden="true">
+            Successiva ›
+          </span>
+        )}
+      </div>
+    </nav>
+  );
+}
+
+/** Quante recensioni per pagina in «In attesa». */
+const ATTESA_PER_PAGINA = 25;
+
+/** L'indirizzo di una pagina di «In attesa». La prima non porta il numero. */
+function urlAttesa(pagina: number): string {
+  return pagina > 1 ? `/?step=attesa&p=${pagina}` : "/?step=attesa";
+}
+
+type DatiAttesa = { voci: Escalation[]; totale: number };
+
+/**
+ * Il lavoro di «In attesa»: la pagina e il totale.
+ *
+ * Aprire il tab cercava nella posta la risposta del customer care per OGNI voce
+ * in attesa — ~0,1 s l'una, 2,5 s con le 25 di oggi, e cresce a ogni inoltro.
+ * Col pilota vivo quella ricerca la fa il suo giro ogni 5 minuti, e qui resta
+ * solo una lettura del database. Senza pilota (AUTOPILOTA non impostato, o
+ * fermo) la si fa ancora qui, così le risposte continuano ad arrivare — ma
+ * dentro il confine di attesa: il tab si apre subito anche in quel caso.
+ */
+async function caricaDatiAttesa(pagina: number): Promise<DatiAttesa> {
+  if (!(await pilotaVivo()) && (await isGraphConfigured())) {
+    try {
+      await aggiornaAttese();
+    } catch (e) {
+      console.warn("[attese] recupero risposte saltato:", e instanceof Error ? e.message : e);
+    }
+  }
+  return paginaInAttesa({ pagina, perPagina: ATTESA_PER_PAGINA });
+}
+
+/** Il conteggio di «In attesa» quando si sta guardando «In attesa». */
+async function ContoInAttesa({ dati }: { dati: Promise<DatiAttesa> }) {
+  return <Pallino n={(await dati).totale} />;
+}
+
+/** «In attesa», una pagina alla volta. */
+async function SezioneAttesa({ dati, pagina }: { dati: Promise<DatiAttesa>; pagina: number }) {
+  const { voci, totale } = await dati;
+  const totalePagine = Math.max(1, Math.ceil(totale / ATTESA_PER_PAGINA));
+  if (voci.length === 0 && totale > 0) {
+    return (
+      <section className="dash-centro">
+        <section className="card dash-vuoto">
+          Questa pagina non esiste più: «In attesa» ha {totalePagine}{" "}
+          {totalePagine === 1 ? "pagina" : "pagine"}.{" "}
+          <Link href={urlAttesa(1)}>Torna alla prima</Link>
+        </section>
+      </section>
+    );
+  }
+
+  return (
+    <section className="dash-centro">
+      <AutoAggiorna />
+      {voci.length === 0 ? (
+        <section className="card dash-vuoto">
+          Nessuna recensione in attesa. Le negative inoltrate al customer care restano qui finché
+          non arriva la risposta, poi tornano da sole in «Da approvare» precompilate.
+        </section>
+      ) : (
+        voci.map((e) => (
+          <article key={e.chiave} className="card dash-card">
+            <header className="dash-card-testa">
+              <div className="dash-autore">
+                <span className="dash-iniziale" aria-hidden="true">
+                  {(e.nomeCliente || "?").trim().charAt(0).toUpperCase()}
                 </span>
-              ) : (
-                <Link
-                  key={voce}
-                  href={urlStorico(voce)}
-                  className={`btn-mini${voce === pagina ? " is-active" : ""}`}
-                  aria-current={voce === pagina ? "page" : undefined}
-                >
-                  {voce}
-                </Link>
-              ),
-            )}
-            {pagina < totalePagine ? (
-              <Link href={urlStorico(pagina + 1)} className="btn-mini" aria-label="Pagina successiva">
-                Successiva ›
-              </Link>
-            ) : (
-              <span className="btn-mini is-disabilitato" aria-hidden="true">
-                Successiva ›
-              </span>
-            )}
-          </div>
-        </nav>
+                <div>
+                  <div className="dash-autore-riga">
+                    <span className="review-name">{e.nomeCliente || "senza nome"}</span>
+                  </div>
+                  <div className="dash-meta">
+                    {dataConGiorno(new Date(e.ricevutaIl))} ·{" "}
+                    {oraFmt.format(new Date(e.ricevutaIl))}
+                    {e.sedeNome ? ` · ${e.sedeNome}` : ""}
+                  </div>
+                </div>
+              </div>
+              <div className="dash-scheda">
+                <Stelle n={e.stelle} />
+              </div>
+            </header>
+
+            {e.originale && <p className="review-comment">{e.originale}</p>}
+
+            <p className="notice">
+              ⏳ Inoltrata al customer care il {dataConGiorno(new Date(e.inoltrataIl))} · in
+              attesa della risposta.
+              {e.ticketId ? (
+                <>
+                  {" · ticket "}
+                  <Link href={`/ticket/${e.ticketId}`}>#{e.ticketId}</Link>
+                </>
+              ) : null}
+            </p>
+            <div className="dash-azioni">
+              <VediMail id={e.messaggioId} className="btn-mini" />
+            </div>
+          </article>
+        ))
       )}
+      <BarraPagine
+        pagina={pagina}
+        totalePagine={totalePagine}
+        etichetta="Pagine di «In attesa»"
+        riassunto={`${totale} recensioni in attesa della risposta`}
+        url={urlAttesa}
+      />
     </section>
   );
 }

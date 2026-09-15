@@ -19,6 +19,7 @@ import { chiaviSegnalate, segnala } from "@/server/db/segnalazioni";
 import { chiaviInCiclo } from "@/server/db/escalation";
 import { elencoTicketRecenti, recensioniConTicketRisolto } from "@/server/integrations/freshdesk";
 import { ritentaChiusureInSospeso } from "@/server/pubblicazione";
+import { aggiornaAttese } from "@/server/reviews/rispostaCustomerCare";
 import { avvisaAdminDiSegnalazione } from "@/server/notifiche/segnalazione";
 import { robotOccupato } from "@/server/robot/lancia";
 import { chromeInEsecuzione } from "@/server/robot/google";
@@ -203,6 +204,19 @@ export async function giroPilota(opts: { prova?: boolean; ora?: Date } = {}): Pr
   };
 
   try {
+    // Le risposte del customer care: si cercano a OGNI giro, prima di qualunque
+    // uscita anticipata (fuori fascia, nessuna regola automatica, simulazione).
+    // Finché il pilota è vivo la home non le cerca più all'apertura di «In
+    // attesa» — era il pezzo che costava 2,5 s a ogni clic sul tab — quindi se
+    // il giro le saltasse, le risposte non arriverebbero mai.
+    if (!opts.prova && (await isGraphConfigured())) {
+      const trovate = await aggiornaAttese().catch((e) => {
+        console.warn("[pilota] ricerca risposte del customer care saltata:", e instanceof Error ? e.message : e);
+        return 0;
+      });
+      if (trovate > 0) console.log(`[pilota] risposte del customer care arrivate: ${trovate}.`);
+    }
+
     const regole = await caricaRegole();
     const attive = regole.filter((r) => r.attiva);
     const { giorno, oraDecimale } = adessoARoma(ora);

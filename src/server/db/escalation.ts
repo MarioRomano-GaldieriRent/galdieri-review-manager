@@ -148,6 +148,30 @@ export async function elencoInAttesa(): Promise<Escalation[]> {
   return righe.map(componi);
 }
 
+/**
+ * Una PAGINA di «In attesa», dalla più recente, e il totale.
+ *
+ * Il tab mostrava tutte le voci insieme: erano 3, in pochi giorni sono diventate
+ * 25, e crescono a ogni inoltro. Qui si leggono solo quelle della pagina.
+ */
+export async function paginaInAttesa(
+  opts: { pagina?: number; perPagina?: number } = {},
+): Promise<{ voci: Escalation[]; totale: number }> {
+  const perPagina = Math.max(1, opts.perPagina ?? 25);
+  const pagina = Math.max(1, opts.pagina ?? 1);
+  const c = await escalations();
+  const [righe, totale] = await Promise.all([
+    c
+      .find({ stato: "attesa" })
+      .sort({ inoltrataIl: -1 })
+      .skip((pagina - 1) * perPagina)
+      .limit(perPagina)
+      .toArray(),
+    c.countDocuments({ stato: "attesa" }),
+  ]);
+  return { voci: righe.map(componi), totale };
+}
+
 /** Risposte recuperate e non ancora pubblicate (precompilate in «Da approvare»). */
 export async function elencoPronte(): Promise<Escalation[]> {
   const righe = await (await escalations())
