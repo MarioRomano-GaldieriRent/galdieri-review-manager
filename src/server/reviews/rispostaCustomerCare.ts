@@ -57,11 +57,49 @@ export function estraiRisposta(corpoTesto: string): { testo: string; ticket: num
     const m = dopo.match(re);
     if (m && m.index !== undefined && m.index < fine) fine = m.index;
   }
-  const testo = dopo
-    .slice(0, fine)
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
+  const testo = togliSalutoInterno(
+    dopo
+      .slice(0, fine)
+      .replace(/\n{3,}/g, "\n\n")
+      .trim(),
+  );
   return testo.length >= 10 ? { testo, ticket } : null;
+}
+
+/**
+ * Una riga fatta SOLO del saluto di Cherubina a Stefania: «grazie», «grazie
+ * mille», con la punteggiatura e gli spazi che capitano («grazie ,»). Ammessi
+ * anche i caratteri invisibili (spazio a larghezza zero) che Outlook lascia
+ * davanti: su «edwin blok» c'erano.
+ */
+const SALUTO_INTERNO = /^[\s​-‍﻿]*grazie(\s+mille)?[\s,.;:!​-‍﻿]*$/i;
+
+/**
+ * Toglie dal FONDO della risposta il saluto interno a Stefania.
+ *
+ * Cherubina chiude la mail così:
+ *     …we look forward to welcoming you back in the future.
+ *
+ *     grazie ,
+ *
+ *     Cherubina Panico
+ * La firma si tagliava già, il «grazie» subito sopra no — il marcatore chiedeva
+ * «grazie» e «Cherubina Panico» attaccati, e bastava una virgola o una riga
+ * vuota in mezzo per saltarlo. Così «grazie ,» è finito pubblicato su Google
+ * sotto la risposta a Nicolas Wohlfarth (15/9/2026), e prima ancora sotto altre.
+ *
+ * Solo righe INTERE e solo in FONDO: un «grazie» dentro una frase rivolta al
+ * cliente non si tocca. Sulle 37 risposte del customer care in archivio le
+ * righe finali così sono 11 e sono tutte il saluto interno; quando la risposta
+ * al cliente è in italiano Cherubina la chiude sempre con una frase intera
+ * («La ringraziamo nuovamente per il Suo riscontro…»), mai con «Grazie» da solo.
+ */
+export function togliSalutoInterno(testo: string): string {
+  const righe = testo.split("\n");
+  while (righe.length > 0 && (righe[righe.length - 1].trim() === "" || SALUTO_INTERNO.test(righe[righe.length - 1]))) {
+    righe.pop();
+  }
+  return righe.join("\n").trim();
 }
 
 /**
