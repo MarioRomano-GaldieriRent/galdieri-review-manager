@@ -558,6 +558,12 @@ export const COLLEZIONI: DefColl[] = [
       },
       { key: { origine: 1, stato: 1 }, name: "i_pubblicazioni_origine" },
       { key: { sedeChiave: 1, stato: 1 }, name: "i_pubblicazioni_sede" },
+      // Lo Storico a pagine: filtro sullo stato e ordine dalla più recente, dentro
+      // l'indice — senza, ogni pagina ordinava in memoria tutte le pubblicazioni.
+      {
+        key: { stato: 1, pubblicataIl: -1, approvataIl: -1 },
+        name: "i_pubblicazioni_storico",
+      },
     ],
   },
 

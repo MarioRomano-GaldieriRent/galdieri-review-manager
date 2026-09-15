@@ -306,14 +306,15 @@ export default async function HomePage({
       console.warn("[freshdesk] ritento chiusure saltato:", e instanceof Error ? e.message : e);
     }
   });
-  const [codaPubAll, storicoAll, fdOk] = await Promise.all([
-    codaDaPubblicare(),
-    storicoPubblicazioni(),
+  // Ogni tab legge SOLO i suoi dati. Prima coda e storico si leggevano a ogni
+  // caricamento, qualunque tab si aprisse: «Da approvare» pagava lo Storico e
+  // viceversa. Lo Storico ora arriva a pagine, dentro il suo confine di attesa
+  // (SezioneStorico), quindi qui non si legge proprio.
+  const [codaPubAll, fdOk] = await Promise.all([
+    step === "pubblicare" ? codaDaPubblicare() : Promise.resolve([]),
     isFreshdeskConfigured(),
   ]);
   const codaPub = codaPubAll.filter(soloCinqueSenzaCommento);
-  // Lo storico è la cronologia completa delle risposte pubblicate dal sito.
-  const storico = storicoAll;
 
   // Filtro per sede sul tab «Da pubblicare» (le stelle non servono: sono tutte 5).
   const sedi = [...new Set(codaPub.map((v) => v.sedeNome).filter(Boolean))].sort();
@@ -661,19 +662,12 @@ export default async function HomePage({
 
       {/* =========================================================== Storico === */}
       {step === "ricontrollo" && (
-        <section className="dash-centro">
-          {storico.length === 0 ? (
-            <section className="card dash-vuoto">
-              Nessuna risposta ancora pubblicata dal sito.
-            </section>
-          ) : (
-            <ol className="pub-lista">
-              {storico.map((v, i) => (
-                <VoceStorico key={v.chiave} v={v} numero={i + 1} />
-              ))}
-            </ol>
-          )}
-        </section>
+        // Come la lista «Da approvare»: tab subito, pagina che arriva dopo al
+        // posto degli scheletri. La chiave cambia con la pagina, così cambiando
+        // pagina si vede che sta caricando invece della pagina vecchia ferma.
+        <Suspense key={`storico-${numeroPaginaRichiesta}`} fallback={<ScheletroLista />}>
+          <SezioneStorico pagina={numeroPaginaRichiesta} />
+        </Suspense>
       )}
 
       {/* =========================================================== Archiviati === */}
@@ -1188,6 +1182,96 @@ async function caricaDatiApprovare({
     nonVerificate,
     erroreFreshdesk,
   };
+}
+
+/** Quante risposte per pagina nello Storico. */
+const STORICO_PER_PAGINA = 25;
+
+/** L'indirizzo di una pagina dello Storico. La prima non porta il numero. */
+function urlStorico(pagina: number): string {
+  return pagina > 1 ? `/?step=ricontrollo&p=${pagina}` : "/?step=ricontrollo";
+}
+
+/**
+ * Lo Storico, una pagina alla volta. Legge solo le righe della pagina, quindi
+ * aprirlo costa lo stesso con 80 pubblicazioni o con 8.000. La numerazione
+ * prosegue fra le pagine (la 26 è la prima della seconda pagina), così il
+ * numero continua a dire quanto è vecchia una risposta.
+ */
+async function SezioneStorico({ pagina }: { pagina: number }) {
+  const { voci, totale } = await storicoPubblicazioni({ pagina, perPagina: STORICO_PER_PAGINA });
+  const totalePagine = Math.max(1, Math.ceil(totale / STORICO_PER_PAGINA));
+  // Pagina oltre la fine (link vecchio): si dice, invece di mostrare il vuoto.
+  if (voci.length === 0 && totale > 0) {
+    return (
+      <section className="dash-centro">
+        <section className="card dash-vuoto">
+          Questa pagina non esiste più: lo Storico ha {totalePagine}{" "}
+          {totalePagine === 1 ? "pagina" : "pagine"}.{" "}
+          <Link href={urlStorico(1)}>Torna alla prima</Link>
+        </section>
+      </section>
+    );
+  }
+  const primo = (pagina - 1) * STORICO_PER_PAGINA;
+
+  return (
+    <section className="dash-centro">
+      {voci.length === 0 ? (
+        <section className="card dash-vuoto">Nessuna risposta ancora pubblicata dal sito.</section>
+      ) : (
+        <ol className="pub-lista">
+          {voci.map((v, i) => (
+            <VoceStorico key={v.chiave} v={v} numero={primo + i + 1} />
+          ))}
+        </ol>
+      )}
+
+      {totalePagine > 1 && (
+        <nav className="appr-paginazione" aria-label="Pagine dello Storico">
+          <p className="hint">
+            Pagina {pagina} di {totalePagine} · {totale} risposte pubblicate in tutto
+          </p>
+          <div className="appr-paginazione-pagine">
+            {pagina > 1 ? (
+              <Link href={urlStorico(pagina - 1)} className="btn-mini" aria-label="Pagina precedente">
+                ‹ Precedente
+              </Link>
+            ) : (
+              <span className="btn-mini is-disabilitato" aria-hidden="true">
+                ‹ Precedente
+              </span>
+            )}
+            {numeriPagina(pagina, totalePagine).map((voce, i) =>
+              voce === "…" ? (
+                <span key={`ellissi-${i}`} className="appr-ellissi" aria-hidden="true">
+                  …
+                </span>
+              ) : (
+                <Link
+                  key={voce}
+                  href={urlStorico(voce)}
+                  className={`btn-mini${voce === pagina ? " is-active" : ""}`}
+                  aria-current={voce === pagina ? "page" : undefined}
+                >
+                  {voce}
+                </Link>
+              ),
+            )}
+            {pagina < totalePagine ? (
+              <Link href={urlStorico(pagina + 1)} className="btn-mini" aria-label="Pagina successiva">
+                Successiva ›
+              </Link>
+            ) : (
+              <span className="btn-mini is-disabilitato" aria-hidden="true">
+                Successiva ›
+              </span>
+            )}
+          </div>
+        </nav>
+      )}
+    </section>
+  );
 }
 
 /** Il pallino col numero accanto al nome del tab. Zero e assente non si mostrano. */

@@ -444,18 +444,39 @@ export async function codaDaRicontrollare(): Promise<VocePubblicazione[]> {
  * "pubblicata" o "verificata"), dalla più recente. Sola lettura: è la
  * cronologia, non una coda di lavoro.
  */
-export async function storicoPubblicazioni(limite = 200): Promise<VocePubblicazione[]> {
-  const righe = (await (
-    await coll("pubblicazioni")
-  )
-    .aggregate([
-      { $match: { stato: { $in: ["pubblicata", "verificata"] } } },
-      ...LOOKUP_SEDE,
-      { $sort: { pubblicataIl: -1, approvataIl: -1 } },
-      { $limit: limite },
-    ])
-    .toArray()) as DocPub[];
-  return righe.map(componi);
+/**
+ * Una PAGINA dello Storico, dalla pubblicazione più recente, e il totale.
+ *
+ * Prima si caricava tutto in una volta, con un tetto a 200: ogni risposta
+ * pubblicata — e con l'automazione ne arrivano ogni giorno — appesantiva
+ * l'apertura del tab, e oltre le 200 le più vecchie sparivano dalla vista
+ * senza dirlo. Ora si leggono solo le righe della pagina.
+ *
+ * L'ordine dei passi conta: $sort e $skip/$limit PRIMA del $lookup sulle sedi,
+ * così l'unione si fa sulle 25 righe mostrate e non su tutta la collezione.
+ * L'indice i_pubblicazioni_storico copre filtro e ordinamento: niente sort in
+ * memoria, e la pagina 40 costa come la prima.
+ */
+export async function storicoPubblicazioni(
+  opts: { pagina?: number; perPagina?: number } = {},
+): Promise<{ voci: VocePubblicazione[]; totale: number }> {
+  const perPagina = Math.max(1, opts.perPagina ?? 25);
+  const pagina = Math.max(1, opts.pagina ?? 1);
+  const filtro = { stato: { $in: ["pubblicata", "verificata"] } };
+  const c = await coll("pubblicazioni");
+  const [righe, totale] = await Promise.all([
+    c
+      .aggregate([
+        { $match: filtro },
+        { $sort: { pubblicataIl: -1, approvataIl: -1 } },
+        { $skip: (pagina - 1) * perPagina },
+        { $limit: perPagina },
+        ...LOOKUP_SEDE,
+      ])
+      .toArray() as Promise<DocPub[]>,
+    c.countDocuments(filtro),
+  ]);
+  return { voci: righe.map(componi), totale };
 }
 
 /**
