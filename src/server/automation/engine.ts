@@ -39,7 +39,16 @@ function nuovoId(): string {
  * Quando era un id singolo il testo dell'operatore finiva su Google e per email
  * partiva quello della regola — vedi `nodiRisposta()` in rules.ts.
  */
-export type TestoRiscritto = { azioni: string[]; testo: string };
+export type TestoRiscritto = {
+  azioni: string[];
+  testo: string;
+  /**
+   * Il testo che c'era PRIMA, cioè quello che l'operatore aveva davanti. Il
+   * motore non lo usa: serve a registrare lo scostamento, perché «è stato
+   * modificato» senza il testo di partenza non dice da che cosa.
+   */
+  originale: string;
+};
 
 export async function eseguiRegola(
   regola: Regola,

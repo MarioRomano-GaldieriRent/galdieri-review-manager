@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { AnyBulkWriteOperation, Document } from "mongodb";
 import { coll, type DocGen } from "./connessione";
+import { registraVersioni, type VersioneTesto } from "./storicoTesti";
 import { normalizzaSede } from "./seed";
 import { tagSede } from "@/server/automation/sedi";
 import type { Recensione } from "@/server/reviews/load";
@@ -51,6 +52,13 @@ export async function salvaRecensioni(
     await allineaLingue(recensioni);
 
     const rec = await coll("recensioni");
+
+    // Le impronte com'erano PRIMA di scrivere: è l'unico momento in cui si può
+    // sapere che cosa sta per cambiare. Dopo il bulkWrite il testo vecchio non
+    // esiste più. Una query sola, su un campo indicizzato, che nella
+    // stragrande maggioranza dei giri dirà «nessuna è cambiata».
+    const improntePrima = await improntePer(recensioni);
+
     const ops: AnyBulkWriteOperation<DocGen>[] = recensioni
       .filter((r) => r.chiave)
       .map((r) => {
@@ -183,6 +191,9 @@ export async function salvaRecensioni(
       }
     }
 
+    // Lo storico dei testi: quello che la sovrascrittura si stava portando via.
+    await archiviaTesti(recensioni, improntePrima);
+
     // Una sola riga di sincronizzazione, alla fine: o dice il vero, o non esiste.
     await (await coll("sincronizzazioni")).insertOne({
       iniziataIl: ora,
@@ -201,6 +212,66 @@ export async function salvaRecensioni(
   } catch (e) {
     console.error("[recensioni] archiviazione non riuscita:", e);
   }
+}
+
+/** Le impronte già archiviate delle recensioni di questo lotto, per chiave. */
+async function improntePer(recensioni: Recensione[]): Promise<Map<string, string>> {
+  const chiavi = recensioni.map((r) => r.chiave).filter(Boolean);
+  if (chiavi.length === 0) return new Map();
+  try {
+    const righe = (await (
+      await coll("recensioni")
+    )
+      .find({ _id: { $in: chiavi } }, { projection: { impronta: 1 } })
+      .toArray()) as { _id: string; impronta?: string | null }[];
+    return new Map(righe.map((d) => [d._id, d.impronta ?? ""]));
+  } catch {
+    // Senza le impronte si archivia tutto e decide la dedup: più lavoro, stesso
+    // risultato. Non è un motivo per fermare la sincronizzazione.
+    return new Map();
+  }
+}
+
+/**
+ * Conserva il testo di ogni recensione CAMBIATA, e la sua traduzione.
+ *
+ * Qui stava il buco: l'upsert manda il testo nuovo sopra il vecchio e ricalcola
+ * l'impronta, quindi dopo il bulkWrite del testo precedente non resta NIENTE —
+ * nemmeno il segno che fosse diverso. E succede davvero: Google traduce, la
+ * mail arriva prima troncata e poi intera, il cliente riscrive la recensione.
+ *
+ * Il filtro sull'impronta è quello che tiene in piedi le prestazioni: la stessa
+ * recensione viene riletta decine di volte al giorno e quasi sempre identica,
+ * quindi nel giro normale questa funzione non scrive niente e non prova
+ * nemmeno a scrivere. Quando l'impronta è cambiata si manda allo storico, che
+ * con la sua dedup decide se è il TESTO ad essere cambiato o solo il contorno.
+ */
+async function archiviaTesti(
+  recensioni: Recensione[],
+  improntePrima: Map<string, string>,
+): Promise<void> {
+  const voci: VersioneTesto[] = [];
+  for (const r of recensioni) {
+    if (!r.chiave) continue;
+    // Uguale a prima: niente è cambiato, non c'è nessuna versione da salvare.
+    // Una chiave mai vista non è nella mappa: quella si archivia sempre.
+    if (improntePrima.get(r.chiave) === improntaRecensione(r)) continue;
+    const quando = new Date(r.ricevutaIl);
+    const base = {
+      recensioneChiave: r.chiave,
+      origine: "sincronizzazione" as const,
+      quando: Number.isNaN(quando.getTime()) ? undefined : quando,
+    };
+    if (r.originale?.trim()) {
+      voci.push({ ...base, tipo: "recensione", testo: r.originale, lingua: r.lingua ?? null });
+    }
+    // La traduzione si conserva solo se dice qualcosa in più dell'originale:
+    // sulle recensioni già italiane i due campi sono lo stesso testo.
+    if (r.italiano?.trim() && r.italiano.trim() !== r.originale?.trim()) {
+      voci.push({ ...base, tipo: "traduzione", testo: r.italiano, lingua: "it" });
+    }
+  }
+  await registraVersioni(voci);
 }
 
 function documentoSede(nome: string): { chiave: string; nome: string; tagFreshdesk: string } {

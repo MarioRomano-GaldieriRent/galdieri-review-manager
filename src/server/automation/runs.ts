@@ -8,6 +8,7 @@ import {
   type Scostamento,
 } from "@/server/db/esecuzioni";
 import { versioneCorrente } from "@/server/db/regole";
+import type { TestoRiscritto } from "./engine";
 import type { Esecuzione } from "./types";
 
 // Registro delle esecuzioni, ora nel database.
@@ -45,6 +46,25 @@ export async function caricaEsecuzione(id: string): Promise<Esecuzione | undefin
     console.error("[esecuzioni] lettura non riuscita:", e);
     return undefined;
   }
+}
+
+/**
+ * Gli scostamenti di una riscrittura: per ogni nodo che risponde al cliente, il
+ * testo della regola e quello che è partito al suo posto.
+ *
+ * Il campo esisteva già nel registro — `valoreVersione` / `valoreUsato` — ma
+ * nessuno lo riempiva: delle riscritture restava il solo `testoModificato`, un
+ * sì/no. Da lì non si può né rileggere che cosa è stato corretto né insegnarlo
+ * a un modello. Il costo è zero: i due testi li ha già in mano chi chiama.
+ */
+export function scostamentiDa(riscritto: TestoRiscritto | null): Scostamento[] {
+  if (!riscritto) return [];
+  return riscritto.azioni.map((azioneCodice) => ({
+    azioneCodice,
+    parametro: "testo",
+    valoreVersione: riscritto.originale,
+    valoreUsato: riscritto.testo,
+  }));
 }
 
 export async function registraEsecuzione(

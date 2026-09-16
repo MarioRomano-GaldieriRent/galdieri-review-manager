@@ -1,6 +1,6 @@
 import { eseguiRegola, type TestoRiscritto } from "./engine";
 import { testoPerRecensioneConLingua } from "./connectors";
-import { registraEsecuzione } from "./runs";
+import { registraEsecuzione, scostamentiDa } from "./runs";
 import type { Esecuzione, Regola } from "./types";
 import { haTesto, testoRecensione, type Recensione } from "@/server/reviews/load";
 import { linguaRispostaIA } from "@/server/reviews/linguaNomeAI";
@@ -181,7 +181,7 @@ export async function rispondiERegistra(opts: {
     azioni: azioniDaFare.filter((a) => a.tipo !== "google.rispondi" && a.tipo !== "freshdesk.stato"),
   };
   const esecuzione = await eseguiRegola(regolaDopoGoogle, recensione, riscritto);
-  await registraEsecuzione(esecuzione);
+  await registraEsecuzione(esecuzione, scostamentiDa(riscritto));
 
   // In Reale: registra la pubblicazione, portala in «da ricontrollare» e chiudi
   // il ticket. In simulazione niente persiste.

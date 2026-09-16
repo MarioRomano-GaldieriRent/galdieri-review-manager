@@ -1,6 +1,7 @@
 import type { Document } from "mongodb";
 import { coll } from "./connessione";
 import { OPERATORE_SISTEMA, registraAttivita } from "./attivita";
+import { registraVersione } from "./storicoTesti";
 
 // Coda di pubblicazione manuale: il modello dati della feature "one-click".
 //
@@ -206,6 +207,21 @@ export async function approvaPerPubblicazione(
     ] as Document[],
     { upsert: true },
   );
+
+  // Il testo che esce davvero, conservato per intero. Il documento qui sopra ne
+  // tiene uno solo e una ri-approvazione ci scrive sopra; l'attività qui sotto
+  // ne salva 120 caratteri, che per rileggere una risposta non bastano. Questo
+  // è il «dopo» della coppia proposta/pubblicata: senza, la correzione fatta a
+  // mano resta invisibile e non c'è niente su cui tarare l'AI.
+  await registraVersione({
+    recensioneChiave: d.chiave,
+    tipo: "inviata",
+    testo: d.testoRisposta,
+    lingua: d.lingua || null,
+    origine: operatoreId === OPERATORE_SISTEMA ? "pilota" : "operatore",
+    operatoreId,
+    modo: "reale",
+  });
 
   await registraAttivita("pubblicazione.approvata", {
     operatoreId,

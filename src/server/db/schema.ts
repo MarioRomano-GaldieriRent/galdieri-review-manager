@@ -686,6 +686,104 @@ export const COLLEZIONI: DefColl[] = [
   },
 
   {
+    // STORICO DEI TESTI — ogni versione di ogni testo che passa di qui, in sola
+    // aggiunta: la recensione come l'abbiamo letta, la proposta che l'operatore
+    // aveva davanti, il testo che è uscito davvero.
+    //
+    // Nasce da un buco: ovunque il testo si SOVRASCRIVEVA. Una recensione
+    // riletta con un testo nuovo cancellava quello vecchio — e con lui la sua
+    // impronta, così non restava nemmeno la traccia che fosse cambiata; la
+    // ri-approvazione riscriveva testoRisposta; della riscrittura a mano
+    // restava un booleano, `testoModificato`, senza il prima e senza il dopo.
+    //
+    // Serve perché domani l'AI va tarata sulle risposte vere, e il dato che
+    // serve non è la risposta: è la DIFFERENZA fra quello che il modello
+    // proponeva e quello che la persona ha pubblicato. `memoria_esempi` dice
+    // come scrive Stefania; questo dice dove il modello sbaglia, ed è l'altra
+    // metà — quella che finora buttavamo via a ogni $set.
+    //
+    // Niente si aggiorna, niente si cancella. L'indice UNICO su
+    // (recensioneChiave, tipo, impronta) è ciò che rende ogni aggancio
+    // idempotente: la stessa recensione viene riletta decine di volte al
+    // giorno, e solo un testo DIVERSO da quelli già conservati aggiunge un
+    // documento. Gli agganci possono quindi essere ciechi e ripetersi.
+    nome: "storico_testi",
+    validator: {
+      $jsonSchema: {
+        bsonType: "object",
+        additionalProperties: false,
+        required: [
+          "_id",
+          "recensioneChiave",
+          "tipo",
+          "testo",
+          "impronta",
+          "origine",
+          "operatoreId",
+          "quando",
+        ],
+        properties: {
+          _id: { bsonType: "objectId" },
+          recensioneChiave: { bsonType: "string", minLength: 1 },
+          // recensione      — il testo del cliente, nella sua lingua
+          // traduzione      — l'italiano che ne abbiamo ricavato
+          // proposta-regola — il testo che la regola metteva nel riquadro
+          // proposta-ai     — il suggerimento del modello
+          // inviata         — il testo approvato, quello che va (o è andato) online
+          tipo: {
+            enum: ["recensione", "traduzione", "proposta-regola", "proposta-ai", "inviata"],
+          },
+          // minLength 1: il vuoto non è una versione, è un'assenza.
+          testo: { bsonType: "string", minLength: 1 },
+          lingua: stringaO,
+          impronta: sha1,
+          origine: {
+            enum: ["sincronizzazione", "regola", "ai", "operatore", "pilota", "customer-care"],
+          },
+          operatoreId: { bsonType: "int" },
+          // Il testo NON è intero. Vale solo per il recupero del passato, che
+          // in certi archivi trova solo un ritaglio (400 caratteri nel registro
+          // esecuzioni, 120 in quello attività). Un testo tagliato è buono per
+          // rileggere che cosa era successo, ma NON per insegnare a scrivere a
+          // un modello: senza questo campo i due casi sarebbero indistinguibili
+          // e le frasi mozzate finirebbero nell'addestramento.
+          troncato: boolo,
+          // Assente per i testi che non nascono da un'esecuzione: la recensione
+          // letta dalla posta non è né reale né simulata, è arrivata.
+          modo: { enum: ["reale", "simulazione"] },
+          quando: { bsonType: "date" },
+          rif: {
+            bsonType: ["object", "null"],
+            additionalProperties: false,
+            properties: {
+              esecuzioneId: stringaOFalsa,
+              regolaId: stringaOFalsa,
+              regolaVersioneId: { bsonType: ["int", "null"] },
+              modello: stringaOFalsa,
+              esempiUsati: { bsonType: ["int", "null"] },
+              // Da dove l'ha ripescato il recupero una tantum: "esecuzioni",
+              // "pubblicazioni", "memoria_esempi", "registro_attivita". Vuoto
+              // per tutto ciò che è stato registrato mentre accadeva.
+              recuperatoDa: stringaOFalsa,
+            },
+          },
+        },
+      },
+    },
+    indici: [
+      {
+        key: { recensioneChiave: 1, tipo: 1, impronta: 1 },
+        name: "u_storico_testi_versione",
+        unique: true,
+      },
+      // La storia di una recensione, in ordine di accadimento.
+      { key: { recensioneChiave: 1, quando: 1 }, name: "i_storico_testi_recensione" },
+      // L'estrazione per l'addestramento: tutte le «inviata», dalla più recente.
+      { key: { tipo: 1, quando: -1 }, name: "i_storico_testi_tipo" },
+    ],
+  },
+
+  {
     // MEMORIA — i blocchi di CONTESTO per rispondere (chi siamo, tono, regole):
     // testo libero curato dall'admin, ciascuno accendibile/spegnibile.
     nome: "memoria_contesto",

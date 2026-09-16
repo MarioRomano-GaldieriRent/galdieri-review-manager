@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { eseguiRegola } from "@/server/automation/engine";
+import { eseguiRegola, type TestoRiscritto } from "@/server/automation/engine";
 import { testoPerRecensione } from "@/server/automation/connectors";
 import {
   caricaRegole,
@@ -11,7 +11,7 @@ import {
   regolaPer,
   EMAIL_TICKETING,
 } from "@/server/automation/rules";
-import { eliminaEsecuzione, registraEsecuzione } from "@/server/automation/runs";
+import { eliminaEsecuzione, registraEsecuzione, scostamentiDa } from "@/server/automation/runs";
 import type { Regola } from "@/server/automation/types";
 import { haTesto, type Recensione } from "@/server/reviews/load";
 import {
@@ -21,6 +21,7 @@ import {
 } from "@/server/automation/rispondi";
 import { archiviaRecensione, leggiRecensione, ripristinaRecensione } from "@/server/db/recensioni";
 import { registraInoltro } from "@/server/db/escalation";
+import { registraVersione } from "@/server/db/storicoTesti";
 import { nomeGoogleDiSede } from "@/server/db/sedi";
 import { richiediOperatore } from "@/server/auth/sessione";
 import { impostaMostraTutte } from "@/server/auth/utenti";
@@ -65,6 +66,22 @@ async function trovaRecensionePerChiave(chiave: string): Promise<Recensione | nu
 
 
 /**
+ * Conserva la proposta che stava nel riquadro. Non distingue fra il testo di
+ * una regola e quello dell'AI: dal form arriva già scelto, ed è comunque la
+ * proposta che quella persona ha visto — che è il fatto da registrare.
+ */
+async function registraProposta(chiave: string, proposta: string, regolaId: string): Promise<void> {
+  if (!proposta) return;
+  await registraVersione({
+    recensioneChiave: chiave,
+    tipo: "proposta-regola",
+    testo: proposta,
+    origine: "regola",
+    rif: { regolaId },
+  });
+}
+
+/**
  * La riscrittura da passare al motore: il testo del box, applicato a TUTTI i
  * nodi che rispondono al cliente (email e Google). null se l'operatore non ha
  * toccato nulla — in quel caso vale la regola, con la sua scelta di lingua.
@@ -82,10 +99,10 @@ function riscritturaPer(
   regola: Regola,
   testo: string,
   originale: string,
-): { azioni: string[]; testo: string } | null {
+): TestoRiscritto | null {
   if (!testo || testo === originale) return null;
   const azioni = nodiRisposta(regola).map((a) => a.id);
-  return azioni.length > 0 ? { azioni, testo } : null;
+  return azioni.length > 0 ? { azioni, testo, originale } : null;
 }
 
 /**
@@ -111,8 +128,13 @@ export async function approvaAction(formData: FormData): Promise<void> {
   // la regola resta quella scritta in Impostazioni, senza copie inutili.
   const riscritto = riscritturaPer(regola, testo, originale);
 
+  // Quello che l'operatore aveva DAVANTI, prima di toccarlo: è il «prima» della
+  // coppia che servirà a tarare l'AI. Si conserva sempre, anche quando il testo
+  // non è stato cambiato — «la proposta andava bene così» è un'informazione.
+  await registraProposta(recensione.chiave, originale, regola.id);
+
   const esecuzione = await eseguiRegola(regola, recensione, riscritto);
-  await registraEsecuzione(esecuzione);
+  await registraEsecuzione(esecuzione, scostamentiDa(riscritto));
 
   // Aggancio alla coda di pubblicazione manuale: solo le recensioni con una
   // risposta pubblica su Google (le positive) ci finiscono. Le negative vanno
@@ -272,6 +294,7 @@ export async function playAction(formData: FormData): Promise<void> {
   const testo = String(formData.get("testo") ?? "").trim();
   const originale = String(formData.get("testoOriginale") ?? "").trim();
   const riscritto = riscritturaPer(regola, testo, originale);
+  await registraProposta(recensione.chiave, originale, regola.id);
 
   // Tutto il percorso — robot su Google, resto della regola, pubblicazione e
   // chiusura del ticket — sta in rispondiERegistra, lo stesso che usa

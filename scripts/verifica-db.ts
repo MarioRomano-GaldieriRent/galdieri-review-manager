@@ -57,7 +57,7 @@ async function main() {
   console.log("\n— contenuto —");
   const conta = async (nome: string) => d.collection(nome).countDocuments();
   const numeri: Record<string, number> = {};
-  for (const nome of ["recensioni", "regole_versioni", "esecuzioni", "traduzioni", "sedi", "sincronizzazioni"]) {
+  for (const nome of ["recensioni", "regole_versioni", "esecuzioni", "traduzioni", "sedi", "sincronizzazioni", "storico_testi"]) {
     numeri[nome] = await conta(nome);
     console.log(`  ${nome.padEnd(18)} ${numeri[nome]}`);
   }
@@ -134,6 +134,34 @@ async function main() {
     (e) => !idVersioni.has(e.regolaVersioneId),
   );
   verifica("nessuna esecuzione con versione inesistente", esecOrfane.length === 0);
+
+  // Lo storico dei testi è appeso alle recensioni: una versione che punta a una
+  // recensione inesistente non si può né rileggere né accoppiare con la sua.
+  const chiaviRec = new Set(
+    (await d.collection("recensioni").find({}, { projection: { _id: 1 } }).toArray()).map((r) =>
+      String(r._id),
+    ),
+  );
+  const storicoOrfano = (
+    await d
+      .collection("storico_testi")
+      .find({}, { projection: { recensioneChiave: 1 } })
+      .toArray()
+  ).filter((v) => !chiaviRec.has(String(v.recensioneChiave)));
+  verifica("nessuna versione di testo orfana", storicoOrfano.length === 0, `${storicoOrfano.length} orfane`);
+
+  // La sola aggiunta, verificata dal di fuori: se esistono due documenti con la
+  // stessa terna (recensione, tipo, impronta) qualcuno ha scritto aggirando
+  // l'indice unico — cioè lo storico ha perso la sua garanzia.
+  const doppioni = await d
+    .collection("storico_testi")
+    .aggregate([
+      { $group: { _id: { k: "$recensioneChiave", t: "$tipo", i: "$impronta" }, n: { $sum: 1 } } },
+      { $match: { n: { $gt: 1 } } },
+      { $count: "n" },
+    ])
+    .toArray();
+  verifica("nessuna versione di testo duplicata", (doppioni[0]?.n ?? 0) === 0);
 
   console.log("\n— operatore di sistema —");
   const sistema = await d.collection("operatori").findOne({ _id: 1 as never });

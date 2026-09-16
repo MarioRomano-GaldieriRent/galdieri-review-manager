@@ -1,4 +1,5 @@
 import { coll } from "./connessione";
+import { registraVersione } from "./storicoTesti";
 
 // Risposte suggerite dall'AI, conservate per recensione: si generano una volta
 // sola e al ricarico della home sono già pronte (pagina immediata, nessuna
@@ -76,6 +77,19 @@ export async function salvaSuggerimento(
     },
     { upsert: true },
   );
+
+  // Il documento qui sopra tiene UNA proposta per recensione e la rigenerazione
+  // la sovrascrive. Lo storico le tiene tutte: è il «prima» da confrontare con
+  // quello che la persona pubblicherà davvero, cioè il dato su cui l'AI andrà
+  // tarata. Che modello l'ha scritta e con quanti esempi fa parte del fatto.
+  await registraVersione({
+    recensioneChiave: chiave,
+    tipo: "proposta-ai",
+    testo: dati.testo,
+    lingua: dati.lingua,
+    origine: "ai",
+    rif: { modello: dati.modello, esempiUsati: dati.esempiUsati },
+  });
 }
 
 /** Cancella la proposta salvata: al prossimo giro se ne genera una nuova. */
