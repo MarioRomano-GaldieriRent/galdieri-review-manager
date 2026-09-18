@@ -180,6 +180,54 @@ export default async function SupervisionePage({
             base={quotaOggi(oggi.dallaPosta, oggi.totale)}
           />
         </div>
+        {/* Il dettaglio dei numeri qui sopra: senza, «3 gestite» non si può né
+            controllare né contestare. Sta sotto i riquadri e non in una pagina a
+            parte perché la domanda «quali?» viene sempre subito dopo «quante?».
+            Una giornata sono poche righe: nessun bisogno di impaginarlo. */}
+        {oggi.dettaglio.length > 0 && (
+          <div className="table-wrap">
+            <table className="data-table data-table-compatta">
+              <thead>
+                <tr>
+                  <th>Ora</th>
+                  <th>Punteggio</th>
+                  <th>Cliente</th>
+                  <th>Come</th>
+                  <th>Chi</th>
+                  <th>Risposta pubblicata</th>
+                </tr>
+              </thead>
+              <tbody>
+                {oggi.dettaglio.map((v) => (
+                  <tr key={v.chiave}>
+                    <td>{oraFmt.format(new Date(v.quando))}</td>
+                    <td>{v.stelle !== null ? <Stelle n={v.stelle} /> : <span className="muted">—</span>}</td>
+                    <td>{v.nomeCliente}</td>
+                    <td>
+                      {v.via === "posta" ? (
+                        <span className="muted">dalla posta</span>
+                      ) : v.metodo === "automatico" ? (
+                        "🤖 automatica"
+                      ) : (
+                        "a mano"
+                      )}
+                    </td>
+                    <td>{v.via === "posta" ? <span className="muted">—</span> : chiPer(v.chi)}</td>
+                    <td>
+                      {v.risposta ? (
+                        <span title={v.risposta}>
+                          {v.risposta.length > 70 ? `${v.risposta.slice(0, 70)}…` : v.risposta}
+                        </span>
+                      ) : (
+                        <span className="muted">non passata di qui</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
         {/* Senza questa riga un pilota fermo — Chrome aperto sul server, sessione
             Google scaduta, AUTOPILOTA non impostato — sarebbe invisibile: le
             recensioni resterebbero lì e nessuno saprebbe perché. */}

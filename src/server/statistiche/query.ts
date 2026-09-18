@@ -430,6 +430,31 @@ export type GestiteNelGiorno = {
   dallaPosta: number;
   /** Il TOTALE di sopra, spaccato per punteggio — stesso ordine di LIVELLI_STELLE. */
   perStella: { stelle: number | null; conteggio: number }[];
+  /** Le recensioni del totale, una per una, dalla più recente. */
+  dettaglio: VoceGestita[];
+};
+
+/**
+ * Una recensione chiusa oggi, con CHI l'ha chiusa e COME.
+ *
+ * `chi` viene da `pubblicazioni.pubblicataDa`, non dal registro esecuzioni:
+ * lì l'operatore non è mai stato scritto e risulta sempre «Sistema» (1), anche
+ * quando il tasto l'ha premuto una persona. La pubblicazione invece l'operatore
+ * ce l'ha davvero, ed è l'unico posto dove il nome è affidabile.
+ */
+export type VoceGestita = {
+  chiave: string;
+  nomeCliente: string;
+  stelle: number | null;
+  quando: string;
+  /** «portale» = chiusa da qui; «posta» = qualcuno ha risposto da Outlook. */
+  via: "portale" | "posta";
+  /** Solo per «portale»: l'ha pubblicata una persona o il pilota. */
+  metodo: "manuale" | "automatico" | null;
+  /** Solo per «portale»: id dell'operatore. null quando non lo sappiamo. */
+  chi: number | null;
+  /** Solo per «portale»: la risposta pubblicata, tagliata per la tabella. */
+  risposta: string;
 };
 
 /**
@@ -459,12 +484,35 @@ export async function gestiteNelGiorno(dal: Date, al: Date): Promise<GestiteNelG
     (await coll("pubblicazioni"))
       .find(
         { pubblicataIl: { $gte: dal, $lt: al }, stato: { $in: ["pubblicata", "verificata"] } },
-        { projection: { _id: 1, metodoPubblicazione: 1 } },
+        {
+          projection: {
+            _id: 1,
+            metodoPubblicazione: 1,
+            pubblicataIl: 1,
+            pubblicataDa: 1,
+            nomeCliente: 1,
+            stelle: 1,
+            testoRisposta: 1,
+          },
+        },
       )
-      .toArray() as Promise<{ _id: string; metodoPubblicazione?: string }[]>,
+      .toArray() as Promise<
+        {
+          _id: string;
+          metodoPubblicazione?: string;
+          pubblicataIl?: Date;
+          pubblicataDa?: number | null;
+          nomeCliente?: string;
+          stelle?: number | null;
+          testoRisposta?: string;
+        }[]
+      >,
     (await coll("recensioni"))
-      .find({ rispostaRilevataIl: { $gte: dal, $lt: al } }, { projection: { _id: 1 } })
-      .toArray() as Promise<{ _id: string }[]>,
+      .find(
+        { rispostaRilevataIl: { $gte: dal, $lt: al } },
+        { projection: { _id: 1, rispostaRilevataIl: 1 } },
+      )
+      .toArray() as Promise<{ _id: string; rispostaRilevataIl?: Date }[]>,
   ]);
   const dalPortale = new Set(pubb.map((d) => d._id));
   const idsDallaPosta = posta.map((d) => d._id).filter((id) => !dalPortale.has(id));
@@ -477,12 +525,43 @@ export async function gestiteNelGiorno(dal: Date, al: Date): Promise<GestiteNelG
   const conStelle =
     tutteLeChiavi.length > 0
       ? ((await (await coll("recensioni"))
-          .find({ _id: { $in: tutteLeChiavi } }, { projection: { stelle: 1 } })
-          .toArray()) as { _id: string; stelle: number | null }[])
+          .find({ _id: { $in: tutteLeChiavi } }, { projection: { stelle: 1, nomeCliente: 1 } })
+          .toArray()) as { _id: string; stelle: number | null; nomeCliente?: string }[])
       : [];
   const perLivello = new Map<number | null, number>();
   for (const d of conStelle) perLivello.set(d.stelle, (perLivello.get(d.stelle) ?? 0) + 1);
   const perStella = LIVELLI_STELLE.map((stelle) => ({ stelle, conteggio: perLivello.get(stelle) ?? 0 }));
+
+  // Il dettaglio riga per riga. Punteggio e nome si prendono dall'archivio, che
+  // è la fonte unica: la pubblicazione li ha denormalizzati e potrebbe portarsi
+  // dietro un nome vecchio, e chi arriva dalla posta in pubblicazioni non c'è.
+  const archivio = new Map(conStelle.map((d) => [d._id, d]));
+  const dalArchivio = (k: string) => ({
+    nomeCliente: archivio.get(k)?.nomeCliente || "(senza nome)",
+    stelle: archivio.get(k)?.stelle ?? null,
+  });
+  const postaPerId = new Map(posta.map((d) => [d._id, d]));
+
+  const dettaglio: VoceGestita[] = [
+    ...pubb.map((p) => ({
+      chiave: p._id,
+      ...dalArchivio(p._id),
+      quando: (p.pubblicataIl ?? al).toISOString(),
+      via: "portale" as const,
+      metodo: p.metodoPubblicazione === "automatico" ? ("automatico" as const) : ("manuale" as const),
+      chi: typeof p.pubblicataDa === "number" ? p.pubblicataDa : null,
+      risposta: (p.testoRisposta ?? "").replace(/\s+/g, " ").trim(),
+    })),
+    ...idsDallaPosta.map((k) => ({
+      chiave: k,
+      ...dalArchivio(k),
+      quando: (postaPerId.get(k)?.rispostaRilevataIl ?? al).toISOString(),
+      via: "posta" as const,
+      metodo: null,
+      chi: null,
+      risposta: "",
+    })),
+  ].sort((a, b) => (a.quando < b.quando ? 1 : -1));
 
   return {
     totale: dalPortale.size + idsDallaPosta.length,
@@ -490,6 +569,7 @@ export async function gestiteNelGiorno(dal: Date, al: Date): Promise<GestiteNelG
     automatiche: pubb.filter((d) => d.metodoPubblicazione === "automatico").length,
     dallaPosta: idsDallaPosta.length,
     perStella,
+    dettaglio,
   };
 }
 
