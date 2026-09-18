@@ -53,7 +53,10 @@ const PERIODI = [
   { chiave: "90", giorni: 90, etichetta: "3 mesi" },
   { chiave: "270", giorni: 270, etichetta: "9 mesi" },
 ] as const;
-const PERIODO_DEFAULT = "30";
+// 7 giorni: la finestra su cui si decide qualcosa. A 30 il numero si mangia
+// dentro settimane in cui si lavorava in un altro modo, e la fotografia di come
+// vanno le cose ADESSO non si vede più.
+const PERIODO_DEFAULT = "7";
 
 function periodoDa(chiave: string | undefined): (typeof PERIODI)[number] {
   return PERIODI.find((p) => p.chiave === chiave) ?? PERIODI.find((p) => p.chiave === PERIODO_DEFAULT)!;
@@ -129,8 +132,10 @@ export default async function SupervisionePage({
       ricevute: acc.ricevute + r.ricevute,
       conRisposta: acc.conRisposta + r.conRisposta,
       dalSistema: acc.dalSistema + r.dalSistema,
+      dalCrm: acc.dalCrm + r.dalCrm,
+      fuoriCrm: acc.fuoriCrm + r.fuoriCrm,
     }),
-    { ricevute: 0, conRisposta: 0, dalSistema: 0 },
+    { ricevute: 0, conRisposta: 0, dalSistema: 0, dalCrm: 0, fuoriCrm: 0 },
   );
   const modifichePer = new Map(modifiche.map((m) => [m.stelle, m]));
   const conPunteggio = righe.filter((r) => r.stelle !== null);
@@ -218,10 +223,25 @@ export default async function SupervisionePage({
           in cui sono state RICEVUTE, anche se gestite dopo la fine della finestra.
         </p>
         <div className="stat-griglia">
-          <Riquadro titolo="Gestite dal sistema" valore={g.dalSistema} base={perc(g.dalSistema)} />
-          <Riquadro titolo="Gestite in totale" valore={g.conRisposta} base={perc(g.conRisposta)} />
+          <Riquadro titolo="Gestite dal CRM" valore={g.dalCrm} base={perc(g.dalCrm)} />
+          <Riquadro
+            titolo="Fuori dal CRM"
+            valore={g.fuoriCrm}
+            base={g.fuoriCrm > 0 ? perc(g.fuoriCrm) : "nessuna: passano tutte da qui"}
+          />
+          <Riquadro titolo="Pubblicate dal portale" valore={g.dalSistema} base={perc(g.dalSistema)} />
           <Riquadro titolo="Recensioni ricevute" valore={g.ricevute} base={`ultimi ${periodoSel.etichetta}`} />
         </div>
+        <p className="hint">
+          <strong>Gestite dal CRM</strong> sono tutte quelle di cui si occupa questo sistema, finite
+          o no: pubblicate su Google, in attesa del customer care, con un ticket Freshdesk aperto,
+          archiviate a mano, e anche quelle ancora da fare — sono in coda qui, non le sta gestendo
+          nessun altro. Restano fuori solo le recensioni a cui qualcuno ha risposto da Outlook senza
+          passare di qui: quelle sono <strong>Fuori dal CRM</strong>, ed è il numero da tenere
+          d&apos;occhio. <strong>Pubblicate dal portale</strong> è invece il lavoro concluso, quindi
+          è sempre più basso: una recensione inoltrata a Cherubina ieri è gestita dal CRM ma non è
+          ancora pubblicata.
+        </p>
 
         <h3 className="supervisione-sottotitolo">Segnalazioni nel periodo</h3>
         <div className="stat-griglia">
@@ -236,7 +256,8 @@ export default async function SupervisionePage({
               <tr>
                 <th>Punteggio</th>
                 <th>Ricevute</th>
-                <th>Gestite dal sistema</th>
+                <th>Gestite dal CRM</th>
+                <th>Pubblicate dal portale</th>
                 <th>Testi modificati</th>
               </tr>
             </thead>
@@ -249,6 +270,10 @@ export default async function SupervisionePage({
                       <Stelle n={r.stelle} />
                     </td>
                     <td>{r.ricevute}</td>
+                    <td>
+                      {r.dalCrm}
+                      <span className="muted">{quota(r.dalCrm, r.ricevute)}</span>
+                    </td>
                     <td>
                       {r.dalSistema}
                       <span className="muted">{quota(r.dalSistema, r.ricevute)}</span>
@@ -270,6 +295,7 @@ export default async function SupervisionePage({
                 <tr>
                   <td className="muted">senza punteggio</td>
                   <td>{senzaPunteggio.ricevute}</td>
+                  <td>{senzaPunteggio.dalCrm}</td>
                   <td>{senzaPunteggio.dalSistema}</td>
                   <td>
                     {modSenzaPunteggio && modSenzaPunteggio.eseguiti > 0
@@ -281,6 +307,7 @@ export default async function SupervisionePage({
               <tr className="supervisione-totale">
                 <td>Totale</td>
                 <td>{g.ricevute}</td>
+                <td>{g.dalCrm}</td>
                 <td>{g.dalSistema}</td>
                 <td>
                   {modTotale.eseguiti > 0 ? `${modTotale.modificati} / ${modTotale.eseguiti}` : "—"}

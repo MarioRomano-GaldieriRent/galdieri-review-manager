@@ -493,65 +493,138 @@ export async function gestiteNelGiorno(dal: Date, al: Date): Promise<GestiteNelG
   };
 }
 
-export type RigaStelle = Gestione & { stelle: number | null };
+export type RigaStelle = Gestione & {
+  stelle: number | null;
+  /**
+   * Risposta rilevata nella posta e NESSUNA traccia del portale: qualcuno ha
+   * risposto da Outlook scavalcando il sistema. È l'unica categoria che NON
+   * conta come gestita dal CRM.
+   */
+  fuoriCrm: number;
+  /**
+   * ricevute − fuoriCrm: tutto ciò di cui il CRM si sta occupando, compreso il
+   * lavoro non ancora finito (in attesa del customer care, ancora da fare).
+   */
+  dalCrm: number;
+};
 
 /** Una finestra temporale [dal, al). `dal: null` = da sempre (nessun filtro). */
 export type Intervallo = { dal: Date | null; al: Date };
 
 /**
  * La stessa gestione spaccata per punteggio, da 5★ a 1★ più la riga delle
- * recensioni senza punteggio (stelle null). Stesse tre misure e stesse
- * avvertenze di gestione(): «dal sistema» e «in totale» non si confrontano fra
- * loro, si rapportano entrambe alle ricevute.
+ * recensioni senza punteggio (stelle null).
+ *
+ * Quattro misure, e vanno lette sapendo che cosa NON dicono:
+ *
+ *   dalSistema  risposta PUBBLICATA su Google dal portale. È il lavoro finito,
+ *               e solo quello: una recensione inoltrata a Cherubina tre giorni
+ *               fa e ancora in attesa qui non compare, pur essendo in carico al
+ *               sistema. Era l'unico numero che c'era, e faceva sembrare
+ *               «non gestito» tutto il lavoro in corso.
+ *   fuoriCrm    l'opposto: risposta rilevata nella posta e NESSUNA traccia qui
+ *               dentro. Qualcuno ha risposto da Outlook scavalcando il portale.
+ *   dalCrm      ricevute − fuoriCrm. Tutto ciò di cui il sistema si occupa,
+ *               finito o no: pubblicate, in attesa del customer care, con un
+ *               ticket Freshdesk, archiviate a mano, e anche quelle ancora da
+ *               fare — sono in coda QUI, nessun altro se ne sta occupando.
+ *   conRisposta risposta rilevata nella posta, da chiunque e per qualunque via.
+ *
+ * Le tracce che fanno «CRM» sono cinque, e bastano una: una pubblicazione (in
+ * qualsiasi stato, anche solo approvata), una escalation, un'esecuzione di
+ * regola, un ticket Freshdesk confermato, l'archiviazione a mano. Il ticket è
+ * quello che conta di più ed è l'ultimo arrivato: senza, 107 recensioni su 117
+ * risultavano «mai toccate» mentre erano regolarmente in carico al customer
+ * care.
  *
  * Con `periodo`, la popolazione è la COORTE delle recensioni RICEVUTE in quella
- * finestra: «dal sistema» resta vero anche se la pubblicazione è arrivata dopo
- * la fine della finestra (join su pubblicazioni per chiave, non per data
- * dell'azione). Senza `periodo`: da sempre, come prima.
+ * finestra: una recensione resta nella sua coorte anche se la pubblicazione
+ * arriva dopo la fine della finestra (join per chiave, non per data
+ * dell'azione). Senza `periodo`: da sempre.
  */
 export async function gestionePerStelle(periodo?: Intervallo): Promise<RigaStelle[]> {
   const match: Document = periodo?.dal ? { ricevutaIl: { $gte: periodo.dal, $lt: periodo.al } } : {};
-  const righe = await aggr<{ _id: number | null; ricevute: number; conRisposta: number; dalSistema: number }>(
-    "recensioni",
-    [
-      { $match: match },
-      { $lookup: { from: "pubblicazioni", localField: "_id", foreignField: "_id", as: "_pub" } },
-      {
-        $set: {
-          _dalSistema: {
-            $gt: [
-              {
-                $size: {
-                  $filter: {
-                    input: "$_pub",
-                    as: "p",
-                    cond: { $in: ["$$p.stato", ["pubblicata", "verificata"]] },
-                  },
+  const righe = await aggr<{
+    _id: number | null;
+    ricevute: number;
+    conRisposta: number;
+    dalSistema: number;
+    fuoriCrm: number;
+  }>("recensioni", [
+    { $match: match },
+    { $lookup: { from: "pubblicazioni", localField: "_id", foreignField: "_id", as: "_pub" } },
+    { $lookup: { from: "escalation", localField: "_id", foreignField: "_id", as: "_esc" } },
+    {
+      // Serve solo sapere SE ne esiste una: $limit 1 e niente corpo, altrimenti
+      // ogni recensione si tirerebbe dietro i nodi e i corpi delle chiamate.
+      $lookup: {
+        from: "esecuzioni",
+        let: { k: "$_id" },
+        as: "_ese",
+        pipeline: [
+          {
+            $match: {
+              $expr: { $and: [{ $eq: ["$recensioneChiave", "$$k"] }, { $eq: ["$annullata", false] }] },
+            },
+          },
+          { $limit: 1 },
+          { $project: { _id: 1 } },
+        ],
+      },
+    },
+    {
+      $set: {
+        _dalSistema: {
+          $gt: [
+            {
+              $size: {
+                $filter: {
+                  input: "$_pub",
+                  as: "p",
+                  cond: { $in: ["$$p.stato", ["pubblicata", "verificata"]] },
                 },
               },
-              0,
-            ],
+            },
+            0,
+          ],
+        },
+        _tracciaCrm: {
+          $or: [
+            { $gt: [{ $size: "$_pub" }, 0] },
+            { $gt: [{ $size: "$_esc" }, 0] },
+            { $gt: [{ $size: "$_ese" }, 0] },
+            { $ne: [{ $ifNull: ["$ticketConfermato", null] }, null] },
+            { $eq: ["$archiviata", true] },
+          ],
+        },
+      },
+    },
+    {
+      $group: {
+        _id: "$stelle",
+        ricevute: { $sum: 1 },
+        conRisposta: { $sum: { $cond: ["$haRisposta", 1, 0] } },
+        dalSistema: { $sum: { $cond: ["$_dalSistema", 1, 0] } },
+        fuoriCrm: {
+          $sum: {
+            $cond: [{ $and: ["$haRisposta", { $not: "$_tracciaCrm" }] }, 1, 0],
           },
         },
       },
-      {
-        $group: {
-          _id: "$stelle",
-          ricevute: { $sum: 1 },
-          conRisposta: { $sum: { $cond: ["$haRisposta", 1, 0] } },
-          dalSistema: { $sum: { $cond: ["$_dalSistema", 1, 0] } },
-        },
-      },
-    ],
-  );
+    },
+  ]);
   const mappa = new Map(righe.map((r) => [r._id, r]));
   return LIVELLI_STELLE.map((stelle) => {
     const r = mappa.get(stelle);
+    const ricevute = r?.ricevute ?? 0;
+    const fuoriCrm = r?.fuoriCrm ?? 0;
     return {
       stelle,
-      ricevute: r?.ricevute ?? 0,
+      ricevute,
       conRisposta: r?.conRisposta ?? 0,
       dalSistema: r?.dalSistema ?? 0,
+      fuoriCrm,
+      dalCrm: ricevute - fuoriCrm,
     };
   });
 }
