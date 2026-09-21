@@ -22,6 +22,7 @@ import {
   testoNellaLingua,
   type Lingua,
 } from "@/server/reviews/lingua";
+import { etichettaStelle } from "@/server/integrations/freshdeskChiusura";
 import { citaIlPersonale, tagSede } from "./sedi";
 import { CATALOGO, type Azione } from "./types";
 
@@ -260,19 +261,48 @@ async function aggiornaTicket(
   };
 }
 
+/** I soli valori che il dropdown «Stelle» di Freshdesk accetta. Altro = 400. */
+export const STELLE_FRESHDESK = ["1 stella", "2 stelle", "3 stelle", "4 stelle", "5 stelle"];
+
+/**
+ * Il valore di «Stelle» per QUESTA recensione, come lo vuole Freshdesk.
+ *
+ * Il parametro della regola si può scrivere per esteso («5 stelle») o col
+ * segnaposto («{stelle} stelle»), che serve alla regola che copre insieme 1 e
+ * 2 stelle. Prima si sostituisce il segnaposto, poi si riporta all'etichetta
+ * esatta: «1 stella» è singolare, «1 stelle» Freshdesk lo rifiuta.
+ *
+ * Il nodo classifica non sostituiva i segnaposto — l'unico fra i nodi — e a
+ * Freshdesk arrivava letteralmente «{stelle} stelle»: 400, dal 9 settembre,
+ * su tutte le 42 negative inoltrate. E siccome il nodo fermava il flusso,
+ * saltavano anche il tag della sede e l'assegnazione a Cherubina.
+ *
+ * Restituisce "" quando non ne esce un valore valido (recensione senza stelle,
+ * parametro sbagliato): allora il campo non si manda affatto, come fa la
+ * chiusura del ticket — meglio un livello in meno che un 400.
+ */
+export function specificaStelle(parametro: string, r: Recensione): string {
+  const v = interpola(parametro, r);
+  const m = v.match(/^([1-5])\s*stell[ae]$/i);
+  const etichetta = m ? etichettaStelle(Number(m[1])) : v;
+  return STELLE_FRESHDESK.includes(etichetta) ? etichetta : "";
+}
+
 async function classifica(a: Azione, ctx: Contesto): Promise<RisultatoNodo> {
+  const stelle = specificaStelle(a.parametri.specifica2 || "", ctx.recensione);
+  const custom_fields: Record<string, string> = {
+    cf_tipo_di_richiesta: "gestione recensioni clienti",
+    cf_specifica_1: interpola(a.parametri.specifica1 || "", ctx.recensione),
+  };
+  if (stelle) custom_fields.cf_specifica_2 = stelle;
   const campi = {
-    type: a.parametri.tipo || ctx.automation.tipoTicketGoogle,
-    custom_fields: {
-      cf_tipo_di_richiesta: "gestione recensioni clienti",
-      cf_specifica_1: a.parametri.specifica1 || "",
-      cf_specifica_2: a.parametri.specifica2 || "",
-    },
+    type: interpola(a.parametri.tipo || "", ctx.recensione) || ctx.automation.tipoTicketGoogle,
+    custom_fields,
   };
   return aggiornaTicket(
     ctx,
     campi,
-    `Classificazione «${campi.type} / ${campi.custom_fields.cf_specifica_1} / ${campi.custom_fields.cf_specifica_2}»`,
+    `Classificazione «${campi.type} / ${campi.custom_fields.cf_specifica_1} / ${campi.custom_fields.cf_specifica_2 ?? "stelle non indicate"}»`,
   );
 }
 

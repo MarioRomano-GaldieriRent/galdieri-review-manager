@@ -68,8 +68,12 @@ async function fdScrittura(
 
 const TIPO_RECENSIONE_GMB = "Recensioni clienti GMB";
 
-/** Etichetta stelle come la vuole il dropdown: «1 stella» (sing.), «N stelle». */
-function etichettaStelle(stelle: number): string {
+/**
+ * Etichetta stelle come la vuole il dropdown: «1 stella» (sing.), «N stelle».
+ * Esportata perché la usa anche il nodo «Classifica il ticket» dei flussi: le
+ * due strade devono scrivere lo stesso valore, o una delle due prende il 400.
+ */
+export function etichettaStelle(stelle: number): string {
   return stelle === 1 ? "1 stella" : `${stelle} stelle`;
 }
 

@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import type { Document } from "mongodb";
 import { SCRITTURA_CRITICA, coll } from "./connessione";
 import type { Azione, Regola } from "@/server/automation/types";
+import { problemiDelleRegole } from "@/server/automation/validaRegole";
 
 // Le regole: stato corrente nel documento unico regole/_id="correnti", storico
 // immutabile nella collezione regole_versioni.
@@ -68,6 +69,14 @@ export async function scriviRegole(
   origine: Origine = "interfaccia",
   nota = "",
 ): Promise<void> {
+  // Prima di tutto: una regola che Freshdesk rifiuterebbe non si salva. Qui e
+  // non nell'interfaccia, perché le regole si scrivono anche dagli script — ed
+  // è da uno script che è entrato il valore che ha fermato 42 negative.
+  const problemi = problemiDelleRegole(regole);
+  if (problemi.length > 0) {
+    throw new Error(`Regole NON salvate:\n- ${problemi.join("\n- ")}`);
+  }
+
   const versioni = await coll("regole_versioni");
   const ora = new Date();
 

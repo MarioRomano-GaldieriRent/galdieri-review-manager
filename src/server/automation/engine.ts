@@ -116,15 +116,20 @@ export async function eseguiRegola(
         durataMs: Date.now() - inizio,
       });
     } catch (e) {
+      // L'esecuzione resta in errore in ogni caso: l'errore si deve vedere.
+      // Ma si FERMA solo se il nodo è bloccante — un'etichetta rifiutata da
+      // Freshdesk non deve lasciare il ticket senza chi lo lavori.
       esito = "errore";
-      interrotto = true;
+      const bloccante = meta.bloccante !== false;
+      if (bloccante) interrotto = true;
+      const perche = e instanceof Error ? e.message : "Errore sconosciuto";
       nodi.push({
         azioneId: azione.id,
         tipo: azione.tipo,
         servizio: meta.servizio,
         titolo: meta.titolo,
         stato: "errore",
-        messaggio: e instanceof Error ? e.message : "Errore sconosciuto",
+        messaggio: bloccante ? perche : `${perche} — non bloccante: il flusso prosegue.`,
         chiamata: null,
         durataMs: Date.now() - inizio,
       });

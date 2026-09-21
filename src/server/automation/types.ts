@@ -38,6 +38,15 @@ export type DescrizioneAzione = {
   descrizione: string;
   /** true = modifica qualcosa fuori da qui. In simulazione non viene mai eseguita. */
   scrittura: boolean;
+  /**
+   * false = se fallisce, il flusso PROSEGUE (il nodo resta in errore e
+   * l'esecuzione resta rossa, ma i nodi dopo girano). Assente = true: di norma
+   * un errore ferma tutto, perché i nodi dopo contano sul risultato di questo.
+   * Vale solo per i nodi che aggiungono ETICHETTE a un ticket già nato: se il
+   * loro fallimento fermasse il flusso, a saltare sarebbe l'assegnazione a chi
+   * deve rispondere — è successo con 42 negative su 42.
+   */
+  bloccante?: boolean;
   parametri: ParametroAzione[];
 };
 
@@ -60,6 +69,9 @@ export const CATALOGO: Record<TipoAzione, DescrizioneAzione> = {
     descrizione:
       "Imposta tipo ticket e i tre livelli del campo TipoRichiesta-UCM, come fa oggi l'Ufficio Marketing.",
     scrittura: true,
+    // È un'etichetta: il ticket c'è già. Se Freshdesk rifiuta un valore, il
+    // ticket deve arrivare lo stesso a chi lo deve lavorare.
+    bloccante: false,
     parametri: [
       { nome: "tipo", etichetta: "Tipo ticket", aiuto: "es. Recensioni clienti GMB" },
       { nome: "specifica1", etichetta: "Valutazione", aiuto: "positiva | negativa" },
@@ -72,6 +84,9 @@ export const CATALOGO: Record<TipoAzione, DescrizioneAzione> = {
     descrizione:
       "Aggiunge i tag al ticket. {sede} viene sostituito con il tag della sede ricavato dall'oggetto.",
     scrittura: true,
+    // Come la classificazione: un tag rifiutato non deve togliere il ticket a
+    // chi lo deve lavorare.
+    bloccante: false,
     parametri: [
       { nome: "tag", etichetta: "Tag separati da virgola", aiuto: "es. {sede}, personale" },
     ],
