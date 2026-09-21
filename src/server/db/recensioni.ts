@@ -542,19 +542,24 @@ export async function correggiDataArrivo(chiave: string, quando: Date): Promise<
 }
 
 /**
- * Fra le chiavi date, quelle su cui il discorso è CHIUSO: già gestite
- * (`haRisposta`) o archiviate. Serve a chi vuole riaprire una lavorazione — non
- * la si riapre su una recensione che qualcuno ha già chiuso a mano.
+ * Fra le chiavi date, quelle ARCHIVIATE: qualcuno ha deciso, nel portale, che
+ * su quella recensione non c'è più niente da fare. Serve a chi vuole riaprire
+ * una lavorazione — non la si riapre su una recensione chiusa a mano.
+ *
+ * Qui prima contava anche `haRisposta`, ed era sbagliato. `haRisposta` diventa
+ * vero appena QUALUNQUE indirizzo Galdieri scrive nel thread, e quindi anche
+ * con l'INOLTRO a mano a Cherubina: l'inoltro sembrava una risposta, la
+ * recensione sembrava chiusa, e quando la risposta di Cherubina tornava non la
+ * si agganciava — restava solo fra le non lette di Stefania. Il 21 settembre
+ * erano 6 (Alan McDowell, Sab Vi, Sara N, Víctor Gómez Moreno, Anna Motta,
+ * Agathe 1010), risposte il 19 e mai comparse in «Da approvare».
  */
-export async function chiaviGiaChiuse(chiavi: string[]): Promise<Set<string>> {
+export async function chiaviArchiviateFra(chiavi: string[]): Promise<Set<string>> {
   if (chiavi.length === 0) return new Set();
   const righe = (await (
     await coll("recensioni")
   )
-    .find(
-      { _id: { $in: chiavi }, $or: [{ haRisposta: true }, { archiviata: true }] },
-      { projection: { _id: 1 } },
-    )
+    .find({ _id: { $in: chiavi }, archiviata: true }, { projection: { _id: 1 } })
     .toArray()) as { _id: string }[];
   return new Set(righe.map((r) => r._id));
 }

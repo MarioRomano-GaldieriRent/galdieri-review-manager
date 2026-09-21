@@ -5,7 +5,7 @@ import {
   registraInoltro,
   salvaRisposta,
 } from "@/server/db/escalation";
-import { chiaviGiaChiuse, correggiDataArrivo } from "@/server/db/recensioni";
+import { chiaviArchiviateFra, correggiDataArrivo } from "@/server/db/recensioni";
 import { chiaviPubblicate } from "@/server/db/pubblicazioni";
 import { htmlToText } from "./parse";
 import type { Recensione } from "./load";
@@ -183,24 +183,34 @@ const SISTEMA = 1;
  * conta che Cherubina abbia risposto, non quante stelle avesse la recensione.
  *
  * Non tocca: chi ha già una voce escalation (ha la sua storia), chi il portale
- * ha già pubblicato, e chi è già stato chiuso a mano. Il testo NON viene
+ * ha già pubblicato, e chi è stato archiviato a mano. Il testo NON viene
  * pubblicato da qui: finisce nel riquadro, e resta all'operatore approvarlo —
  * anche perché una mail del customer care può essere una nota interna e non
  * una risposta per il cliente.
+ *
+ * `haRisposta` NON è fra i motivi per saltare, e non deve tornarci: per queste
+ * recensioni è vero per costruzione, perché l'inoltro a mano di Stefania è una
+ * mail Galdieri nel thread. Contarlo come «già chiusa» scartava proprio i casi
+ * per cui questa funzione esiste. Il rischio opposto — riproporre una che
+ * Stefania ha già pubblicato a mano su Google — non diventa un doppio invio:
+ * la coda di Google mostra solo le recensioni ancora senza risposta, e nella
+ * lista una card già risposta non ha «Rispondi», quindi il robot non clicca e
+ * lo dice («ha già una risposta»). Nel peggiore dei casi la recensione compare
+ * una volta in «Da approvare» e si archivia.
  */
 export async function registraRitorniCustomerCare(recensioni: Recensione[]): Promise<number> {
   const candidate = recensioni.filter((r) => r.rispostaCustomerCare);
   if (candidate.length === 0) return 0;
 
-  const [conEscalation, pubblicate, giaChiuse] = await Promise.all([
+  const [conEscalation, pubblicate, archiviate] = await Promise.all([
     chiaviConEscalation(),
     chiaviPubblicate(),
-    chiaviGiaChiuse(candidate.map((r) => r.chiave)),
+    chiaviArchiviateFra(candidate.map((r) => r.chiave)),
   ]);
 
   let registrate = 0;
   for (const r of candidate) {
-    if (conEscalation.has(r.chiave) || pubblicate.has(r.chiave) || giaChiuse.has(r.chiave)) continue;
+    if (conEscalation.has(r.chiave) || pubblicate.has(r.chiave) || archiviate.has(r.chiave)) continue;
     const rep = r.rispostaCustomerCare!;
     // La data dell'inoltro è quella VERA solo quando il portale l'ha fatto lui.
     // Qui non la sappiamo — l'inoltro è avvenuto in Outlook — e scriverne una
