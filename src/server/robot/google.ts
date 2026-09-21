@@ -1294,7 +1294,63 @@ export type EsitoCodaIgnora = {
  * vecchio (manca «npm run build» + restart dopo il git pull) e non serve
  * cercare il problema altrove.
  */
-export const VERSIONE_CODA = "coda-12";
+export const VERSIONE_CODA = "coda-13";
+
+/**
+ * La pagina d'errore che Google a volte mette AL POSTO della recensione nella
+ * coda «Rispondere a recensioni»:
+ *
+ *   Si è verificato un problema
+ *   Impossibile trovare questa recensione. Riprova o visualizza tutte le recensioni.
+ *   [ Visualizza tutte le recensioni ]
+ *
+ * Succede andando avanti con «Ignora»: la coda tiene in elenco una recensione
+ * che nel frattempo non si carica più — cancellata o modificata dall'autore — e
+ * arrivata lì mostra questo. Da qui la coda NON va avanti: non c'è «Ignora», non
+ * c'è il campo di risposta, non c'è la recensione.
+ *
+ * Senza riconoscerla si bloccava tutto, in due modi:
+ *  1. la guardia contro i salti a vuoto confrontava l'AUTORE prima e dopo
+ *     «Ignora», e qui l'autore è vuoto: non scattava mai, e il robot andava
+ *     avanti fino alla scadenza bruciando il tempo che serviva alla lista;
+ *  2. senza un dialogo visibile, la lettura della recensione ripiegava sul
+ *     primo <article> della pagina — la prima recensione della LISTA dietro,
+ *     ordinata «Più recente», che spesso è proprio quella cercata. La coda la
+ *     «trovava», non aveva dove scrivere, e «trovata ma non scritta» vuol dire
+ *     fermarsi SENZA ripiego sulla lista.
+ *
+ * Conta solo ciò che è A SCHERMO. La frase specifica basta da sola; il titolo
+ * generico «Si è verificato un problema» vale solo insieme al tasto «Visualizza
+ * tutte le recensioni», perché da solo potrebbe essere un avviso qualsiasi.
+ *
+ * Restituisce il testo visto, per il passo-passo, oppure null.
+ */
+export async function erroreRecensioneNonTrovata(r: Radice): Promise<string | null> {
+  return r
+    .evaluate(() => {
+      // Niente funzioni con nome qui dentro: sotto tsx diventerebbero
+      // __name(...) e la evaluate lancerebbe. Tutto inline.
+      let specifica = "";
+      let generica = "";
+      let tasto = false;
+      const sel = "h1, h2, h3, p, [role=alert], [role=heading], button, [role=button]";
+      for (const e of Array.from(document.querySelectorAll(sel))) {
+        const box = e.getBoundingClientRect();
+        if (box.width < 2 || box.height < 2) continue;
+        const t = (e.textContent || "").replace(/\s+/g, " ").trim();
+        if (!t || t.length > 200) continue;
+        if (!specifica && /impossibile trovare questa recensione|couldn.?t find this review|can.?t find this review/i.test(t)) {
+          specifica = t;
+        }
+        if (!generica && /^si è verificato un problema\.?$|^something went wrong\.?$/i.test(t)) generica = t;
+        if (/^visualizza tutte le recensioni$|^view all reviews$|^see all reviews$/i.test(t)) tasto = true;
+      }
+      if (specifica) return specifica;
+      if (generica && tasto) return generica + " (con «Visualizza tutte le recensioni»)";
+      return null;
+    })
+    .catch(() => null);
+}
 
 /** Minuscolo, senza accenti, spazi normalizzati: per confrontare i nomi. */
 function senzaAccenti(x: string): string {
@@ -1943,8 +1999,18 @@ export async function cercaNellaCoda(
         via: `lettura fallita: ${e instanceof Error ? e.message.split("\n")[0] : String(e)}`,
       }));
 
+  /** L'errore «Impossibile trovare questa recensione» su una qualunque radice. */
+  const erroreInCoda = async (): Promise<string | null> => {
+    for (const r of radici()) {
+      const e = await erroreRecensioneNonTrovata(r);
+      if (e) return `«${e}» (${nomeRadice(r)})`;
+    }
+    return null;
+  };
+
   let trovatoCliente = false;
   let autoreTrovato = "";
+  let erroreGoogle: string | null = null;
   let salti = 0;
   let riprese = 0;
   let fermi = 0;
@@ -1952,6 +2018,18 @@ export async function cercaNellaCoda(
   for (let i = 0; i <= maxIgnora; i++) {
     if (scaduto()) {
       annota(`tempo esaurito dopo ${salti} «Ignora»: mi fermo per darti comunque il passo-passo.`);
+      break;
+    }
+
+    // PRIMA di leggere la recensione mostrata: se Google ha messo la sua pagina
+    // d'errore al posto della recensione, leggere adesso vorrebbe dire leggere
+    // la lista che sta sotto — e magari «trovarci» il cliente senza avere dove
+    // scrivere. Si esce subito e pulito: il chiamante riapre la sede e cerca
+    // nella lista, che è quello che si farebbe a mano.
+    erroreGoogle = await erroreInCoda();
+    if (erroreGoogle) {
+      annota(`Google mostra ${erroreGoogle} dopo ${salti} «Ignora»: da qui la coda non va avanti, esco.`);
+      await fotografaControlli("controlli sulla pagina d'errore");
       break;
     }
 
@@ -2011,6 +2089,9 @@ export async function cercaNellaCoda(
     }
 
     const contatorePrima = vista.contatore;
+    // La FIRMA della vista, per la guardia sui salti a vuoto più sotto: l'autore
+    // quando c'è, altrimenti l'inizio del testo mostrato.
+    const firmaPrima = autore || testoCarta.slice(0, 160);
 
     let b = await primoVisibile(tastoIgnora(coda));
     if (!b) {
@@ -2046,14 +2127,17 @@ export async function cercaNellaCoda(
     }
     await pg.waitForTimeout(700);
 
-    // Guardia sui salti a vuoto: se dopo «Ignora» il riquadro mostra lo STESSO
-    // autore, quel tasto non era della coda (di solito è quello di un banner).
+    // Guardia sui salti a vuoto: se dopo «Ignora» il riquadro mostra la STESSA
+    // vista, quel tasto non era della coda (di solito è quello di un banner).
+    // Si confronta la firma — autore, o inizio del testo se l'autore non si
+    // legge — e non il solo autore: con l'autore vuoto la guardia restava
+    // spenta proprio dove serviva, e il robot cliccava «Ignora» a oltranza.
     const dopo = await leggiMostrata(coda);
-    const dopoAutore = dopo.autore;
+    const firmaDopo = dopo.autore || dopo.testo.slice(0, 160);
     const dopoContatore = dopo.contatore;
-    if (dopoAutore && dopoAutore === autore && dopoContatore === contatorePrima) {
+    if (firmaDopo && firmaDopo === firmaPrima && dopoContatore === contatorePrima) {
       fermi++;
-      annota(`«Ignora» n. ${salti}: l'autore mostrato è ancora «${autore}» — quel tasto non fa avanzare la coda.`);
+      annota(`«Ignora» n. ${salti}: la vista mostrata è ancora «${firmaPrima.slice(0, 50)}» — quel tasto non fa avanzare la coda.`);
       if (fermi >= 2) {
         await fotografaControlli("controlli dove la vista non cambia");
         break;
@@ -2061,6 +2145,19 @@ export async function cercaNellaCoda(
     } else {
       fermi = 0;
     }
+  }
+
+  // L'errore di Google esce come «non trovata», MAI come «trovata»: è ciò che
+  // fa scattare il ripiego sulla lista nel chiamante. `root: null` perché quella
+  // vista non serve a nessuno — di lì non si può né leggere né scrivere.
+  if (erroreGoogle) {
+    return {
+      trovata: false,
+      scritto: false,
+      passi,
+      root: null,
+      dettaglio: `Google ha mostrato ${erroreGoogle} nella coda dopo ${salti} «Ignora»: la coda si è interrotta lì.`,
+    };
   }
 
   if (!trovatoCliente) {
