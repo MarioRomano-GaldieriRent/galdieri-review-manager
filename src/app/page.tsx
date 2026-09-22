@@ -69,6 +69,7 @@ import { TastieraCoda } from "./da-pubblicare/TastieraCoda";
 import { FiltriDaApprovare } from "./FiltriDaApprovare";
 import { pilotaVivo } from "@/server/automation/pilota";
 import { regolaInAutomatico } from "@/server/automation/types";
+import { chiaviAutomazioneEsaurita } from "@/server/db/tentativiPilota";
 import { ScheletroLista } from "./_ui/segnaposti";
 
 // La home è la pipeline di una recensione, in un'unica pagina:
@@ -829,7 +830,7 @@ async function caricaDatiApprovare({
         ),
   );
 
-  const [regoleBase, pubblicate, archiviateChiavi, segnalateChiavi, erroreIngest, pilotaAcceso] =
+  const [regoleBase, pubblicate, archiviateChiavi, segnalateChiavi, erroreIngest, pilotaAcceso, esauriteAuto] =
     await Promise.all([
       caricaRegole(),
       chiaviPubblicate(),
@@ -837,10 +838,15 @@ async function caricaDatiApprovare({
       chiaviSegnalate(),
       pIngest,
       pPilota,
+      chiaviAutomazioneEsaurita().catch(() => new Set<string>()),
     ]);
   // Per questa persona le sue regole in anteprima contano come attive.
   const regole = conBeta(regoleBase, regoleBeta);
   erroreGraph = erroreIngest;
+
+  /** La recensione la sta lavorando il pilota: vivo, regola in automatico, tentativi non finiti. */
+  const inManoAlPilota = (x: { r: { chiave: string }; regola: Regola | null }): boolean =>
+    pilotaAcceso && x.regola !== null && regolaInAutomatico(x.regola) && !esauriteAuto.has(x.r.chiave);
 
   // La LISTA viene dall'ARCHIVIO Mongo (query indicizzata, veloce), non dalla
   // finestra della posta: ha TUTTO l'arretrato recente e non perde ciò che è
@@ -882,12 +888,13 @@ async function caricaDatiApprovare({
     // Occhio spento: solo le recensioni coperte da una regola ATTIVA (default).
     // Occhio acceso: TUTTE, anche quelle senza regola (regola === null).
     .filter((x) => tutte || x.regola !== null)
-    // Le recensioni di una regola in AUTOMATICO le risponde il pilota: non sono
+    // Le recensioni di una regola in AUTOMATICO le lavora il pilota: non sono
     // lavoro per una persona e non compaiono. Solo finché il pilota è vivo —
     // se tace (server senza AUTOPILOTA, pilota piantato) tornano visibili, così
-    // non restano senza risposta di nascosto. Le «pronte» non c'entrano: sono
-    // negative, e le regole automatiche sono solo 4-5★ senza testo.
-    .filter((x) => !(pilotaAcceso && x.regola && regolaInAutomatico(x.regola)));
+    // non restano senza risposta di nascosto. E solo finché l'automazione non
+    // ha finito i suoi tentativi: dopo due fallimenti la recensione è di una
+    // persona (Supervisione, poi eventualmente di nuovo qui).
+    .filter((x) => !inManoAlPilota(x));
 
   // ESCALATION «In attesa»: finito il recupero delle risposte (avviato sopra,
   // in parallelo), si separa. Le ATTESE (inoltrate, nessuna risposta) ESCONO
@@ -934,6 +941,11 @@ async function caricaDatiApprovare({
         );
       }
     }
+    // Le PRONTE delle negative in automatico le pubblica il pilota (Fase 2): il
+    // ripescaggio qui sopra le rimetteva in lista, e Stefania e il pilota si
+    // sarebbero contesi la stessa recensione. Stessa regola di sopra: finché il
+    // pilota è vivo e non ha finito i tentativi.
+    daApprovare = daApprovare.filter((x) => !inManoAlPilota(x));
   } catch (e) {
     console.warn("[attese] lettura saltata:", e instanceof Error ? e.message : e);
   }

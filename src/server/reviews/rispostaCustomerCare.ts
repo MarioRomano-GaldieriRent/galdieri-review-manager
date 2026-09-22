@@ -103,6 +103,99 @@ export function togliSalutoInterno(testo: string): string {
 }
 
 /**
+ * Il saluto con cui si apre una risposta AL CLIENTE, nelle lingue in cui
+ * risponde il customer care. Il lookahead al posto di \b: con le lettere
+ * accentate («chère») \b non vede il confine della parola.
+ *
+ * «Ciao» manca apposta: è come Cherubina scrive a STEFANIA («Ciao Stefania,
+ * ticket …»); ai clienti scrive sempre «Gentile» o «Dear». Un testo che si
+ * apre con «Ciao» è più facile che sia per lei che per il cliente.
+ */
+const SALUTO_AL_CLIENTE =
+  /^(dear|gentil[ei]|gent\.?\s?m[oa]|egregi[oa]|car[oa]|buongiorno|buonasera|salve|hello|hi|good\s+(morning|afternoon|evening)|bonjour|bonsoir|madame|monsieur|cher|chère|hallo|guten\s+(tag|morgen)|sehr\s+geehrte[rs]?|liebe[rs]?|estimad[oa]s?|hola|querid[oa]s?|beste|geachte|goedendag)(?=[\s,.:;!]|$)/i;
+
+/** Ciò che in una risposta al cliente non deve mai comparire: roba fra colleghi. */
+const PAROLE_INTERNE =
+  /\bstefania\b|\bcherubina\b|\btick\w*\s*[:#]?\s*\d{3,}|\bti\s+(giro|inoltro|mando)\b|\bper\s+conoscenza\b/i;
+
+/**
+ * Si può pubblicare questo testo del customer care SENZA che una persona lo
+ * rilegga? null = sì; altrimenti il motivo, da scrivere nella segnalazione.
+ *
+ * Serve al pilota, che pubblica da solo la risposta di Cherubina alle negative.
+ * Il pericolo è concreto: la mail di Cherubina è indirizzata a Stefania, e ciò
+ * che l'estrazione isola può non essere il testo per il cliente. Tarato sulle
+ * 47 risposte in archivio al 22/9/2026: 46 si aprono con «Dear …» o «Gentile …»,
+ * fra 290 e 1.563 caratteri. La 47ª comincia con «tickte 58650 Dear David»:
+ * Cherubina ha scritto male «ticket», l'estrazione non l'ha riconosciuto e il
+ * numero sarebbe finito su Google. È esattamente ciò che qui si ferma.
+ *
+ * Nel dubbio si ferma: una risposta buona trattenuta costa un clic a Stefania,
+ * una nota interna pubblicata resta sotto la recensione davanti a tutti.
+ */
+export function motivoPerNonPubblicare(testo: string, autore?: string): string | null {
+  // Gli invisibili che Outlook lascia in testa (su «Dear Nora» c'erano).
+  const t = (testo || "").replace(/^[\s​-‍﻿]+/, "").trim();
+  if (t.length < 80) return `il testo è troppo corto per essere una risposta (${t.length} caratteri)`;
+  if (t.length > 4000) return `il testo supera il limite di Google (${t.length} caratteri su 4.000)`;
+  if (!SALUTO_AL_CLIENTE.test(t)) {
+    return `non si apre con un saluto al cliente: comincia con «${t.slice(0, 40).replace(/\s+/g, " ")}…»`;
+  }
+  const interno = t.match(PAROLE_INTERNE);
+  if (interno) return `contiene «${interno[0]}», che è una cosa fra colleghi e non per il cliente`;
+  if (autore) {
+    const nome = nomeNelSaluto(t);
+    if (nome && !nomeCombacia(nome, autore)) {
+      return `il saluto è per «${nome}» ma la recensione è di «${autore}»: la risposta potrebbe essere agganciata al cliente sbagliato`;
+    }
+  }
+  return null;
+}
+
+/** Minuscolo e senza accenti, per confrontare nomi («Sören» = «soren»). */
+const piano = (s: string) =>
+  s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+
+/** Titoli di cortesia da saltare prima del nome, e parole che non sono un nome. */
+// Un titolo si toglie anche quando è l'ultima parola («Bonjour Madame,»):
+// altrimenti «Madame» passerebbe per un nome e bloccherebbe una risposta buona.
+const TITOLI =
+  /^(?:(?:mr|mrs|ms|miss|mx|dr|sig|sig\.ra|sigg|signor|signora|sig\.na|dott|dott\.ssa|herr|frau|madame|monsieur|mme|mlle|m|se[nñ]or|se[nñ]ora|sr|sra)(?:\.?\s+|\.?$))+/i;
+const GENERICI = new Set([
+  "customer", "cliente", "client", "clienti", "kunde", "kundin", "guest", "ospite",
+  "sir", "madam", "madame", "monsieur", "signore", "signora", "signori", "all", "tutti",
+]);
+
+/**
+ * Il nome del cliente nel saluto («Dear Mr. Geoff Middle,» → «Geoff Middle»),
+ * o null se non si legge. Il saluto va fino alla prima virgola o al primo a capo.
+ */
+function nomeNelSaluto(t: string): string | null {
+  const m = t.match(SALUTO_AL_CLIENTE);
+  if (!m) return null;
+  const resto = t.slice(m[0].length).replace(/^\s+/, "");
+  const fino = resto.split(/[,\n!:]/)[0] ?? "";
+  const nome = fino.replace(TITOLI, "").trim();
+  return nome && nome.length <= 40 ? nome : null;
+}
+
+/**
+ * Il nome del saluto è quello dell'autore? Basta una parola di almeno tre
+ * lettere in comune («Mr. McDowell» ↔ «Alan McDowell»). Se il saluto non ha
+ * parole così («Dear C», «Dear D.») o usa un generico («Dear Customer»), non si
+ * può giudicare e NON si blocca: sulle 47 risposte vere del 22/9/2026 il nome
+ * combacia in 44, è indecidibile in 3 e non discorda mai.
+ */
+function nomeCombacia(nome: string, autore: string): boolean {
+  const parole = piano(nome)
+    .split(/[\s.\-'’]+/)
+    .filter((w) => w.length >= 3 && !GENERICI.has(w));
+  if (parole.length === 0) return true;
+  const a = piano(autore);
+  return parole.some((w) => a.includes(w));
+}
+
+/**
  * È una notifica automatica di Freshdesk, non una risposta vera?
  *
  * Freshdesk mette lo stato del ticket in testa all'oggetto — e non sempre in

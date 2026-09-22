@@ -1,6 +1,7 @@
 import {
   automazioneDi,
   regolaAutomatizzabile,
+  regolaEscalationAutomatizzabile,
   CATALOGO,
   type Azione,
   type EsitoNodo,
@@ -360,11 +361,22 @@ export function AutomazioneRegola({ regola }: { regola: Regola }) {
         </div>
       </fieldset>
 
-      {!regolaAutomatizzabile(regola) && a.modo !== "manuale" && (
+      {!regolaAutomatizzabile(regola) && !regolaEscalationAutomatizzabile(regola) && a.modo !== "manuale" && (
         <p className="form-error">
           Questa regola NON parte da sola anche se è impostata in automatico: il pilota lavora solo
           le regole «senza testo» dalle 4 stelle in su, le uniche in cui «Grazie.» è la risposta
-          giusta senza che una persona la rilegga.
+          giusta senza che una persona la rilegga, e l&apos;escalation delle 1-2 stelle.
+        </p>
+      )}
+      {regolaEscalationAutomatizzabile(regola) && (
+        <p className="hint">
+          Per questa regola l&apos;automatico ha due tempi. L&apos;<strong>inoltro a Cherubina</strong>{" "}
+          parte appena arriva la recensione, a qualunque ora e senza attesa: la recensione non passa
+          da «Da approvare», va dritta «In attesa». La <strong>risposta di Cherubina</strong> si
+          pubblica da sola solo dentro le fasce qui sopra, ma senza l&apos;attesa dall&apos;arrivo — e
+          solo se il testo comincia con un saluto al cliente e non contiene nomi o numeri di ticket
+          interni; altrimenti va in Supervisione. Se un passaggio non riesce il pilota ci riprova al
+          giro dopo; al secondo fallimento la recensione passa in Supervisione.
         </p>
       )}
       {a.attivaDal && a.modo !== "manuale" && (

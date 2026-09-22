@@ -272,12 +272,39 @@ export function regolaAutomatizzabile(r: Regola): boolean {
 }
 
 /**
- * La regola è in mano al pilota: in automatico E automatizzabile. Una regola
- * con testo messa in automatico per errore NON lo è — il pilota la rifiuta —
- * quindi le sue recensioni devono restare visibili a una persona.
+ * Una regola di ESCALATION che il pilota può fare da solo: le negative 1-2★ a
+ * due fasi — inoltro a Cherubina, attesa, pubblicazione del SUO testo.
+ *
+ * È l'unica eccezione alla regola «solo senza testo, solo 4-5★», e regge per un
+ * motivo preciso: il testo che si pubblica non lo inventa la regola, lo scrive
+ * il customer care per quella recensione. Il pilota lo pubblica solo se sembra
+ * davvero una risposta al cliente (sembraRispostaAlCliente) — una nota interna
+ * a Stefania finirebbe altrimenti su Google.
+ *
+ * Solo stelle ≤ 2: la regola delle 3★ è ibrida (risposta diretta O inoltro, lo
+ * sceglie una persona) e automatizzarla manderebbe a Cherubina tutte le 3★.
+ */
+export function regolaEscalationAutomatizzabile(r: Regola): boolean {
+  const tipi = new Set(r.azioni.map((a) => a.tipo));
+  return (
+    tipi.has("email.inoltra") &&
+    tipi.has("sistema.attendiRisposta") &&
+    r.condizione.stelle.length > 0 &&
+    r.condizione.stelle.every((s) => s >= 1 && s <= 2)
+  );
+}
+
+/**
+ * La regola è in mano al pilota: in automatico E automatizzabile (di un tipo o
+ * dell'altro). Una regola con testo messa in automatico per errore NON lo è —
+ * il pilota la rifiuta — quindi le sue recensioni devono restare visibili a
+ * una persona.
  */
 export function regolaInAutomatico(r: Regola): boolean {
-  return automazioneDi(r).modo !== "manuale" && regolaAutomatizzabile(r);
+  return (
+    automazioneDi(r).modo !== "manuale" &&
+    (regolaAutomatizzabile(r) || regolaEscalationAutomatizzabile(r))
+  );
 }
 
 /** Vero se la recensione ricade nella condizione della regola. */

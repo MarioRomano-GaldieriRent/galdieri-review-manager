@@ -12,7 +12,7 @@ import {
 } from "@/server/db/pubblicazioni";
 import { chiudiFreshdeskPer, programmaChiusuraFreshdesk } from "@/server/pubblicazione";
 import { eliminaBozza } from "@/server/db/bozze";
-import { leggiEscalation, segnaChiusa, ticketDiEscalation } from "@/server/db/escalation";
+import { leggiEscalation, registraInoltro, segnaChiusa, ticketDiEscalation } from "@/server/db/escalation";
 import { normalizzaSede } from "@/server/db/seed";
 import { nomeGoogleDiSede } from "@/server/db/sedi";
 import { modoOperativo } from "@/server/settings";
@@ -102,6 +102,63 @@ export async function accodaSePubblicabile(
     },
     operatoreId,
   );
+}
+
+export type EsitoInoltro = {
+  esecuzione: Esecuzione;
+  /** La mail al customer care è partita davvero (nodo «inoltra» riuscito). */
+  inoltrata: boolean;
+  /** La voce «In attesa» è stata registrata. */
+  registrata: boolean;
+  /** Se non registrata: perché. */
+  perche: string;
+};
+
+/**
+ * FASE 1 delle negative: i nodi della regola FINO all'attesa inclusa — inoltro
+ * al customer care (col CC che apre il ticket), aggancio, classificazione, tag,
+ * assegnazione — poi la voce «In attesa».
+ *
+ * Condivisa dal tasto «Inoltra» della card e dal pilota, per lo stesso motivo
+ * di rispondiERegistra: due copie divergerebbero al primo ritocco.
+ *
+ * `soloSeInoltrata`: l'attesa si registra solo se la mail è PARTITA davvero. Il
+ * pilota lo pretende: una voce «in attesa» senza che Cherubina abbia ricevuto
+ * niente aspetterebbe per sempre, e nessuno lo vedrebbe. Il tasto no, e resta
+ * com'era: lì c'è una persona che vede l'esito e può riprovare.
+ */
+export async function inoltraERegistra(opts: {
+  recensione: Recensione;
+  regola: Regola;
+  operatoreId: number;
+  soloSeInoltrata?: boolean;
+}): Promise<EsitoInoltro> {
+  const { recensione, regola } = opts;
+  const iAttesa = regola.azioni.findIndex((a) => a.tipo === "sistema.attendiRisposta");
+  const fase1 = iAttesa >= 0 ? { ...regola, azioni: regola.azioni.slice(0, iAttesa + 1) } : regola;
+
+  const esecuzione = await eseguiRegola(fase1, recensione);
+  await registraEsecuzione(esecuzione);
+
+  const nodoInoltro = esecuzione.nodi.find((n) => n.tipo === "email.inoltra");
+  const inoltrata = nodoInoltro?.stato === "ok";
+  if (opts.soloSeInoltrata && !inoltrata) {
+    return {
+      esecuzione,
+      inoltrata,
+      registrata: false,
+      perche: nodoInoltro
+        ? `la mail al customer care non è partita (${nodoInoltro.stato}: ${nodoInoltro.messaggio})`
+        : "la regola non ha un nodo di inoltro",
+    };
+  }
+
+  // Il ticket, se il nodo l'ha agganciato, dal suo messaggio (#id): senza
+  // rileggere Freshdesk.
+  const nodoTicket = esecuzione.nodi.find((n) => n.tipo === "freshdesk.trovaTicket");
+  const m = nodoTicket?.messaggio.match(/#(\d+)/);
+  await registraInoltro(recensione, { ticketId: m ? Number(m[1]) : null, operatoreId: opts.operatoreId });
+  return { esecuzione, inoltrata, registrata: true, perche: "" };
 }
 
 export type EsitoRisposta =

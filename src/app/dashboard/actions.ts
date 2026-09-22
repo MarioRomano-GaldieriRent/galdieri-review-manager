@@ -16,11 +16,11 @@ import type { Regola } from "@/server/automation/types";
 import { haTesto, type Recensione } from "@/server/reviews/load";
 import {
   accodaSePubblicabile,
+  inoltraERegistra,
   metodoRobot,
   rispondiERegistra,
 } from "@/server/automation/rispondi";
 import { archiviaRecensione, leggiRecensione, ripristinaRecensione } from "@/server/db/recensioni";
-import { registraInoltro } from "@/server/db/escalation";
 import { registraVersione } from "@/server/db/storicoTesti";
 import { nomeGoogleDiSede } from "@/server/db/sedi";
 import { richiediOperatore } from "@/server/auth/sessione";
@@ -192,23 +192,9 @@ export async function avviaEscalationAction(formData: FormData): Promise<void> {
   const regola = regolaPer(regole, recensione.stelle, haTesto(recensione));
   if (!regola) indietro(formData, { errore: "nessuna-regola" });
 
-  // Solo i nodi FINO all'attesa inclusa (la Fase 1). Senza un nodo di attesa si
-  // eseguono tutti (regola senza flusso di ritorno).
-  const iAttesa = regola.azioni.findIndex((a) => a.tipo === "sistema.attendiRisposta");
-  const fase1 = iAttesa >= 0 ? { ...regola, azioni: regola.azioni.slice(0, iAttesa + 1) } : regola;
-
-  const esecuzione = await eseguiRegola(fase1, recensione);
-  await registraEsecuzione(esecuzione);
-
-  // Registra l'escalation: la recensione passa in «In attesa» finché il customer
-  // care non rimanda la risposta. Il ticket, se il nodo l'ha agganciato, si legge
-  // dal suo messaggio (#id) senza rileggere Freshdesk.
-  const nodoTicket = esecuzione.nodi.find((n) => n.tipo === "freshdesk.trovaTicket");
-  const mTicket = nodoTicket?.messaggio.match(/#(\d+)/);
-  await registraInoltro(recensione, {
-    ticketId: mTicket ? Number(mTicket[1]) : null,
-    operatoreId: op._id,
-  });
+  // La Fase 1 — nodi fino all'attesa, poi la voce «In attesa» — è la stessa che
+  // fa il pilota: una funzione sola, così tasto e automazione non divergono.
+  const { esecuzione } = await inoltraERegistra({ recensione, regola, operatoreId: op._id });
 
   revalidatePath("/");
   indietro(formData, { run: esecuzione.id });

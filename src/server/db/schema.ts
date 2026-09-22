@@ -784,6 +784,36 @@ export const COLLEZIONI: DefColl[] = [
   },
 
   {
+    // I tentativi automatici FALLITI del pilota, per recensione e fase (inoltro
+    // al customer care, pubblicazione della sua risposta). Due, poi Supervisione:
+    // vedi tentativiPilota.ts. _id = «fase:chiave».
+    nome: "pilota_tentativi",
+    validator: {
+      $jsonSchema: {
+        bsonType: "object",
+        additionalProperties: false,
+        required: ["_id", "chiave", "fase", "n", "errori", "ultimoIl"],
+        properties: {
+          _id: { bsonType: "string", minLength: 3 },
+          chiave: { bsonType: "string", minLength: 1 },
+          fase: { enum: ["inoltro", "pubblicazione"] },
+          n: { bsonType: "int", minimum: 1 },
+          errori: {
+            bsonType: "array",
+            items: {
+              bsonType: "object",
+              required: ["il", "messaggio"],
+              properties: { il: { bsonType: "date" }, messaggio: stringaOFalsa },
+            },
+          },
+          ultimoIl: { bsonType: "date" },
+        },
+      },
+    },
+    indici: [{ key: { n: 1 }, name: "i_pilota_tentativi_n" }],
+  },
+
+  {
     // MEMORIA — i blocchi di CONTESTO per rispondere (chi siamo, tono, regole):
     // testo libero curato dall'admin, ciascuno accendibile/spegnibile.
     nome: "memoria_contesto",
