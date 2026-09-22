@@ -38,6 +38,7 @@ import {
 import { ritentaChiusureInSospeso } from "@/server/pubblicazione";
 import { aggiornaAttese, motivoPerNonPubblicare } from "@/server/reviews/rispostaCustomerCare";
 import { avvisaAdminDiSegnalazione } from "@/server/notifiche/segnalazione";
+import { avvisaAdminSessioneGoogleScaduta } from "@/server/notifiche/sessioneRobot";
 import { robotOccupato } from "@/server/robot/lancia";
 import { chromeInEsecuzione } from "@/server/robot/google";
 import { isGraphConfigured } from "@/server/graph/client";
@@ -63,9 +64,11 @@ import { aOraItaliana, giornoSettimana } from "@/server/tempo";
 //
 // Quando qualcosa va storto la recensione passa in SUPERVISIONE: si apre una
 // segnalazione (che la toglie dalla coda, quindi non si riprova all'infinito) e
-// parte la solita mail all'amministratore. Due eccezioni, che NON sono errori
+// parte la solita mail all'amministratore. Tre eccezioni, che NON sono errori
 // della recensione e si limitano a rimandare al giro successivo: il robot già
-// occupato (qualcuno sta usando «Rispondi») e un Chrome aperto sul server.
+// occupato (qualcuno sta usando «Rispondi»), un Chrome aperto sul server e la
+// sessione Google scaduta — quest'ultima con UNA mail all'amministratore, perché
+// senza un nuovo accesso sul server non si sblocca da sola.
 //
 // Due famiglie di regole, ciascuna col suo orologio:
 //
@@ -225,6 +228,39 @@ async function passaInSupervisione(r: RecensioneArchiviata, nota: string): Promi
   return true;
 }
 
+// La SESSIONE GOOGLE del robot. Quando scade («non-loggato») falliscono tutte le
+// pubblicazioni allo stesso modo finché qualcuno non rifà l'accesso sul server:
+// non è colpa di nessuna recensione. Prima ogni giro ne mandava una in
+// Supervisione (o le bruciava un tentativo), con una mail ciascuna: in un
+// weekend a ufficio vuoto sarebbero state decine di recensioni tolte al pilota
+// per sempre. Ora restano in coda, e l'amministratore riceve una mail sola.
+
+/** Esiste finché la caduta non si risolve: è il segno che l'avviso è già partito. */
+const ID_SESSIONE_CADUTA = "sessione-google-caduta";
+
+const FERMO_SESSIONE =
+  "Google ha chiuso la sessione del robot e serve un nuovo accesso sul server (npm run robot:sessione)";
+
+/** Avvisa l'amministratore, una volta sola per ogni caduta. */
+async function sessioneGoogleCaduta(messaggioRobot: string): Promise<void> {
+  const c = await coll<{ _id: string; dal: Date }>("pilota");
+  const r = await c.updateOne(
+    { _id: ID_SESSIONE_CADUTA },
+    { $setOnInsert: { dal: new Date() } },
+    { upsert: true },
+  );
+  if (r.upsertedCount === 0) return; // già avvisato per questa caduta
+  const avviso = await avvisaAdminSessioneGoogleScaduta({ messaggioRobot, link: linkSupervisione() });
+  console.log(
+    `[pilota] Google ha chiuso la sessione del robot: pubblicazioni ferme${avviso.inviata ? ", avvisato l'amministratore" : ` (mail non inviata: ${avviso.motivo})`}.`,
+  );
+}
+
+/** Il robot è tornato a lavorare su Google: la prossima caduta si avvisa di nuovo. */
+async function sessioneGoogleTornata(): Promise<void> {
+  await (await coll<{ _id: string }>("pilota")).deleteOne({ _id: ID_SESSIONE_CADUTA }).catch(() => {});
+}
+
 /**
  * Un giro del pilota. Non solleva mai: ritorna cosa è successo.
  *
@@ -339,6 +375,9 @@ export async function giroPilota(
         esaurite.has(r.chiave);
       const candidate: NonNullable<EsitoGiro["candidate"]> = [];
       let fermato = "";
+      // La sessione Google, vista dal robot in questo giro (vedi sessioneGoogleCaduta).
+      let sessioneScaduta = "";
+      let sessioneViva = false;
 
       /**
        * Un tentativo andato male. Il primo si ripete al giro dopo; al secondo la
@@ -598,6 +637,13 @@ export async function giroPilota(
               fermato = "il robot è stato occupato da qualcun altro";
               break;
             }
+            // Senza sessione Google falliranno tutte allo stesso modo, e non per
+            // colpa loro: nessun tentativo bruciato, si ferma tutto il robot.
+            if (e.robot.stato === "non-loggato") {
+              sessioneScaduta = e.robot.messaggio || "non-loggato";
+              fermato = FERMO_SESSIONE;
+              break;
+            }
             // Su Google la risposta c'è già: qualcuno l'ha pubblicata a mano.
             // È gestita, non in errore: si chiude, ed esce dal ciclo escalation.
             if (/ha già una risposta/i.test(e.robot.messaggio)) {
@@ -607,15 +653,15 @@ export async function giroPilota(
               );
               await segnaChiusa(r.chiave);
               esito.giaRisposte++;
+              sessioneViva = true;
               continue;
             }
             await fallito("pubblicazione", r, `${e.robot.stato}: ${e.robot.messaggio}`);
-            // Senza sessione Google falliranno tutte allo stesso modo: inutile insistere.
-            if (e.robot.stato === "non-loggato") break;
             continue;
           }
 
           esito.pubblicate++;
+          sessioneViva = true;
           await registraAttivita("pilota.pubblicata", {
             operatoreId: OPERATORE_SISTEMA,
             oggettoTipo: "recensione",
@@ -661,6 +707,12 @@ export async function giroPilota(
               fermato = "il robot è stato occupato da qualcun altro";
               break;
             }
+            // Sessione Google scaduta: come sopra, nessuna in Supervisione.
+            if (e.robot.stato === "non-loggato") {
+              sessioneScaduta = e.robot.messaggio || "non-loggato";
+              fermato = FERMO_SESSIONE;
+              break;
+            }
             // Su Google la risposta c'è già (data a mano, prima che arrivasse il
             // pilota): la recensione è GESTITA, non in errore. Si chiude come le
             // gestite fuori dal portale — risulta risposta e va in «Archiviate»
@@ -672,16 +724,16 @@ export async function giroPilota(
                 "🤖 Automazione: su Google la recensione aveva già una risposta. Chiusa senza pubblicare niente.",
               );
               esito.giaRisposte++;
+              sessioneViva = true;
               continue;
             }
             const nota = `🤖 Automazione: il robot non ha pubblicato su Google (${e.robot.stato}). ${e.robot.messaggio}`;
             if (await passaInSupervisione(r, nota.slice(0, 1000))) esito.segnalate++;
-            // Senza sessione Google falliranno tutte allo stesso modo: inutile insistere.
-            if (e.robot.stato === "non-loggato") break;
             continue;
           }
 
           esito.pubblicate++;
+          sessioneViva = true;
           await registraAttivita("pilota.pubblicata", {
             operatoreId: OPERATORE_SISTEMA,
             oggettoTipo: "recensione",
@@ -701,6 +753,10 @@ export async function giroPilota(
           if (await passaInSupervisione(r, `🤖 Automazione: errore imprevisto — ${msg}`.slice(0, 1000))) esito.segnalate++;
         }
       }
+
+      // Best-effort: l'avviso o la sua cancellazione non devono far perdere il giro.
+      if (sessioneScaduta) await sessioneGoogleCaduta(sessioneScaduta).catch(() => {});
+      else if (sessioneViva) await sessioneGoogleTornata();
 
       return await fine(
         `${giaFatto()}Pubblicate ${esito.pubblicate}, passate in Supervisione ${esito.segnalate}` +
