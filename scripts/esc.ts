@@ -62,7 +62,8 @@ async function main() {
   if (cmd === "registra") {
     const r = chiave ? await leggiRecensione(chiave) : null;
     if (!r) { console.error("Recensione non trovata (passa la chiave)."); process.exit(1); }
-    await registraInoltro(r, { ticketId: null, operatoreId: 1 });
+    // Backfill a mano: l'inoltro vero è partito da Outlook, non da qui.
+    await registraInoltro(r, { ticketId: null, operatoreId: 1, origine: "posta" });
     console.log(`Registrata escalation per ${r.nome} · ${r.sede} (stato attesa).`);
     console.log(await leggiEscalation(r.chiave));
     process.exit(0);

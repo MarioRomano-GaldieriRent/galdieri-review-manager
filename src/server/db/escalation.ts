@@ -1,4 +1,5 @@
 import { coll } from "./connessione";
+import { OPERATORE_SISTEMA } from "./attivita";
 import type { Recensione } from "@/server/reviews/load";
 
 // «In attesa»: recensioni negative INOLTRATE al customer care, in attesa che
@@ -11,6 +12,20 @@ import type { Recensione } from "@/server/reviews/load";
 //   chiusa  → risposta pubblicata su Google (fuori da entrambe)
 
 export type StatoEscalation = "attesa" | "pronta" | "chiusa";
+
+/**
+ * CHI ha fatto l'inoltro al customer care:
+ *   pilota  → l'automazione, da sola (dal 22/9/2026);
+ *   portale → una persona, col tasto «Inoltra»;
+ *   posta   → nessuno di qui: l'inoltro è partito da Outlook e il portale l'ha
+ *             solo ricostruito dalla risposta di Cherubina.
+ *
+ * Serve in «In attesa», dove le tre cose vanno distinte a colpo d'occhio: una
+ * voce che nessuno ha toccato a mano si legge diversamente da una che Stefania
+ * ha lavorato. L'operatoreId da solo non basta: anche la ricostruzione dalla
+ * posta è registrata a nome del Sistema.
+ */
+export type OrigineInoltro = "pilota" | "portale" | "posta";
 
 export type Escalation = {
   chiave: string;
@@ -25,6 +40,7 @@ export type Escalation = {
   ticketId: number | null;
   inoltrataIl: string;
   operatoreId: number;
+  origineInoltro: OrigineInoltro;
   stato: StatoEscalation;
   rispostaTesto: string | null;
   rispostaTicket: number | null;
@@ -45,6 +61,7 @@ type DocEsc = {
   ticketId: number | null;
   inoltrataIl: Date;
   operatoreId: number;
+  origineInoltro?: OrigineInoltro;
   stato: StatoEscalation;
   rispostaTesto: string | null;
   rispostaTicket: number | null;
@@ -70,6 +87,10 @@ function componi(d: DocEsc): Escalation {
     ticketId: d.ticketId,
     inoltrataIl: d.inoltrataIl.toISOString(),
     operatoreId: d.operatoreId,
+    // Le voci scritte prima del campo: il Sistema come operatore, allora, poteva
+    // voler dire solo una ricostruzione dalla posta. Le poche fatte dal pilota
+    // fra il suo primo giro e questa versione le sistema scripts/origine-inoltri.ts.
+    origineInoltro: d.origineInoltro ?? (d.operatoreId === OPERATORE_SISTEMA ? "posta" : "portale"),
     stato: d.stato,
     rispostaTesto: d.rispostaTesto,
     rispostaTicket: d.rispostaTicket,
@@ -88,7 +109,13 @@ function componi(d: DocEsc): Escalation {
  */
 export async function registraInoltro(
   r: Recensione,
-  opts: { ticketId: number | null; operatoreId: number; inoltrataIl?: Date },
+  opts: {
+    ticketId: number | null;
+    operatoreId: number;
+    /** Chi l'ha fatto davvero: vedi OrigineInoltro. */
+    origine: OrigineInoltro;
+    inoltrataIl?: Date;
+  },
 ): Promise<void> {
   const ora = new Date();
   const quandoInoltrata = opts.inoltrataIl ?? ora;
@@ -107,6 +134,7 @@ export async function registraInoltro(
         ticketId: opts.ticketId,
         inoltrataIl: quandoInoltrata,
         operatoreId: opts.operatoreId,
+        origineInoltro: opts.origine,
         aggiornataIl: ora,
       },
       // Solo alla PRIMA registrazione: non si azzera una risposta già trovata.

@@ -1346,6 +1346,26 @@ async function SezioneAttesa({ dati, pagina }: { dati: Promise<DatiAttesa>; pagi
                 <div>
                   <div className="dash-autore-riga">
                     <span className="review-name">{e.nomeCliente || "senza nome"}</span>
+                    {/* Chi ha fatto l'inoltro. Col pilota acceso la maggior parte
+                        delle negative non passa più da nessuno: chi guarda questo
+                        tab deve vedere subito quali ha mandate il sistema da solo
+                        e quali invece sono partite da Outlook, fuori dal portale. */}
+                    {e.origineInoltro === "pilota" && (
+                      <span
+                        className="flag flag-sistema"
+                        title="Inoltrata al customer care dall'automazione, senza che nessuno premesse «Inoltra»"
+                      >
+                        🤖 inoltrata dal sistema
+                      </span>
+                    )}
+                    {e.origineInoltro === "posta" && (
+                      <span
+                        className="flag flag-gray"
+                        title="L'inoltro è partito da Outlook: il portale l'ha ricostruito dalla risposta del customer care"
+                      >
+                        inoltrata da Outlook
+                      </span>
+                    )}
                   </div>
                   <div className="dash-meta">
                     {dataConGiorno(new Date(e.ricevutaIl))} ·{" "}

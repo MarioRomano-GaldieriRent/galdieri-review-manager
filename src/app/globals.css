@@ -3937,6 +3937,97 @@ main.pipeline .pub-tabs {
   font-weight: 700;
   border-top: 2px solid var(--border);
 }
+
+/* I tre gruppi delle gestite di oggi (sistema / a mano / posta): ognuno con la
+   sua riga di separazione, il titolo e il conteggio sulla stessa riga. */
+.gestite-gruppo {
+  margin-top: 22px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+.gestite-gruppo .supervisione-sottotitolo {
+  margin: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+.gestite-gruppo .hint {
+  margin-top: 4px;
+}
+/* Il vuoto di un gruppo non è il vuoto di una pagina: 46px di aria, tre volte
+   di fila, allontanerebbero i numeri dagli elenchi. */
+.gestite-gruppo .dash-vuoto {
+  padding: 16px 12px;
+  text-align: left;
+}
+
+/* ---------------------------------------------------------------------------
+   Tabelle che sul telefono diventano schede.
+
+   Dentro .table-wrap una tabella scorre di lato: su uno schermo da 360 px si
+   legge solo la prima colonna e le altre vanno indovinate — su Statistiche e
+   Supervisione voleva dire non poterle usare dal telefono. Sotto i 620 px ogni
+   riga diventa allora una scheda, e ogni cella si porta l'etichetta della sua
+   colonna a sinistra (attributo data-etichetta). L'intestazione resta nel DOM,
+   nascosta alla vista ma leggibile dai lettori di schermo.
+
+   Vale solo per le tabelle marcate .data-table-schede: le altre (posta, ticket,
+   automazioni) restano come sono. */
+@media (max-width: 620px) {
+  .data-table-schede thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+  .data-table-schede,
+  .data-table-schede tbody,
+  .data-table-schede tbody tr,
+  .data-table-schede tbody td {
+    display: block;
+    width: auto;
+  }
+  .data-table-schede tbody tr {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    margin-bottom: 10px;
+    overflow: hidden;
+  }
+  .data-table-schede tbody td {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 14px;
+    text-align: right;
+    padding: 8px 12px;
+    border-bottom: 1px dashed var(--border);
+  }
+  .data-table-schede tbody tr td:last-child {
+    border-bottom: 0;
+  }
+  .data-table-schede tbody td::before {
+    content: attr(data-etichetta);
+    flex: 0 0 auto;
+    text-align: left;
+    color: var(--text-soft);
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+  /* Una cella senza etichetta (o vuota) non deve lasciare una riga muta. */
+  .data-table-schede tbody td:not([data-etichetta]) {
+    display: none;
+  }
+  .supervisione-totale td {
+    border-top: 0;
+  }
+  .data-table-schede tbody tr.supervisione-totale {
+    border-color: var(--text-soft);
+  }
+}
 .segnalazione-card {
   margin-top: 14px;
 }

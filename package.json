@@ -20,6 +20,7 @@
     "db:schema": "tsx --tsconfig tsconfig.json scripts/applica-schema.ts",
     "verifica:db": "tsx --tsconfig tsconfig.json scripts/verifica-db.ts",
     "storico:recupero": "tsx --tsconfig tsconfig.json scripts/storico-recupero.ts",
+    "origine:inoltri": "tsx --tsconfig tsconfig.json scripts/origine-inoltri.ts",
     "diag:arthur": "tsx --tsconfig tsconfig.json scripts/diag-arthur.ts",
     "diag:arretrato": "tsx --tsconfig tsconfig.json scripts/diag-arretrato.ts",
     "diag:ticket": "tsx --tsconfig tsconfig.json scripts/diag-ticket.ts",

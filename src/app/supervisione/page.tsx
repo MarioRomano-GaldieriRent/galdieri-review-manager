@@ -14,19 +14,29 @@ import {
   gestiteNelGiorno,
   modifichePerStelle,
   type Intervallo,
+  type VoceGestita,
 } from "@/server/statistiche/query";
 import { inizioGiornoItaliano } from "@/server/tempo";
 import { leggiStatoPilota } from "@/server/automation/pilota";
 import { Stelle } from "../da-pubblicare/Voci";
 import { ListaSegnalazioni } from "./ListaSegnalazioni";
 
-// Supervisione: riservata all'amministratore. Due cose sole:
-//   1. i numeri del periodo scelto (recensioni gestite per punteggio,
-//      segnalazioni aperte/gestite, testi riscritti);
-//   2. le recensioni che gli operatori hanno SEGNALATO perché non riuscivano a
-//      gestirle, con la loro nota — da risolvere qui o rimandare in coda (questa
-//      lista NON segue il periodo: è la coda di lavoro di ADESSO, non una
-//      statistica storica).
+// Supervisione: riservata all'amministratore. Nell'ordine in cui serve (scelta
+// di Mario, 23/9/2026):
+//   1. le SEGNALAZIONI APERTE: le recensioni che un operatore o l'automazione
+//      hanno passato all'amministratore. Sono lavoro che aspetta lui, quindi
+//      stanno in cima — prima erano in fondo, dopo due schermate di numeri, e
+//      questa lista NON segue il periodo: è la coda di ADESSO;
+//   2. OGGI, diviso per chi ha lavorato: il sistema da solo, una persona dal
+//      portale, o qualcuno dalla posta senza passare di qui. Con l'elenco sotto
+//      ogni gruppo: dopo «quante» la domanda è sempre «quali»;
+//   3. i numeri del periodo scelto (gestite per punteggio, segnalazioni, testi
+//      riscritti);
+//   4. le segnalazioni già chiuse.
+//
+// Le tabelle usano `data-table-schede`: sul telefono ogni riga diventa una
+// scheda con le etichette a sinistra, invece di una tabella che scorre di lato e
+// di cui si vede solo la prima colonna.
 
 export const dynamic = "force-dynamic";
 
@@ -80,6 +90,80 @@ function quotaOggi(n: number, totale: number): string {
   return totale > 0 ? `${n} su ${totale} · ${Math.round((n / totale) * 100)}%` : "nessuna, per ora";
 }
 
+/**
+ * Un gruppo delle gestite di oggi: titolo, conteggio, una riga di spiegazione e
+ * l'elenco. La tabella è `data-table-schede`: sul telefono ogni riga diventa una
+ * scheda con l'etichetta a sinistra (`data-etichetta`), invece di scorrere di
+ * lato mostrando solo la prima colonna.
+ */
+function GruppoGestite({
+  titolo,
+  spiega,
+  vuoto,
+  voci,
+  chiPer,
+  mostraChi,
+  mostraRisposta = true,
+}: {
+  titolo: string;
+  spiega: string;
+  vuoto: string;
+  voci: VoceGestita[];
+  chiPer: (id: number | null) => string;
+  mostraChi: boolean;
+  mostraRisposta?: boolean;
+}) {
+  return (
+    <div className="gestite-gruppo">
+      <div className="sec-head">
+        <h3 className="supervisione-sottotitolo">{titolo}</h3>
+        {voci.length > 0 && <span className="chip-count">{voci.length}</span>}
+      </div>
+      <p className="hint">{spiega}</p>
+      {voci.length === 0 ? (
+        <p className="dash-vuoto">{vuoto}</p>
+      ) : (
+        <div className="table-wrap">
+          <table className="data-table data-table-compatta data-table-schede">
+            <thead>
+              <tr>
+                <th>Ora</th>
+                <th>Punteggio</th>
+                <th>Cliente</th>
+                {mostraChi && <th>Chi</th>}
+                {mostraRisposta && <th>Risposta pubblicata</th>}
+              </tr>
+            </thead>
+            <tbody>
+              {voci.map((v) => (
+                <tr key={v.chiave}>
+                  <td data-etichetta="Ora">{oraFmt.format(new Date(v.quando))}</td>
+                  <td data-etichetta="Punteggio">
+                    {v.stelle !== null ? <Stelle n={v.stelle} /> : <span className="muted">—</span>}
+                  </td>
+                  <td data-etichetta="Cliente">{v.nomeCliente}</td>
+                  {mostraChi && <td data-etichetta="Chi">{chiPer(v.chi)}</td>}
+                  {mostraRisposta && (
+                    <td data-etichetta="Risposta">
+                      {v.risposta ? (
+                        <span title={v.risposta}>
+                          {v.risposta.length > 70 ? `${v.risposta.slice(0, 70)}…` : v.risposta}
+                        </span>
+                      ) : (
+                        <span className="muted">non passata di qui</span>
+                      )}
+                    </td>
+                  )}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Riquadro({ titolo, valore, base }: { titolo: string; valore: string | number; base?: string }) {
   return (
     <div className="stat-tile">
@@ -121,6 +205,13 @@ export default async function SupervisionePage({
   const nomeDi = new Map<number, string>(utenti.map((u) => [u._id, u.nome]));
   const chiPer = (id: number | null) => (id === null ? "—" : nomeDi.get(id) ?? (id === 1 ? "Sistema" : `#${id}`));
 
+  // I tre gruppi della giornata. Si dividono qui e non in una query a parte:
+  // `gestiteNelGiorno` porta già la riga per riga, e tre passaggi su una lista
+  // di poche decine di voci non costano niente.
+  const dalSistemaOggi = oggi.dettaglio.filter((v) => v.via === "portale" && v.metodo === "automatico");
+  const aManoOggi = oggi.dettaglio.filter((v) => v.via === "portale" && v.metodo !== "automatico");
+  const dallaPostaOggi = oggi.dettaglio.filter((v) => v.via === "posta");
+
   // Il ticket Freshdesk che conosciamo per ciascuna segnalata (se c'è).
   const ticketPer = new Map(
     await Promise.all(aperte.map(async (s) => [s.chiave, await ticketDiEscalation(s.chiave)] as const)),
@@ -155,9 +246,47 @@ export default async function SupervisionePage({
         operatori hanno segnalato perché non riuscivano a gestirle.
       </p>
 
+      {/* -------------------------------------------------- segnalazioni aperte */}
+      {/* In cima: è l'unica cosa in questa pagina che chiede un'azione a chi la
+          apre. La lista sta nel browser — chiudere una segnalazione è un clic e
+          la card deve sparire subito — ma il contenuto lo prepara il server
+          (prop `contenuto`), così testi e formattatori non finiscono nel
+          pacchetto JavaScript. */}
+      <section className="card">
+        <ListaSegnalazioni
+          nota={
+            <p className="hint">
+              Recensioni che un operatore ha passato a te col tasto «?», o che l&apos;automazione ha
+              lasciato a una persona dopo due tentativi falliti. Finché stanno qui, chi le ha
+              segnalate non le vede più. <strong>«Chiudi: già gestita»</strong> la chiude davvero —
+              risulta gestita anche nelle statistiche e finisce in «Archiviate», dove resta leggibile
+              col motivo e si può ripristinare: è il tasto per quando ti dicono «questa era già
+              fatta». <strong>«Rimetti in coda»</strong> la fa ricomparire in «Da approvare»
+              dell&apos;operatore. <strong>«Test»</strong> manda il robot a cercare QUELLA recensione
+              su Google e ti riporta il passo-passo, senza pubblicare niente: è il modo per capire un
+              «non lo trova» invece di indovinarlo.
+            </p>
+          }
+          voci={aperte.map((s) => ({
+            chiave: s.chiave,
+            nome: s.nomeCliente,
+            messaggioId: s.messaggioId,
+            contenuto: (
+              <ContenutoSegnalazione
+                s={s}
+                chi={chiPer(s.segnalataDa)}
+                ticket={ticketPer.get(s.chiave) ?? null}
+              />
+            ),
+          }))}
+        />
+      </section>
+
       {/* --------------------------------------------------------------- oggi */}
       {/* Fuori dai tab di proposito: è la giornata in corso, non un periodo da
-          sfogliare. Ed è la prima cosa che si guarda entrando. */}
+          sfogliare. Divisa per CHI ha lavorato, perché con il pilota acceso
+          «gestite 12» non dice più niente: la domanda è quante ha fatto il
+          sistema da solo, quante una persona, e quante sono passate fuori di qui. */}
       <section className="card">
         <div className="sec-head">
           <h2>Oggi</h2>
@@ -166,68 +295,52 @@ export default async function SupervisionePage({
         <div className="stat-griglia">
           <Riquadro titolo="Recensioni gestite oggi" valore={oggi.totale} base="dalla mezzanotte" />
           <Riquadro
-            titolo="Dal portale"
-            valore={oggi.dalPortale}
-            base={
-              oggi.automatiche > 0
-                ? `${quotaOggi(oggi.dalPortale, oggi.totale)} · ${oggi.automatiche} dal sistema`
-                : quotaOggi(oggi.dalPortale, oggi.totale)
-            }
+            titolo="🤖 Dal sistema"
+            valore={dalSistemaOggi.length}
+            base={quotaOggi(dalSistemaOggi.length, oggi.totale)}
+          />
+          <Riquadro
+            titolo="A mano, dal portale"
+            valore={aManoOggi.length}
+            base={quotaOggi(aManoOggi.length, oggi.totale)}
           />
           <Riquadro
             titolo="Dalla posta"
-            valore={oggi.dallaPosta}
-            base={quotaOggi(oggi.dallaPosta, oggi.totale)}
+            valore={dallaPostaOggi.length}
+            base={quotaOggi(dallaPostaOggi.length, oggi.totale)}
           />
         </div>
-        {/* Il dettaglio dei numeri qui sopra: senza, «3 gestite» non si può né
-            controllare né contestare. Sta sotto i riquadri e non in una pagina a
-            parte perché la domanda «quali?» viene sempre subito dopo «quante?».
-            Una giornata sono poche righe: nessun bisogno di impaginarlo. */}
-        {oggi.dettaglio.length > 0 && (
-          <div className="table-wrap">
-            <table className="data-table data-table-compatta">
-              <thead>
-                <tr>
-                  <th>Ora</th>
-                  <th>Punteggio</th>
-                  <th>Cliente</th>
-                  <th>Come</th>
-                  <th>Chi</th>
-                  <th>Risposta pubblicata</th>
-                </tr>
-              </thead>
-              <tbody>
-                {oggi.dettaglio.map((v) => (
-                  <tr key={v.chiave}>
-                    <td>{oraFmt.format(new Date(v.quando))}</td>
-                    <td>{v.stelle !== null ? <Stelle n={v.stelle} /> : <span className="muted">—</span>}</td>
-                    <td>{v.nomeCliente}</td>
-                    <td>
-                      {v.via === "posta" ? (
-                        <span className="muted">dalla posta</span>
-                      ) : v.metodo === "automatico" ? (
-                        "🤖 automatica"
-                      ) : (
-                        "a mano"
-                      )}
-                    </td>
-                    <td>{v.via === "posta" ? <span className="muted">—</span> : chiPer(v.chi)}</td>
-                    <td>
-                      {v.risposta ? (
-                        <span title={v.risposta}>
-                          {v.risposta.length > 70 ? `${v.risposta.slice(0, 70)}…` : v.risposta}
-                        </span>
-                      ) : (
-                        <span className="muted">non passata di qui</span>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
+
+        {/* Gli elenchi dei tre numeri qui sopra: senza, «3 gestite» non si può né
+            controllare né contestare. Stanno qui e non in una pagina a parte
+            perché la domanda «quali?» viene sempre subito dopo «quante?». Una
+            giornata sono poche righe: nessun bisogno di impaginarle. */}
+        <GruppoGestite
+          titolo="🤖 Gestite dal sistema"
+          spiega="Pubblicate dall'automazione, senza che nessuno premesse «Rispondi»."
+          vuoto="Oggi il sistema non ha ancora pubblicato niente."
+          voci={dalSistemaOggi}
+          chiPer={chiPer}
+          mostraChi={false}
+        />
+        <GruppoGestite
+          titolo="Gestite a mano, dal portale"
+          spiega="Qualcuno ha premuto «Rispondi» qui dentro: la risposta è pubblicata e il ticket chiuso."
+          vuoto="Oggi nessuno ha pubblicato a mano dal portale."
+          voci={aManoOggi}
+          chiPer={chiPer}
+          mostraChi
+        />
+        <GruppoGestite
+          titolo="Gestite dalla posta, fuori dal portale"
+          spiega="Qualcuno di Galdieri ha scritto dalla casella senza passare di qui: può essere la risposta al cliente o il semplice inoltro al customer care. Il testo non lo conosciamo."
+          vuoto="Oggi non è passato niente fuori dal portale."
+          voci={dallaPostaOggi}
+          chiPer={chiPer}
+          mostraChi={false}
+          mostraRisposta={false}
+        />
+
         {/* Senza questa riga un pilota fermo — Chrome aperto sul server, sessione
             Google scaduta, AUTOPILOTA non impostato — sarebbe invisibile: le
             recensioni resterebbero lì e nessuno saprebbe perché. */}
@@ -238,15 +351,16 @@ export default async function SupervisionePage({
             : "non è mai partita su questo server (serve AUTOPILOTA=1 nel .env)."}
         </p>
         <p className="hint">
-          «Gestite» non vuol dire «chiuse». «Dal portale» sì: sono le risposte pubblicate da questo
-          sito oggi, e quelle sono finite. «Dalla posta» sono le recensioni su cui qualcuno di
+          «Gestite» non vuol dire «chiuse». I primi due gruppi sì: sono risposte pubblicate da
+          questo sito oggi, e quelle sono finite. Il terzo no: sono recensioni su cui qualcuno di
           Galdieri ha scritto dalla casella senza passare di qui, e lì dentro finiscono due cose
-          diverse: la risposta vera al cliente e il semplice inoltro al customer care, che è lavoro
-          fatto ma lascia la recensione ancora da chiudere. La posta non permette di distinguerle
-          in modo affidabile, quindi il numero le tiene insieme: è la misura di quanto lavoro passa
-          ancora fuori dal portale, non di quanto è concluso. La data è quella in cui il portale se
-          n&apos;è accorto — rilegge la posta ogni pochi minuti — non per forza l&apos;istante
-          dell&apos;invio. Chi compare da tutte e due le parti è contato una volta sola.
+          diverse — la risposta vera al cliente e il semplice inoltro al customer care, che è lavoro
+          fatto ma lascia la recensione ancora da chiudere. La posta non permette di distinguerle in
+          modo affidabile, quindi il numero le tiene insieme: è la misura di quanto lavoro passa
+          ancora fuori dal portale, non di quanto è concluso. Per quelle, la data è il momento in
+          cui il portale se n&apos;è accorto — rilegge la posta ogni pochi minuti — non per forza
+          l&apos;istante dell&apos;invio. Chi compare da tutte e due le parti è contato una volta
+          sola.
         </p>
       </section>
 
@@ -299,7 +413,7 @@ export default async function SupervisionePage({
 
         <h3 className="supervisione-sottotitolo">Per punteggio</h3>
         <div className="table-wrap">
-          <table className="data-table data-table-compatta supervisione-stelle">
+          <table className="data-table data-table-compatta data-table-schede supervisione-stelle">
             <thead>
               <tr>
                 <th>Punteggio</th>
@@ -314,19 +428,19 @@ export default async function SupervisionePage({
                 const m = modifichePer.get(r.stelle);
                 return (
                   <tr key={r.stelle}>
-                    <td>
+                    <td data-etichetta="Punteggio">
                       <Stelle n={r.stelle} />
                     </td>
-                    <td>{r.ricevute}</td>
-                    <td>
+                    <td data-etichetta="Ricevute">{r.ricevute}</td>
+                    <td data-etichetta="Gestite dal CRM">
                       {r.dalCrm}
                       <span className="muted">{quota(r.dalCrm, r.ricevute)}</span>
                     </td>
-                    <td>
+                    <td data-etichetta="Pubblicate dal portale">
                       {r.dalSistema}
                       <span className="muted">{quota(r.dalSistema, r.ricevute)}</span>
                     </td>
-                    <td>
+                    <td data-etichetta="Testi modificati">
                       {m && m.eseguiti > 0 ? (
                         <>
                           {m.modificati} / {m.eseguiti}
@@ -341,11 +455,13 @@ export default async function SupervisionePage({
               })}
               {senzaPunteggio && senzaPunteggio.ricevute > 0 && (
                 <tr>
-                  <td className="muted">senza punteggio</td>
-                  <td>{senzaPunteggio.ricevute}</td>
-                  <td>{senzaPunteggio.dalCrm}</td>
-                  <td>{senzaPunteggio.dalSistema}</td>
-                  <td>
+                  <td className="muted" data-etichetta="Punteggio">
+                    senza punteggio
+                  </td>
+                  <td data-etichetta="Ricevute">{senzaPunteggio.ricevute}</td>
+                  <td data-etichetta="Gestite dal CRM">{senzaPunteggio.dalCrm}</td>
+                  <td data-etichetta="Pubblicate dal portale">{senzaPunteggio.dalSistema}</td>
+                  <td data-etichetta="Testi modificati">
                     {modSenzaPunteggio && modSenzaPunteggio.eseguiti > 0
                       ? `${modSenzaPunteggio.modificati} / ${modSenzaPunteggio.eseguiti}`
                       : "—"}
@@ -353,11 +469,11 @@ export default async function SupervisionePage({
                 </tr>
               )}
               <tr className="supervisione-totale">
-                <td>Totale</td>
-                <td>{g.ricevute}</td>
-                <td>{g.dalCrm}</td>
-                <td>{g.dalSistema}</td>
-                <td>
+                <td data-etichetta="Punteggio">Totale</td>
+                <td data-etichetta="Ricevute">{g.ricevute}</td>
+                <td data-etichetta="Gestite dal CRM">{g.dalCrm}</td>
+                <td data-etichetta="Pubblicate dal portale">{g.dalSistema}</td>
+                <td data-etichetta="Testi modificati">
                   {modTotale.eseguiti > 0 ? `${modTotale.modificati} / ${modTotale.eseguiti}` : "—"}
                 </td>
               </tr>
@@ -370,41 +486,6 @@ export default async function SupervisionePage({
           sposta di parecchio. «Testi modificati» conta solo le risposte EFFETTIVAMENTE eseguite in
           questo periodo, non le ricevute: sono spesso insiemi diversi.
         </p>
-      </section>
-
-      {/* ------------------------------------------------ segnalazioni aperte */}
-      {/* La lista sta nel browser: chiudere una segnalazione è un clic e la card
-          deve sparire subito, senza aspettare che il server ri-renderizzi la
-          pagina. Il contenuto delle card lo prepara comunque il server (prop
-          `contenuto`), così testi e formattatori non finiscono nel pacchetto JS. */}
-      <section className="card">
-        <ListaSegnalazioni
-          nota={
-            <p className="hint">
-              Recensioni che un operatore ha passato a te col tasto «?» perché non riusciva a
-              gestirle. Finché stanno qui, lui non le vede più.{" "}
-              <strong>«Chiudi: già gestita»</strong> la chiude davvero — risulta gestita anche nelle
-              statistiche e finisce in «Archiviate», dove resta leggibile col motivo e si può
-              ripristinare: è il tasto per quando ti dicono «questa era già fatta».{" "}
-              <strong>«Rimetti in coda»</strong> la fa ricomparire in «Da approvare»
-              dell&apos;operatore. <strong>«Test»</strong> manda il robot a cercare QUELLA
-              recensione su Google e ti riporta il passo-passo, senza pubblicare niente: è il modo
-              per capire un «non lo trova» invece di indovinarlo.
-            </p>
-          }
-          voci={aperte.map((s) => ({
-            chiave: s.chiave,
-            nome: s.nomeCliente,
-            messaggioId: s.messaggioId,
-            contenuto: (
-              <ContenutoSegnalazione
-                s={s}
-                chi={chiPer(s.segnalataDa)}
-                ticket={ticketPer.get(s.chiave) ?? null}
-              />
-            ),
-          }))}
-        />
       </section>
 
       {/* ------------------------------------------------ segnalazioni chiuse */}

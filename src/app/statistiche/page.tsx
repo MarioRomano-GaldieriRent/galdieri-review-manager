@@ -278,7 +278,9 @@ export default async function StatistichePage() {
           />
         </div>
         <div className="table-wrap">
-          <table className="data-table data-table-compatta">
+          {/* data-table-schede: sul telefono ogni riga diventa una scheda con le
+              etichette, invece di una tabella che scorre di lato. */}
+          <table className="data-table data-table-compatta data-table-schede">
             <thead>
               <tr>
                 <th>Sede</th>
@@ -290,9 +292,9 @@ export default async function StatistichePage() {
             <tbody>
               {sedi.map((s) => (
                 <tr key={s.sede}>
-                  <td>{s.sede}</td>
-                  <td>{s.recensioni}</td>
-                  <td>
+                  <td data-etichetta="Sede">{s.sede}</td>
+                  <td data-etichetta="Recensioni">{s.recensioni}</td>
+                  <td data-etichetta="Negative">
                     {s.negative}
                     {s.baseSufficiente && s.recensioni > 0 && (
                       <span className="muted">
@@ -301,7 +303,7 @@ export default async function StatistichePage() {
                       </span>
                     )}
                   </td>
-                  <td>
+                  <td data-etichetta="Media">
                     {s.media !== null ? s.media.toFixed(2) : "—"}
                     {!s.baseSufficiente && <span className="muted"> · base piccola</span>}
                   </td>

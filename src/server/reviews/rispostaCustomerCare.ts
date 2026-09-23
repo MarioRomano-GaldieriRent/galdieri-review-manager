@@ -312,6 +312,7 @@ export async function registraRitorniCustomerCare(recensioni: Recensione[]): Pro
     await registraInoltro(r, {
       ticketId: rep.ticket,
       operatoreId: SISTEMA,
+      origine: "posta",
       inoltrataIl: new Date(rep.quando),
     });
     await salvaRisposta(r.chiave, rep.testo, rep.ticket, rep.quando);

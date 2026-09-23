@@ -119,7 +119,11 @@ export async function inoltraAlCustomerCareAction(formData: FormData): Promise<v
   // Il ticket, se il nodo l'ha agganciato, dal suo messaggio (#id).
   const nodoTicket = esecuzione.nodi.find((n) => n.tipo === "freshdesk.trovaTicket");
   const m = nodoTicket?.messaggio.match(/#(\d+)/);
-  await registraInoltro(recensione, { ticketId: m ? Number(m[1]) : null, operatoreId: op._id });
+  await registraInoltro(recensione, {
+    ticketId: m ? Number(m[1]) : null,
+    operatoreId: op._id,
+    origine: "portale",
+  });
 
   revalidatePath("/");
   redirect(`/?run=${encodeURIComponent(esecuzione.id)}`);

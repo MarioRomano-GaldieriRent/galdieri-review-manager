@@ -1,4 +1,5 @@
 import { eseguiRegola, type TestoRiscritto } from "./engine";
+import { OPERATORE_SISTEMA } from "@/server/db/attivita";
 import { testoPerRecensioneConLingua } from "./connectors";
 import { registraEsecuzione, scostamentiDa } from "./runs";
 import type { Esecuzione, Regola } from "./types";
@@ -157,7 +158,13 @@ export async function inoltraERegistra(opts: {
   // rileggere Freshdesk.
   const nodoTicket = esecuzione.nodi.find((n) => n.tipo === "freshdesk.trovaTicket");
   const m = nodoTicket?.messaggio.match(/#(\d+)/);
-  await registraInoltro(recensione, { ticketId: m ? Number(m[1]) : null, operatoreId: opts.operatoreId });
+  // Stessa funzione per il tasto e per il pilota: l'unico che inoltra a nome del
+  // Sistema è il pilota, quindi l'operatore dice già di chi è stato il gesto.
+  await registraInoltro(recensione, {
+    ticketId: m ? Number(m[1]) : null,
+    operatoreId: opts.operatoreId,
+    origine: opts.operatoreId === OPERATORE_SISTEMA ? "pilota" : "portale",
+  });
   return { esecuzione, inoltrata, registrata: true, perche: "" };
 }
 

@@ -102,6 +102,7 @@ async function main() {
   await registraInoltro(rCata, {
     ticketId: ticketCata?.id ?? null,
     operatoreId: MARIO,
+    origine: "posta",
     inoltrataIl: INOLTRO_CATA,
   });
   await chiudiSegnalazione(
