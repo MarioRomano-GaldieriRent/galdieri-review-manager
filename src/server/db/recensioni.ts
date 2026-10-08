@@ -584,12 +584,32 @@ export async function elencoArchiviate(limite = 200): Promise<RecensioneArchivia
   return righe.map(componi);
 }
 
-/** Riporta una recensione archiviata fra quelle da gestire (annulla l'archiviazione). */
+/**
+ * Riporta una recensione archiviata fra quelle da gestire (annulla
+ * l'archiviazione).
+ *
+ * Toglie ANCHE `haRisposta`, e non è un dettaglio: una recensione chiusa con
+ * «già gestita» viene segnata come gestita fuori dal portale, e quel campo è
+ * ciò che la nasconde da «Da approvare» (`recensioniDaApprovare` filtra
+ * `haRisposta: false`). Senza toglierlo, «Ripristina» la faceva uscire dagli
+ * Archiviati senza farla rientrare in coda: spariva da tutte le parti. È
+ * successo l'8/10/2026 con la recensione di G. Anselmann.
+ *
+ * Se in posta una risposta c'è davvero, il portale la ritrova da sé: l'ingest
+ * ricalcola `haRisposta` dal thread a ogni passata.
+ */
 export async function ripristinaRecensione(chiave: string): Promise<void> {
   await (await coll("recensioni")).updateOne(
     { _id: chiave, archiviata: true },
     [
-      { $set: { archiviataIl: null, motivoArchiviazione: "" } },
+      {
+        $set: {
+          archiviataIl: null,
+          motivoArchiviazione: "",
+          haRisposta: false,
+          rispostaRilevataIl: null,
+        },
+      },
       { $set: { archiviata: false } },
     ],
   );
