@@ -375,8 +375,17 @@ export function AutomazioneRegola({ regola }: { regola: Regola }) {
           da «Da approvare», va dritta «In attesa». La <strong>risposta di Cherubina</strong> si
           pubblica da sola solo dentro le fasce qui sopra, ma senza l&apos;attesa dall&apos;arrivo — e
           solo se il testo comincia con un saluto al cliente e non contiene nomi o numeri di ticket
-          interni; altrimenti va in Supervisione. Se un passaggio non riesce il pilota ci riprova al
-          giro dopo; al secondo fallimento la recensione passa in Supervisione.
+          interni; altrimenti va in Supervisione. Se un passaggio non riesce il pilota ci riprova
+          un&apos;ora dopo; al secondo fallimento la recensione passa in Supervisione.
+        </p>
+      )}
+      {a.modo !== "manuale" && (
+        <p className="hint">
+          Quando il robot non trova la recensione su Google — capita, la ricerca nella lista è
+          intermittente — il pilota <strong>ci riprova un&apos;ora dopo</strong> invece di passarla
+          subito a una persona. Solo al secondo tentativo a vuoto apre una segnalazione in
+          Supervisione. Da lì «Rimetti in coda» gli ridà una possibilità: il conto dei tentativi
+          riparte da zero.
         </p>
       )}
       {a.attivaDal && a.modo !== "manuale" && (

@@ -7,6 +7,7 @@ import { richiediAdmin, richiediOperatore } from "@/server/auth/sessione";
 import { segnaChiusa } from "@/server/db/escalation";
 import { leggiRecensione, segnaGestitaFuoriPortale } from "@/server/db/recensioni";
 import { chiudiSegnalazione, leggiSegnalazione, segnala } from "@/server/db/segnalazioni";
+import { azzeraTentativi } from "@/server/db/tentativiPilota";
 import { avvisaAdminDiSegnalazione } from "@/server/notifiche/segnalazione";
 
 // Le azioni della segnalazione. La guardia sta QUI, dentro ogni azione: il
@@ -180,6 +181,11 @@ export async function rimettiInCodaSegnalazioneAction(
   const admin = await richiediAdmin();
   if (!chiave) return { ok: false, errore: "Recensione non indicata." };
   await chiudiSegnalazione(chiave, "rimessa", (notaGrezza ?? "").trim().slice(0, 1000), admin._id);
+  // «Rimetti in coda» vuol dire «riprovaci». Se c'era finita perché il robot non
+  // l'aveva trovata su Google, il contatore dei tentativi era esaurito e il
+  // pilota l'avrebbe lasciata lì: azzerarlo gli ridà una possibilità, ed è il
+  // gesto che finora ha funzionato (Dimatteo, Guerriero).
+  await azzeraTentativi(chiave);
   scartaCacheDellaHome();
   return { ok: true, messaggio: "rimessa in coda: torna in «Da approvare»" };
 }

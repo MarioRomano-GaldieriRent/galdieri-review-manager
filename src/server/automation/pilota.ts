@@ -26,7 +26,9 @@ import { chiaviSegnalate, segnala } from "@/server/db/segnalazioni";
 import { chiaviConEscalation, chiaviInCiclo, elencoPronte, segnaChiusa } from "@/server/db/escalation";
 import {
   MAX_TENTATIVI,
+  PAUSA_FRA_TENTATIVI_MS,
   chiaviAutomazioneEsaurita,
+  chiaviDaAspettare,
   registraTentativoFallito,
   type FasePilota,
 } from "@/server/db/tentativiPilota";
@@ -354,16 +356,27 @@ export async function giroPilota(
       // home: in automatico nessuno la apre, quindi le ritenta il pilota.
       if (!opts.prova) await ritentaChiusureInSospeso().catch(() => 0);
 
-      const [recensioni, pubblicate, archiviate, segnalate, inCiclo, conEscalation, esaurite] =
-        await Promise.all([
-          recensioniDaApprovare(),
-          chiaviPubblicate(),
-          chiaviArchiviate(),
-          chiaviSegnalate(),
-          chiaviInCiclo(),
-          chiaviConEscalation(),
-          chiaviAutomazioneEsaurita(),
-        ]);
+      const [
+        recensioni,
+        pubblicate,
+        archiviate,
+        segnalate,
+        inCiclo,
+        conEscalation,
+        esaurite,
+        aspettaInoltro,
+        aspettaPubblicazione,
+      ] = await Promise.all([
+        recensioniDaApprovare(),
+        chiaviPubblicate(),
+        chiaviArchiviate(),
+        chiaviSegnalate(),
+        chiaviInCiclo(),
+        chiaviConEscalation(),
+        chiaviAutomazioneEsaurita(),
+        chiaviDaAspettare("inoltro", ora),
+        chiaviDaAspettare("pubblicazione", ora),
+      ]);
       // Qualunque segno che qualcuno ci abbia già messo le mani: lasciata stare.
       const giaToccata = (r: RecensioneArchiviata) =>
         r.haRisposta ||
@@ -380,16 +393,23 @@ export async function giroPilota(
       let sessioneViva = false;
 
       /**
-       * Un tentativo andato male. Il primo si ripete al giro dopo; al secondo la
+       * Un tentativo andato male. Il primo si ripete fra un'ora; al secondo la
        * recensione va in Supervisione, con TUTTI i motivi — chi la apre deve
        * poter capire senza leggere i log.
+       *
+       * `cosa` dice che passaggio è fallito: la Fase 2 delle negative pubblica
+       * il testo del customer care, le positive il testo della regola, e in
+       * Supervisione la differenza si deve leggere.
        */
-      const fallito = async (fase: FasePilota, r: RecensioneArchiviata, perche: string) => {
+      const fallito = async (
+        fase: FasePilota,
+        r: RecensioneArchiviata,
+        perche: string,
+        cosa = fase === "inoltro"
+          ? "l'inoltro al customer care"
+          : "la pubblicazione della risposta del customer care",
+      ) => {
         const t = await registraTentativoFallito(fase, r.chiave, perche);
-        const cosa =
-          fase === "inoltro"
-            ? "l'inoltro al customer care"
-            : "la pubblicazione della risposta del customer care";
         if (t.n >= MAX_TENTATIVI) {
           const elenco = t.errori.map((e, i) => `${i + 1}) ${e}`).join(" ");
           const nota = `🤖 Automazione: ${cosa} è fallito ${t.n} volte. ${elenco}`;
@@ -397,7 +417,7 @@ export async function giroPilota(
         } else {
           esito.daRiprovare = (esito.daRiprovare ?? 0) + 1;
           console.log(
-            `[pilota] «${r.nome}»: ${cosa} non riuscito (tentativo ${t.n} di ${MAX_TENTATIVI}), riprovo al prossimo giro — ${perche}`,
+            `[pilota] «${r.nome}»: ${cosa} non riuscito (tentativo ${t.n} di ${MAX_TENTATIVI}), riprovo fra ${Math.round(PAUSA_FRA_TENTATIVI_MS / 60000)} minuti — ${perche}`,
           );
         }
       };
@@ -410,6 +430,7 @@ export async function giroPilota(
         let daInoltrare: { r: RecensioneArchiviata; regola: Regola }[] = [];
         for (const r of recensioni) {
           if (giaToccata(r) || conEscalation.has(r.chiave)) continue;
+          if (aspettaInoltro.has(r.chiave)) continue; // ha appena fallito: si riprova fra un'ora
           const regola = regolaPer(attive, r.stelle, haTesto(r));
           if (regola && perIdNeg.has(regola.id)) daInoltrare.push({ r, regola });
         }
@@ -510,6 +531,7 @@ export async function giroPilota(
         for (const p of pronte) {
           if (pubblicate.has(p.chiave) || archiviate.has(p.chiave) || segnalate.has(p.chiave)) continue;
           if (esaurite.has(p.chiave)) continue;
+          if (aspettaPubblicazione.has(p.chiave)) continue; // ha appena fallito: si riprova fra un'ora
           const r = await leggiRecensione(p.chiave);
           if (!r) continue;
           const regola = regolaPer(attive, r.stelle, haTesto(r));
@@ -525,6 +547,7 @@ export async function giroPilota(
       let daRispondere: { r: RecensioneArchiviata; regola: Regola }[] = [];
       for (const r of recensioni) {
         if (giaToccata(r) || inCiclo.has(r.chiave)) continue;
+        if (aspettaPubblicazione.has(r.chiave)) continue; // ha appena fallito: si riprova fra un'ora
         // La regola che la copre DAVVERO (la prima attiva, come nella home).
         const regola = regolaPer(attive, r.stelle, haTesto(r));
         if (!regola || !perIdPos.has(regola.id)) continue;
@@ -727,8 +750,18 @@ export async function giroPilota(
               sessioneViva = true;
               continue;
             }
-            const nota = `🤖 Automazione: il robot non ha pubblicato su Google (${e.robot.stato}). ${e.robot.messaggio}`;
-            if (await passaInSupervisione(r, nota.slice(0, 1000))) esito.segnalate++;
+            // Il robot non l'ha trovata su Google. NON è un caso per una
+            // persona al primo colpo: la ricerca nella lista è intermittente e
+            // un'ora dopo spesso va. Due tentativi distanziati, poi Supervisione
+            // (decisione di Mario, 26/10/2026, su 8 casi in un mese: Bruno
+            // Guerriero fallito alle 09:06 e pubblicato alle 09:39, Fabio
+            // Dimatteo fallito il sabato e passato il lunedì).
+            await fallito(
+              "pubblicazione",
+              r,
+              `${e.robot.stato}: ${e.robot.messaggio}`,
+              "la pubblicazione della risposta su Google",
+            );
             continue;
           }
 
