@@ -393,6 +393,27 @@ export async function giroPilota(
       let sessioneViva = false;
 
       /**
+       * Il passo-passo del robot, che finora si buttava via.
+       *
+       * `lanciaRobot` lo restituisce a OGNI azione, pubblicazione compresa
+       * (scripts/robot-esegui.ts lo mette in ogni esito), ma il pilota teneva
+       * solo la riga di riassunto: quando una recensione falliva alle nove del
+       * mattino, per capire perché bisognava riprodurre il caso a mano. Adesso
+       * il diario intero finisce nei log del server (pm2 logs galdieri) e gli
+       * ultimi passi entrano nel motivo, quindi si leggono dalla Supervisione.
+       */
+      const colDiario = (r: RecensioneArchiviata, robot: { stato: string; messaggio: string; log?: string[] }) => {
+        const passi = robot.log ?? [];
+        if (passi.length > 0) {
+          console.warn(
+            `[pilota] «${r.nome}» — il robot non ha pubblicato (${robot.stato}). Passo-passo:\n  - ${passi.join("\n  - ")}`,
+          );
+        }
+        const ultimi = passi.slice(-3).join(" › ");
+        return `${robot.stato}: ${robot.messaggio}${ultimi ? ` · ultimi passi: ${ultimi}` : ""}`;
+      };
+
+      /**
        * Un tentativo andato male. Il primo si ripete fra un'ora; al secondo la
        * recensione va in Supervisione, con TUTTI i motivi — chi la apre deve
        * poter capire senza leggere i log.
@@ -679,7 +700,7 @@ export async function giroPilota(
               sessioneViva = true;
               continue;
             }
-            await fallito("pubblicazione", r, `${e.robot.stato}: ${e.robot.messaggio}`);
+            await fallito("pubblicazione", r, colDiario(r, e.robot));
             continue;
           }
 
@@ -759,7 +780,7 @@ export async function giroPilota(
             await fallito(
               "pubblicazione",
               r,
-              `${e.robot.stato}: ${e.robot.messaggio}`,
+              colDiario(r, e.robot),
               "la pubblicazione della risposta su Google",
             );
             continue;

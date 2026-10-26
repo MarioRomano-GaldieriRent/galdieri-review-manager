@@ -47,7 +47,11 @@ export type EsitoRobot = {
   gruppo?: string;
   trovata?: boolean;
   scritto?: boolean;
-  /** Passo-passo del metodo di prova «coda Ignora» (solo azione "prova-coda"). */
+  /**
+   * Passo-passo di quello che il robot ha fatto su Google. C'è in OGNI esito,
+   * pubblicazione compresa (scripts/robot-esegui.ts lo allega sempre): è la
+   * sola prova di che cosa ha visto davvero quando qualcosa non va.
+   */
   log?: string[];
 };
 
