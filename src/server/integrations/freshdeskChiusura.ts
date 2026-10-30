@@ -1,4 +1,4 @@
-import { agenteApiId, conRetry429, getTicket, STATO } from "./freshdesk";
+import { agenteApiId, conRetry429, elencoTicketRecenti, getTicket, STATO, type FdTicket } from "./freshdesk";
 import { resolveFreshdesk, scritturaConsentita } from "@/server/settings";
 
 // Chiusura del ticket quando la risposta è stata pubblicata a mano su Google.
@@ -121,9 +121,140 @@ async function corpoConClassificazione(
   return corpo;
 }
 
+// --- I ticket GEMELLI -----------------------------------------------------
+//
+// Freshdesk a volte crea DUE ticket dalla stessa email: stesso oggetto, stesso
+// richiedente, stesso secondo, e come unica differenza la formattazione del
+// corpo. Il portale ne lavora uno e chiude quello; il gemello resta aperto per
+// sempre, senza tipo e senza campi, e finisce nella coda del customer care.
+//
+// Segnalati da Cherubina il 30/10/2026: #62737, #62766 e #63054, gemelli di
+// #62738, #62767 e #63055 — tre ticket «risposti ma non chiusi». Sugli ultimi
+// 600 ticket le coppie nate nello stesso minuto sono 53, e in 5 casi uno era
+// chiuso e l'altro no.
+//
+// Il gemello si CHIUDE ma non si classifica: la recensione è una sola e
+// contarla due volte falserebbe i rapporti di Freshdesk. Prende il tag
+// «caso_sdoppiato», che è già la convenzione con cui il customer care segna i
+// doppioni, e una nota privata che rimanda al ticket vero.
+
+/** Il tag con cui il customer care marca i doppioni: si riusa quello. */
+const TAG_DOPPIONE = "caso_sdoppiato";
+
+/**
+ * Quanto vicini devono essere due ticket per essere lo stesso messaggio.
+ *
+ * Stretto di proposito: l'oggetto delle recensioni è identico per tutte quelle
+ * della stessa sede («RE: NUOVA RECENSIONE GOOGLE <sede>»), quindi da solo non
+ * prova niente. I gemelli veri misurati distano 0-1 secondi, mentre due
+ * recensioni diverse della stessa sede non possono nascere a dieci secondi
+ * l'una dall'altra: ogni pubblicazione dura minuti.
+ */
+const GEMELLI_ENTRO_MS = 10_000;
+
+/** Al massimo tanti gemelli per ticket: oltre, qualcosa non torna e meglio fermarsi. */
+const MAX_GEMELLI = 3;
+
+/**
+ * I gemelli ancora aperti di un ticket: stesso oggetto, nati nello stesso
+ * istante, mai classificati (il tipo è vuoto) e non ancora chiusi.
+ *
+ * Legge l'elenco dei ticket recenti, che è in cache e di solito non costa
+ * nessuna chiamata. Se il ticket è più vecchio della finestra, non si trova
+ * niente: pazienza, non è un errore.
+ */
+async function gemelliAperti(ticket: FdTicket): Promise<FdTicket[]> {
+  const recenti = await elencoTicketRecenti(6).catch(() => [] as FdTicket[]);
+  const quando = new Date(ticket.createdAt).getTime();
+  const oggetto = ticket.subject.trim().toLowerCase();
+  if (!oggetto || !Number.isFinite(quando)) return [];
+  return recenti
+    .filter(
+      (t) =>
+        t.id !== ticket.id &&
+        (t.status === 2 || t.status === 3) &&
+        !t.type &&
+        t.subject.trim().toLowerCase() === oggetto &&
+        Math.abs(new Date(t.createdAt).getTime() - quando) <= GEMELLI_ENTRO_MS,
+    )
+    .slice(0, MAX_GEMELLI);
+}
+
+/** Chiude un gemello: stato Risolto, tag del doppione, nota che rimanda all'originale. */
+async function chiudiDoppione(gemello: FdTicket, originale: number): Promise<string> {
+  const ticket = await getTicket(gemello.id, true);
+  if (ticket.status === 4 || ticket.status === 5) return "";
+
+  const tags = [...ticket.tags];
+  if (!tags.includes(TAG_DOPPIONE)) tags.push(TAG_DOPPIONE);
+  const corpo: Record<string, unknown> = { status: 4, tags };
+  // Freshdesk non risolve un ticket senza agente: dà 400 su responder_id.
+  if (ticket.responderId == null) {
+    const agente = await agenteApiId();
+    if (agente) corpo.responder_id = agente;
+  }
+
+  const put = await fdScrittura(`/tickets/${gemello.id}`, "PUT", corpo);
+  if (!put.ok) return `#${gemello.id} NON chiuso (PUT ${put.stato})`;
+  await fdScrittura(`/tickets/${gemello.id}/notes`, "POST", {
+    body: `Doppione del ticket #${originale}: la stessa email ne ha creati due. Chiuso dal portale recensioni, la lavorazione è sul #${originale}.`,
+    private: true,
+  });
+  return `#${gemello.id} chiuso come doppione`;
+}
+
+/**
+ * Chiude dei doppioni già individuati altrove (lo script di recupero
+ * scripts/chiudi-doppioni.ts, per quelli accumulati prima di questa modifica).
+ * Rispetta la modalità simulazione come tutto il resto del file.
+ */
+export async function chiudiDoppioniRimasti(
+  coppie: { gemelloId: number; originaleId: number }[],
+): Promise<string[]> {
+  if (!(await scritturaConsentita())) {
+    return coppie.map(
+      (c) => `#${c.gemelloId}: in simulazione non si scrive (sarebbe chiuso come doppione di #${c.originaleId}).`,
+    );
+  }
+  const esiti: string[] = [];
+  for (const c of coppie) {
+    const ticket = await getTicket(c.gemelloId, true).catch(() => null);
+    if (!ticket) {
+      esiti.push(`#${c.gemelloId}: non leggibile da Freshdesk.`);
+      continue;
+    }
+    esiti.push(
+      (await chiudiDoppione(ticket, c.originaleId).catch(
+        (e) => `#${c.gemelloId} NON chiuso (${e instanceof Error ? e.message : "errore"})`,
+      )) || `#${c.gemelloId}: era già chiuso, lasciato com'era.`,
+    );
+  }
+  return esiti;
+}
+
+/** Chiude i gemelli aperti. Non solleva mai: un doppione non deve far fallire la chiusura vera. */
+async function chiudiGemelliDi(ticket: FdTicket): Promise<string[]> {
+  try {
+    const gemelli = await gemelliAperti(ticket);
+    const esiti: string[] = [];
+    for (const g of gemelli) {
+      const esito = await chiudiDoppione(g, ticket.id).catch(
+        (e) => `#${g.id} NON chiuso (${e instanceof Error ? e.message : "errore"})`,
+      );
+      if (esito) esiti.push(esito);
+    }
+    return esiti;
+  } catch {
+    return [];
+  }
+}
+
 /**
  * Chiude il ticket: stato Risolto, CLASSIFICAZIONE (tipo «Recensioni clienti
  * GMB», tag sede + «personale», campo annidato con le stelle), nota privata.
+ *
+ * Chiude anche gli eventuali GEMELLI (vedi sopra): due ticket nati dalla stessa
+ * email, di cui finora se ne chiudeva uno solo.
  *
  * Se il ticket è GIÀ Risolto o Chiuso non lo si ri-chiude: gli si mette solo la
  * classificazione che gli manca, senza toccare lo stato e senza aggiungere una
@@ -148,10 +279,11 @@ export async function chiudiTicketPubblicato(
       : "";
     return {
       stato: "simulata",
-      descrizione: `Chiuderebbe il ticket #${ticketId} (Risolto, tipo «${cls.type}»${dettStelle}${opts.tagSede ? `, tag «${opts.tagSede}»+«personale»` : ""}) e vi aggiungerebbe la nota privata.`,
+      descrizione: `Chiuderebbe il ticket #${ticketId} (Risolto, tipo «${cls.type}»${dettStelle}${opts.tagSede ? `, tag «${opts.tagSede}»+«personale»` : ""}) e vi aggiungerebbe la nota privata. Chiuderebbe anche gli eventuali ticket gemelli, col tag «${TAG_DOPPIONE}».`,
       chiamate: [
         `PUT ${urlTicket} { status: 4, type, tags, custom_fields }`,
         `POST ${urlTicket}/notes { private: true, body: "${opts.nota.slice(0, 60)}…" }`,
+        `PUT /tickets/{gemello} { status: 4, tags: [… "${TAG_DOPPIONE}"] } (solo se ci sono doppioni)`,
       ],
     };
   }
@@ -176,9 +308,12 @@ export async function chiudiTicketPubblicato(
     if (!put.ok) return { stato: "fallita", errore: `PUT ${put.stato}: ${put.testo}` };
 
     if (giaChiuso) {
+      const doppioni = await chiudiGemelliDi(ticket);
       return {
         stato: "eseguita",
-        descrizione: `Ticket #${ticketId} era già ${STATO[ticket.status] ?? "chiuso"}: classificato, stato e note lasciati com'erano.`,
+        descrizione:
+          `Ticket #${ticketId} era già ${STATO[ticket.status] ?? "chiuso"}: classificato, stato e note lasciati com'erano.` +
+          (doppioni.length ? ` Doppioni: ${doppioni.join(", ")}.` : ""),
       };
     }
 
@@ -188,7 +323,13 @@ export async function chiudiTicketPubblicato(
     });
     if (!nota.ok) return { stato: "fallita", errore: `nota ${nota.stato}: ${nota.testo}` };
 
-    return { stato: "eseguita", descrizione: `Ticket #${ticketId} risolto, classificato e annotato.` };
+    const doppioni = await chiudiGemelliDi(ticket);
+    return {
+      stato: "eseguita",
+      descrizione:
+        `Ticket #${ticketId} risolto, classificato e annotato.` +
+        (doppioni.length ? ` Doppioni: ${doppioni.join(", ")}.` : ""),
+    };
   } catch (e) {
     return { stato: "fallita", errore: e instanceof Error ? e.message : "errore sconosciuto" };
   }
