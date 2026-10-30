@@ -50,6 +50,7 @@
     "robot:riprova-accesso": "tsx --tsconfig tsconfig.json scripts/robot-riprova-accesso.ts",
     "robot:banco": "tsx --tsconfig tsconfig.json scripts/banco-coda.ts",
     "robot:banco-lista": "tsx --tsconfig tsconfig.json scripts/banco-lista.ts",
+    "robot:banco-riquadro": "tsx --tsconfig tsconfig.json scripts/banco-riquadro.ts",
     "banco:aggancio": "tsx --tsconfig tsconfig.json scripts/banco-aggancio.ts",
     "banco:lingua": "tsx --tsconfig tsconfig.json scripts/banco-lingua.ts",
     "diag:lingua-nome": "tsx --tsconfig tsconfig.json scripts/diag-lingua-nome.ts",

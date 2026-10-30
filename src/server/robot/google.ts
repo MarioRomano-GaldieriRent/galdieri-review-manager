@@ -258,19 +258,69 @@ async function bottoneInviaRisposta(root: Radice): Promise<Locator | null> {
     campoDellaCoda &&
     (await visibile(root.getByRole("button", { name: /^Ignora$/i }))) &&
     (await visibile(root.getByText(/\d+\s*di\s*\d+/i)));
-  if (!segniDellaCoda) return null;
-  // Il riferimento dev'essere l'«Ignora» VISIBILE della coda: il primo del DOM
-  // può essere quello nascosto di un banner rimasto nella lista, e allora non
-  // si troverebbe più niente.
-  const ignore = root.getByRole("button", { name: /^Ignora$/i });
-  const quantiIgnora = Math.min(await ignore.count().catch(() => 0), 6);
-  for (let i = 0; i < quantiIgnora; i++) {
-    const c = ignore.nth(i);
-    if (await c.isVisible({ timeout: 1500 }).catch(() => false)) {
-      return rispondiSullaRigaDi(c, false);
+  if (segniDellaCoda) {
+    // Il riferimento dev'essere l'«Ignora» VISIBILE della coda: il primo del DOM
+    // può essere quello nascosto di un banner rimasto nella lista, e allora non
+    // si troverebbe più niente.
+    const ignore = root.getByRole("button", { name: /^Ignora$/i });
+    const quantiIgnora = Math.min(await ignore.count().catch(() => 0), 6);
+    for (let i = 0; i < quantiIgnora; i++) {
+      const c = ignore.nth(i);
+      if (await c.isVisible({ timeout: 1500 }).catch(() => false)) {
+        const b = await rispondiSullaRigaDi(c, false);
+        if (b) return b;
+      }
     }
   }
-  return null;
+
+  // Riquadro nuovo di Google: una recensione sola, dentro un iframe, SENZA
+  // «Annulla» e senza «Ignora» — solo il campo e il suo «Rispondi» (è lo stesso
+  // riquadro di cui parla il passo-passo del 30/10/2026). Il submit si trova
+  // risalendo dal CAMPO in cui si è appena scritto: il primo antenato che
+  // contiene anche un «Rispondi» visibile. Così non si può prendere per submit
+  // il «Rispondi» di un'altra recensione, che sta in un'altra card.
+  return risalendoDalCampo(root);
+}
+
+/**
+ * Il tasto che INVIA, cercato risalendo dal campo di risposta: dentro lo stesso
+ * riquadro, quindi è per forza il suo. Lo marca nel DOM e lascia il click a
+ * Playwright, come fa il resto del file.
+ */
+async function risalendoDalCampo(root: Radice): Promise<Locator | null> {
+  const trovato = await root
+    .evaluate(() => {
+      // Niente funzioni con nome qui dentro: sotto tsx diventerebbero
+      // __name(...), che nel browser non esiste.
+      document.querySelectorAll("[data-robot-invio]").forEach((e) => e.removeAttribute("data-robot-invio"));
+      let campo: Element | null = null;
+      for (const c of Array.from(
+        document.querySelectorAll('textarea, [contenteditable="true"], input[type="text"]'),
+      )) {
+        const box = c.getBoundingClientRect();
+        if (box.width > 2 && box.height > 2) {
+          campo = c;
+          break;
+        }
+      }
+      if (!campo) return false;
+      let su: Element | null = campo.parentElement;
+      for (let salite = 0; su && salite < 10; salite++, su = su.parentElement) {
+        for (const b of Array.from(su.querySelectorAll('button, [role="button"]'))) {
+          const t = (b.textContent || "").replace(/\s+/g, " ").trim().toLowerCase();
+          if (t !== "rispondi" && t !== "pubblica risposta") continue;
+          const box = b.getBoundingClientRect();
+          if (box.width < 2 || box.height < 2) continue;
+          b.setAttribute("data-robot-invio", "1");
+          return true;
+        }
+      }
+      return false;
+    })
+    .catch(() => false);
+  if (!trovato) return null;
+  const b = root.locator("[data-robot-invio]").first();
+  return (await b.isVisible().catch(() => false)) ? b : null;
 }
 
 /** Invia/pubblica la risposta scritta (clicca il bottone giusto secondo la UI). */
@@ -1364,7 +1414,7 @@ export type EsitoCodaIgnora = {
  * vecchio (manca «npm run build» + restart dopo il git pull) e non serve
  * cercare il problema altrove.
  */
-export const VERSIONE_CODA = "coda-13";
+export const VERSIONE_CODA = "coda-14";
 
 /**
  * La pagina d'errore che Google a volte mette AL POSTO della recensione nella
@@ -1677,11 +1727,55 @@ export async function cercaNellaCoda(
     r
       .getByRole("button", { name: etichettaIgnora })
       .or(r.locator("button").filter({ hasText: /^\s*(ignora|ignore|salta|skip)\s*$/i }));
-  type Segnali = { punti: number; radice: Radice | null; descrizione: string };
+  /**
+   * Il tasto «Rispondi» del riquadro: quello che PUBBLICA la risposta, non
+   * quello di una card della lista. Nel riquadro nuovo sta accanto a «Ignora»
+   * (coda) oppure da solo (risposta a una recensione sola).
+   */
+  const tastoRispondi = (r: Radice): Locator =>
+    r
+      .getByRole("button", { name: /^\s*rispondi\s*$/i })
+      .or(r.locator("button, [role=button]").filter({ hasText: /^\s*rispondi\s*$/i }));
+
+  /** Il link al profilo di chi ha scritto: dice che lì c'è UNA recensione precisa. */
+  const linkAutore = (r: Radice): Locator =>
+    r.locator('a[href*="/maps/contrib/"], a[jsname="xs1xe"]');
+
+  type Segnali = {
+    punti: number;
+    radice: Radice | null;
+    descrizione: string;
+    /** Campo + «Rispondi» + autore nella STESSA radice: da lì si scrive davvero. */
+    riquadroCompleto: boolean;
+  };
   const leggiSegnali = async (): Promise<Segnali> => {
     let radice: Radice | null = null;
     const visti: string[] = [];
     let punti = 0;
+    let riquadroCompleto = false;
+
+    // PRIMA di tutto: il riquadro di risposta completo — campo dove scrivere,
+    // tasto «Rispondi» e autore della recensione, tutti nella stessa radice.
+    //
+    // È la vista che Google usa adesso, e sta dentro un iframe
+    // (www.google.com/local/business/<id>/): niente «Ignora», niente contatore
+    // «N di M». Col vecchio conto faceva 1 punto su 3 — il solo campo, per
+    // giunta trovato nella PAGINA invece che nell'iframe — e il robot se ne
+    // andava a cercare la coda altrove mentre la recensione giusta era lì
+    // aperta davanti (passo-passo del 30/10/2026 su «gianluca laterza»).
+    //
+    // Va per primo anche perché deve vincere sulla scelta della radice: è
+    // l'unica dove si può scrivere.
+    for (const r of radici()) {
+      if (!(await primoVisibile(campiDiRisposta(r)))) continue;
+      if (!(await primoVisibile(tastoRispondi(r)))) continue;
+      if (!(await primoVisibile(linkAutore(r)))) continue;
+      punti += 2;
+      radice = r;
+      riquadroCompleto = true;
+      visti.push(`riquadro di risposta completo: campo + «Rispondi» + autore (${nomeRadice(r)})`);
+      break;
+    }
 
     for (const r of radici()) {
       const b = await primoVisibile(tastoIgnora(r));
@@ -1729,6 +1823,7 @@ export async function cercaNellaCoda(
     return {
       punti,
       radice,
+      riquadroCompleto,
       descrizione: visti.length ? `${punti}/3 — ${visti.join("; ")}` : "0/3 — nessun indizio",
     };
   };
@@ -1885,6 +1980,23 @@ export async function cercaNellaCoda(
         }
       }
     }
+  }
+
+  // Il riquadro di risposta era GIÀ APERTO quando siamo arrivati. Succede con
+  // la vista nuova di Google: si apre la sede e la recensione è lì, in un
+  // iframe, col campo, il tasto «Rispondi» e il nome di chi l'ha scritta.
+  //
+  // Qui si prosegue anche quando si pubblica, e non è una leggerezza: più sotto
+  // si legge CHI è la recensione mostrata e la si confronta con la nostra —
+  // testo e autore — e senza quel riscontro non si scrive niente. La vecchia
+  // regola («non mi fido, lascio perdere») è stata scritta quando l'unico
+  // appiglio erano indizi deboli, e il 30/10/2026 ha mandato il robot a cercare
+  // altrove la recensione che aveva già davanti.
+  if (!coda && iniziali.riquadroCompleto && iniziali.radice) {
+    coda = iniziali.radice;
+    annota(
+      `nessun tasto ha aperto la coda, ma il riquadro di risposta era già qui (${iniziali.descrizione}): proseguo da questo, e prima di scrivere controllo che la recensione mostrata sia la sua.`,
+    );
   }
 
   // Ripiego per il caso legittimo: nessun tasto ha funzionato, ma gli indizi
