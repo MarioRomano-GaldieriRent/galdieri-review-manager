@@ -311,8 +311,21 @@ export type CardLetta = {
   /** Tutto il testo della card, icone escluse. */
   testo: string;
   stelle: string;
-  /** Ha un «Rispondi» suo (cioè non ha ancora una risposta). */
+  /** Ha un «Rispondi» suo: da questa vista si può scrivere. */
   haRispondi: boolean;
+  /**
+   * La card mostra DAVVERO una risposta già pubblicata (l'intestazione
+   * «Risposta del proprietario», o i tasti per modificarla o eliminarla).
+   *
+   * Sta separato da `haRispondi` perché le due cose non sono l'una il
+   * contrario dell'altra, e darlo per scontato è costato caro: il 30/10/2026
+   * la recensione di «gianluca laterza» è stata dichiarata «ha già una
+   * risposta» solo perché nella vista di gruppo la sua card non aveva il tasto
+   * «Rispondi» — mentre su Google la risposta non c'era, e il riquadro per
+   * scriverla era vuoto. Da quella conclusione il pilota CHIUDE la recensione
+   * come gestita: una recensione senza risposta sparirebbe per sempre.
+   */
+  rispostaVisibile: boolean;
 };
 
 /**
@@ -370,7 +383,14 @@ async function leggiCards(root: Radice): Promise<{ cards: CardLetta[]; errore: s
       // Da dove si parte: dai link (autore leggibile) o, se non ce ne sono,
       // dai «Rispondi» (autore vuoto).
       const semi: Element[] = link.length > 0 ? link : rispondi;
-      const esito: { i: number; autore: string; testo: string; stelle: string; haRispondi: boolean }[] = [];
+      const esito: {
+        i: number;
+        autore: string;
+        testo: string;
+        stelle: string;
+        haRispondi: boolean;
+        rispostaVisibile: boolean;
+      }[] = [];
       const gia: Element[] = [];
       for (const seme of semi) {
         let card: Element = seme;
@@ -415,10 +435,40 @@ async function leggiCards(root: Radice): Promise<{ cards: CardLetta[]; errore: s
             break;
           }
         }
+        // La risposta GIÀ PUBBLICATA, se c'è: Google la introduce con la sua
+        // intestazione («Risposta del proprietario», «Risposta di <azienda>»)
+        // e accanto mette i tasti per modificarla o eliminarla. Si cercano
+        // quelle etichette su elementi CORTI: il testo della card contiene
+        // anche la recensione del cliente, dove la parola «risposta» può
+        // comparire per caso.
+        let rispostaVisibile = false;
+        for (const e of Array.from(
+          card.querySelectorAll("div, span, p, b, strong, h1, h2, h3, h4, button, [role=button]"),
+        )) {
+          const t = (e.textContent || "").replace(/\s+/g, " ").trim();
+          if (!t || t.length > 60) continue;
+          if (
+            /^risposta (del proprietario|dell.azienda|di\s)/i.test(t) ||
+            /^(modifica|elimina) risposta$/i.test(t) ||
+            /^owner.s response/i.test(t) ||
+            /^response from the owner/i.test(t)
+          ) {
+            rispostaVisibile = true;
+            break;
+          }
+        }
+
         const i = esito.length;
         card.setAttribute("data-robot-card", String(i));
         if (suoRispondi) suoRispondi.setAttribute("data-robot-rispondi-di", String(i));
-        esito.push({ i, autore, testo, stelle: etichettaStelle, haRispondi: suoRispondi !== null });
+        esito.push({
+          i,
+          autore,
+          testo,
+          stelle: etichettaStelle,
+          haRispondi: suoRispondi !== null,
+          rispostaVisibile,
+        });
       }
       return esito;
     });
@@ -493,9 +543,16 @@ function scegliCard(
     };
   }
   if (giaRisposte > 0) {
+    // «Ha già una risposta» si dice SOLO se la risposta si vede davvero: senza
+    // quella prova è solo un tasto «Rispondi» che manca in questa vista, e dire
+    // il contrario fa chiudere al pilota una recensione mai risposta.
+    const conRisposta = perAutoreTutte.filter((c) => c.rispostaVisibile).length;
     return {
       card: null,
-      motivo: `l'unica recensione con l'autore «${nome}» ha già una risposta`,
+      motivo:
+        conRisposta > 0
+          ? `l'unica recensione con l'autore «${nome}» ha già una risposta`
+          : `l'unica recensione con l'autore «${nome}» non ha il tasto «Rispondi» in questa vista (e non si vede nessuna risposta)`,
     };
   }
   const simili = cards.filter((c) => combaciaNome(c.autore, nome) || combaciaNome(c.testo, nome)).length;
@@ -509,8 +566,10 @@ function scegliCard(
 
 /**
  * La card del cliente nella vista corrente: legge le card, sceglie con
- * `scegliCard`, la porta in vista. `rispondi` è il locator del SUO «Rispondi»
- * (null se la card ha già una risposta, o se non è stata scelta).
+ * `scegliCard`, la porta in vista. `rispondi` è il locator del SUO «Rispondi»,
+ * e vale null in DUE casi diversi che chi legge deve distinguere: la card ha
+ * davvero una risposta (`rispostaVisibile`), oppure in questa vista il tasto
+ * non c'è e basta — da quest'ultimo non si può concludere che sia gestita.
  */
 async function cardDelCliente(
   root: Radice,
@@ -526,7 +585,12 @@ async function cardDelCliente(
         ? " — " +
           cards
             .slice(0, 12)
-            .map((c) => `«${c.autore || "?"}»${c.haRispondi ? "" : " (già risposta)"}`)
+            .map(
+              (c) =>
+                `«${c.autore || "?"}»${
+                  c.haRispondi ? "" : c.rispostaVisibile ? " (già risposta)" : " (senza «Rispondi»)"
+                }`,
+            )
             .join(", ")
         : ""
     }`,
@@ -645,10 +709,16 @@ export async function cercaInPaginaCorrente(
     const c = await cardDelCliente(page, nome, opts.testoRecensione ?? "", log);
     if (c.card) {
       if (!c.rispondi) {
+        // Due casi diversi, e vanno detti diversi: se la risposta si VEDE, la
+        // recensione è gestita e il pilota può chiuderla; se manca solo il
+        // tasto, da questa vista non si scrive e basta — dire «ha già una
+        // risposta» farebbe sparire una recensione mai risposta.
         return {
           trovata: true,
           scritto: false,
-          dettaglio: `«${nome}» trovato (${c.dettaglio}), ma la sua card non ha «Rispondi»: ha già una risposta.`,
+          dettaglio: c.card.rispostaVisibile
+            ? `«${nome}» trovato (${c.dettaglio}): la sua card ha già una risposta pubblicata, non la tocco.`
+            : `«${nome}» trovato (${c.dettaglio}), ma in questa vista la sua card non ha il tasto «Rispondi» e nessuna risposta è visibile: da qui non posso scrivere.`,
         };
       }
       await c.rispondi.click({ timeout: 6000 }).catch(() => {});
