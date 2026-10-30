@@ -1,4 +1,4 @@
-import { mkdirSync } from "fs";
+import { appendFileSync, mkdirSync } from "fs";
 import path from "path";
 import {
   apriContesto,
@@ -68,12 +68,39 @@ function leggiJob(): Job {
   };
 }
 
+/**
+ * Il diario SU FILE, scritto riga per riga mentre si lavora.
+ *
+ * L'esito con dentro il passo-passo viaggia su una sola riga di stdout, e
+ * quella riga si perde in troppi modi: se il robot viene ucciso allo scadere
+ * del tempo, se l'output si tronca passando da cmd e npm, se il processo muore
+ * prima di stamparla. Il risultato lo si vedeva sulla card: «il robot non è
+ * arrivato a raccontare niente», proprio nei casi in cui il racconto serviva.
+ *
+ * Qui invece ogni riga è già sul disco un istante dopo essere stata scritta
+ * (appendFileSync, nessun buffer): anche di un robot ammazzato a metà resta
+ * tutto quello che aveva fatto fino a quel momento. Il percorso lo decide chi
+ * lancia (ROBOT_LOG_FILE), così sa già dove andarlo a leggere.
+ */
+const FILE_DIARIO = (process.env.ROBOT_LOG_FILE || "").trim();
+function scriviSuFile(riga: string): void {
+  if (!FILE_DIARIO) return;
+  try {
+    mkdirSync(path.dirname(FILE_DIARIO), { recursive: true });
+    appendFileSync(FILE_DIARIO, riga + "\n", "utf8");
+  } catch {
+    /* il diario non deve mai far fallire il robot */
+  }
+}
+
 function esito(o: Record<string, unknown>): void {
   // Il passo-passo lo infila l'esito stesso: prima ogni ramo doveva ricordarsi
   // di aggiungerlo e infatti se lo ricordava solo quello di prova — il
   // «Rispondi» arrivava sulla card muto, e non si capiva se la coda avesse
   // finito i salti o fosse scaduta. Chi vuole può sempre sovrascriverlo.
-  console.log("__ESITO__ " + JSON.stringify({ log: [...diario], ...o }));
+  const completo = { log: [...diario], ...o };
+  scriviSuFile(`__ESITO__ ${JSON.stringify({ ...completo, log: undefined })}`);
+  console.log("__ESITO__ " + JSON.stringify(completo));
 }
 
 /**
@@ -86,6 +113,7 @@ const diario: string[] = [];
 const traccia = (m: string) => {
   diario.push(m);
   console.error("   " + m);
+  scriviSuFile(m);
 };
 
 /** Momento in cui questo processo è partito: serve per la scadenza interna. */

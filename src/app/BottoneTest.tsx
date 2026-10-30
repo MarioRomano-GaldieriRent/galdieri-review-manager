@@ -93,9 +93,11 @@ export function BottoneTest({ chiave }: { chiave: string }) {
             </details>
           ) : (
             <span className="hint">
-              Nessun passo-passo: il robot non è arrivato a raccontare niente. Se capita sempre,
-              controlla che sul server sia stato fatto «npm run build» e il restart dopo il git
-              pull.
+              Nessun passo-passo qui: il robot non è nemmeno partito — di solito perché sul server
+              c&apos;è una finestra di Chrome aperta, o perché un altro robot sta già lavorando.
+              Chiudi Chrome sul server e riprova. Il racconto completo di ogni corsa resta comunque
+              sul server, in <code>data/robot-log</code>: un file per tentativo, scritto riga per
+              riga anche quando il robot viene fermato a metà.
             </span>
           )}
         </div>

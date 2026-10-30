@@ -1,4 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
+import { mkdirSync, readFileSync, readdirSync, unlinkSync } from "node:fs";
+import path from "node:path";
 
 // Avvia il robot "usa e getta" (scripts/robot-esegui.ts) come processo figlio e
 // ne aspetta l'esito. Il lavoro viaggia nell'env ROBOT_JOB (niente argomenti da
@@ -93,11 +95,64 @@ export function robotOccupato(): boolean {
  * all'operatore (usato dal tasto "G" con azione "cerca"). Processo sganciato,
  * così l'azione del server torna subito e la finestra resta aperta da sola.
  */
+// --- Il diario del robot, su file ------------------------------------------
+//
+// Il passo-passo viaggiava solo dentro l'output del processo figlio, e lì si
+// perde in troppi modi: il robot ucciso allo scadere del tempo, l'output
+// troncato passando da cmd e npm, il processo morto prima di stampare l'esito.
+// Sulla card restava «il robot non è arrivato a raccontare niente» proprio
+// quando il racconto serviva.
+//
+// Adesso il robot scrive ogni riga su un file, appena l'ha fatta
+// (appendFileSync, nessun buffer): qui si decide il percorso, lo si passa al
+// figlio con ROBOT_LOG_FILE e, se l'esito torna muto, lo si legge da lì. Il
+// file resta anche dopo, per guardarci dentro con calma.
+
+export const DIARIO_DIR = path.join(process.cwd(), "data", "robot-log");
+
+/** Quanti diari si tengono: oltre questi si cancellano i più vecchi. */
+const DIARI_TENUTI = 60;
+
+function nuovoDiario(job: JobRobot): string {
+  const quando = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+  const nome = `${quando}-${job.azione}.log`;
+  try {
+    mkdirSync(DIARIO_DIR, { recursive: true });
+    const vecchi = readdirSync(DIARIO_DIR)
+      .filter((f) => f.endsWith(".log"))
+      .sort();
+    for (const f of vecchi.slice(0, Math.max(0, vecchi.length - DIARI_TENUTI))) {
+      try {
+        unlinkSync(path.join(DIARIO_DIR, f));
+      } catch {
+        /* se non si cancella, pazienza */
+      }
+    }
+  } catch {
+    /* niente cartella: il robot scriverà solo su stdout, come prima */
+  }
+  return path.join(DIARIO_DIR, nome);
+}
+
+/** Le righe del diario su file, senza la riga dell'esito. Vuoto se il file non c'è. */
+export function leggiDiario(file: string): string[] {
+  if (!file) return [];
+  try {
+    return readFileSync(file, "utf8")
+      .split(/\r?\n/)
+      .map((r) => r.trimEnd())
+      .filter((r) => r !== "" && !r.startsWith("__ESITO__"))
+      .slice(-80);
+  } catch {
+    return [];
+  }
+}
+
 export function avviaRobotSganciato(job: JobRobot): void {
   if (robotInUso) return; // già occupato: non aprire un secondo Chrome
   const child = spawn("npm run --silent robot:esegui", {
     cwd: process.cwd(),
-    env: { ...process.env, ROBOT_JOB: JSON.stringify(job) },
+    env: { ...process.env, ROBOT_JOB: JSON.stringify(job), ROBOT_LOG_FILE: nuovoDiario(job) },
     shell: true,
     windowsHide: false,
     detached: true,
@@ -121,9 +176,10 @@ export function avviaRobotConEsito(
 ): Promise<EsitoRobot> {
   if (robotInUso) return Promise.resolve(esitoOccupato());
   return new Promise((resolve) => {
+    const fileDiario = nuovoDiario(job);
     const child = spawn("npm run --silent robot:esegui", {
       cwd: process.cwd(),
-      env: { ...process.env, ROBOT_JOB: JSON.stringify(job) },
+      env: { ...process.env, ROBOT_JOB: JSON.stringify(job), ROBOT_LOG_FILE: fileDiario },
       shell: true,
       windowsHide: false,
       detached: true,
@@ -154,9 +210,15 @@ export function avviaRobotConEsito(
         .map((r) => r.slice(3))
         .slice(-60);
 
-    const finisci = (e: EsitoRobot) => {
+    const finisci = (e0: EsitoRobot) => {
       if (risolto) return;
       risolto = true;
+      // Se l'esito arriva senza passo-passo — ucciso, troncato, morto prima di
+      // stampare — lo si prende dal file, dove ogni riga è già sul disco. Il
+      // file viene prima: è più completo dell'output raccolto qui.
+      const daFile = leggiDiario(fileDiario);
+      const e =
+        e0.log && e0.log.length > 0 ? e0 : { ...e0, log: daFile.length > 0 ? daFile : diario() };
       clearTimeout(timer);
       // Molla il processo: la finestra del robot resta aperta da sola, il server
       // non aspetta più. `resume` svuota il buffer così il figlio non si blocca.
@@ -231,9 +293,10 @@ export async function lanciaRobot(
   return new Promise((resolve) => {
     // shell:true → funziona sia con npm.cmd su Windows sia con npm su unix;
     // il comando è FISSO e il job passa dall'ambiente, quindi niente iniezione.
+    const fileDiario = nuovoDiario(job);
     const child = spawn("npm run --silent robot:esegui", {
       cwd: process.cwd(),
-      env: { ...process.env, ROBOT_JOB: JSON.stringify(job) },
+      env: { ...process.env, ROBOT_JOB: JSON.stringify(job), ROBOT_LOG_FILE: fileDiario },
       shell: true,
       windowsHide: false, // la finestra del browser dev'essere visibile
     });
@@ -267,10 +330,13 @@ export async function lanciaRobot(
         }
         if (!risolto) {
           risolto = true;
+          // Ucciso a metà: il passo-passo è sul file, riga per riga, e questo è
+          // esattamente il caso in cui prima non restava niente da leggere.
+          const daFile = leggiDiario(fileDiario);
           resolve({
             ok: false,
             stato: "timeout",
-            log: diarioDiLancio(),
+            log: daFile.length > 0 ? daFile : diarioDiLancio(),
             messaggio:
               "Il robot ci ha messo troppo: l'ho fermato. Riprova (browser chiuso, Chrome chiuso).",
           });
@@ -278,6 +344,13 @@ export async function lanciaRobot(
       },
       attesaMs,
     );
+
+    /** Col passo-passo del file quando quello dell'esito manca (vedi nuovoDiario). */
+    const colDiario = (e: EsitoRobot): EsitoRobot => {
+      if (e.log && e.log.length > 0) return e;
+      const daFile = leggiDiario(fileDiario);
+      return { ...e, log: daFile.length > 0 ? daFile : diarioDiLancio() };
+    };
 
     const chiudi = (fallback: EsitoRobot) => {
       if (risolto) return;
@@ -289,14 +362,14 @@ export async function lanciaRobot(
         const m = ultima.match(/__ESITO__\s+(\{.*\})/);
         if (m) {
           try {
-            resolve(JSON.parse(m[1]) as EsitoRobot);
+            resolve(colDiario(JSON.parse(m[1]) as EsitoRobot));
             return;
           } catch {
             /* cade sul fallback */
           }
         }
       }
-      resolve(fallback);
+      resolve(colDiario(fallback));
     };
 
     child.on("close", (code) =>
