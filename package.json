@@ -53,6 +53,7 @@
     "robot:banco-riquadro": "tsx --tsconfig tsconfig.json scripts/banco-riquadro.ts",
     "banco:aggancio": "tsx --tsconfig tsconfig.json scripts/banco-aggancio.ts",
     "banco:lingua": "tsx --tsconfig tsconfig.json scripts/banco-lingua.ts",
+    "banco:retry": "tsx --tsconfig tsconfig.json scripts/banco-retry.ts",
     "diag:lingua-nome": "tsx --tsconfig tsconfig.json scripts/diag-lingua-nome.ts",
     "robot:esegui": "tsx --tsconfig tsconfig.json scripts/robot-esegui.ts",
     "robot:pubblica": "tsx --tsconfig tsconfig.json scripts/robot-pubblica.ts",

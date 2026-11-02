@@ -22,8 +22,33 @@ import { tagSede } from "@/server/automation/sedi";
 // (automation/sedi). Tiene la coda di retry: un errore Freshdesk non blocca
 // l'operatore, la chiusura si ritenta più tardi.
 
-/** Dopo tre tentativi falliti non si ritenta più da soli: resta il pulsante manuale. */
-export const MAX_TENTATIVI_FRESHDESK = 3;
+/**
+ * ATTESE FRA UN TENTATIVO E L'ALTRO, in minuti (2/11/2026).
+ *
+ * Il ticket di una recensione NON lo apre il portale: lo apre Stefania a mano,
+ * inoltrando a Freshdesk l'email di Zapier — che arriva solo a lei, senza copia
+ * al supporto. Quando si pubblica la risposta, quindi, il ticket spesso non
+ * esiste ancora: misurato sui 14 giorni al 2/11, 78 recensioni su 86 hanno
+ * avuto il loro ticket, ma con una mediana di 34 minuti, solo il 49% entro i
+ * 25, e ventisette oltre le quattro ore — qualcuna il giorno dopo.
+ *
+ * Le attese di prima — 2, 4 e 8 minuti, tre tentativi in un quarto d'ora —
+ * stavano tutte nella metà sbagliata di quella distribuzione: esauriti i
+ * tentativi la voce restava «fallito» per sempre e il ticket, nato più tardi,
+ * non vedeva mai la nostra nota né la risoluzione. Succedeva soprattutto con
+ * l'arretrato del weekend pubblicato il lunedì mattina, prima che partissero
+ * gli inoltri: tre casi in una sola mattina (Pfahl, Zett, Veyhl, 2/11), nove
+ * da settembre.
+ *
+ * Così si arriva a quasi quattro giorni, che coprono anche l'inoltro del giorno
+ * dopo. Non serve nessuno scheduler in più: ritentaChiusureInSospeso() gira col
+ * pilota ogni 5 minuti e a qualunque ora — le negative in automatico tengono il
+ * giro vivo anche fuori fascia.
+ */
+const ATTESE_FRESHDESK_MIN = [15, 60, 4 * 60, 12 * 60, 24 * 60, 48 * 60];
+
+/** Finite le attese non si ritenta più da soli: resta il pulsante manuale. */
+export const MAX_TENTATIVI_FRESHDESK = ATTESE_FRESHDESK_MIN.length + 1;
 
 /**
  * Ritardo tra APERTURA e RISOLUZIONE del ticket, sui casi positivi (5★/4★) dove
@@ -52,10 +77,39 @@ export async function programmaChiusuraFreshdesk(
   });
 }
 
-/** Attesa prima del prossimo tentativo: 2, 4, 8 minuti. */
+/**
+ * Attesa prima del prossimo tentativo: 15 min, 1 h, 4 h, 12 h, 24 h, 48 h.
+ * `tentativi` è il numero di tentativi GIÀ falliti, quindi sempre ≥ 1: il
+ * primo fallimento aspetta un quarto d'ora. Oltre l'ultima attesa non ci si
+ * arriva (esaurito = niente prossimo tentativo), ma se ci si arrivasse si
+ * terrebbe l'ultima invece di schiantarsi su un indice fuori dall'elenco.
+ */
 function prossimoTentativo(tentativi: number): Date {
-  const minuti = Math.min(2 ** tentativi, 30);
+  const minuti =
+    ATTESE_FRESHDESK_MIN[tentativi - 1] ?? ATTESE_FRESHDESK_MIN[ATTESE_FRESHDESK_MIN.length - 1];
   return new Date(Date.now() + minuti * 60 * 1000);
+}
+
+/**
+ * Cosa scrivere sulla voce dopo un tentativo di chiusura andato male: un altro
+ * tentativo più tardi, o la resa. Una funzione sola perché la decisione era
+ * scritta due volte, identica, nei due modi in cui la chiusura può fallire
+ * (ticket non trovato, errore di Freshdesk) — e due copie di una politica di
+ * ritentativi sono due politiche che prima o poi divergono. Pura, così il banco
+ * `npm run banco:retry` prova la stessa che gira in produzione.
+ */
+export function pianoRitentativo(tentativiFalliti: number): {
+  esito: "inattesa" | "fallito";
+  tentativi: number;
+  prossimoTentativoIl: Date | null;
+} {
+  const tentativi = tentativiFalliti + 1;
+  const esaurito = tentativi >= MAX_TENTATIVI_FRESHDESK;
+  return {
+    esito: esaurito ? "fallito" : "inattesa",
+    tentativi,
+    prossimoTentativoIl: esaurito ? null : prossimoTentativo(tentativi),
+  };
 }
 
 /**
@@ -108,12 +162,11 @@ export async function chiudiFreshdeskPer(
   // la ricerca, nemmeno premendo «Riprova».
   const ticketId = voce.ticketId ?? (await ritrovaTicket(voce));
   if (ticketId == null) {
-    const tentativi = voce.freshdeskTentativi + 1;
-    const esaurito = tentativi >= MAX_TENTATIVI_FRESHDESK;
-    await segnaEsitoFreshdesk(voce.chiave, esaurito ? "fallito" : "inattesa", {
+    const piano = pianoRitentativo(voce.freshdeskTentativi);
+    await segnaEsitoFreshdesk(voce.chiave, piano.esito, {
       errore: "nessun ticket collegato alla recensione: non ancora trovato su Freshdesk",
-      tentativi,
-      prossimoTentativoIl: esaurito ? null : prossimoTentativo(tentativi),
+      tentativi: piano.tentativi,
+      prossimoTentativoIl: piano.prossimoTentativoIl,
     });
     return;
   }
@@ -140,12 +193,11 @@ export async function chiudiFreshdeskPer(
   }
 
   // fallita: si accoda a retry finché non si esauriscono i tentativi.
-  const tentativi = voce.freshdeskTentativi + 1;
-  const esaurito = tentativi >= MAX_TENTATIVI_FRESHDESK;
-  await segnaEsitoFreshdesk(voce.chiave, esaurito ? "fallito" : "inattesa", {
+  const piano = pianoRitentativo(voce.freshdeskTentativi);
+  await segnaEsitoFreshdesk(voce.chiave, piano.esito, {
     errore: esito.errore,
-    tentativi,
-    prossimoTentativoIl: esaurito ? null : prossimoTentativo(tentativi),
+    tentativi: piano.tentativi,
+    prossimoTentativoIl: piano.prossimoTentativoIl,
   });
 }
 

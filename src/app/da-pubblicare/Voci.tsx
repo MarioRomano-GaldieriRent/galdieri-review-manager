@@ -24,6 +24,21 @@ export function Stelle({ n }: { n: number | null }) {
   );
 }
 
+/**
+ * Quanto manca al prossimo tentativo, detto in modo leggibile. Da quando le
+ * attese arrivano a 48 ore (2/11/2026) i minuti non bastano più: «tra ~2880
+ * min» non si capisce, e una voce che riprova domani sembrerebbe ferma.
+ */
+function fraQuanto(iso: string | null): string | null {
+  if (!iso) return null;
+  const minuti = Math.round((new Date(iso).getTime() - Date.now()) / 60000);
+  if (minuti <= 0) return "imminente";
+  if (minuti < 90) return `tra ~${minuti} min`;
+  const ore = Math.round(minuti / 60);
+  if (ore < 36) return `tra ~${ore} h`;
+  return `tra ~${Math.round(ore / 24)} giorni`;
+}
+
 export function EsitoFreshdesk({ v }: { v: VocePubblicazione }) {
   if (v.freshdeskEsito === "ok") return <span className="flag flag-green">ticket chiuso</span>;
   if (v.freshdeskEsito === "noniniziato")
@@ -33,13 +48,7 @@ export function EsitoFreshdesk({ v }: { v: VocePubblicazione }) {
   // verrà portato a Risolto tra un po', così Freshdesk fa in tempo a mandare le
   // sue mail. La distingue da un retry dopo errore il fatto che i tentativi = 0.
   if (v.freshdeskEsito === "inattesa" && v.freshdeskTentativi === 0) {
-    const tra = v.freshdeskProssimoTentativoIl
-      ? Math.max(
-          0,
-          Math.round((new Date(v.freshdeskProssimoTentativoIl).getTime() - Date.now()) / 60000),
-        )
-      : null;
-    const quando = tra == null ? "programmata" : tra > 0 ? `tra ~${tra} min` : "imminente";
+    const quando = fraQuanto(v.freshdeskProssimoTentativoIl) ?? "programmata";
     return (
       <span className="pub-fd-ko">
         <span className="flag flag-amber">ticket: risoluzione {quando}</span>
@@ -53,9 +62,14 @@ export function EsitoFreshdesk({ v }: { v: VocePubblicazione }) {
     );
   }
 
+  // In retry si dice anche QUANDO: l'attesa può essere di ore (il ticket lo
+  // apre il customer care inoltrando la mail, e può farlo il giorno dopo),
+  // quindi senza il «quando» la voce sembra abbandonata.
+  const prossimo =
+    v.freshdeskEsito === "inattesa" ? fraQuanto(v.freshdeskProssimoTentativoIl) : null;
   const testo =
     v.freshdeskEsito === "inattesa"
-      ? `chiusura ticket in retry (tentativo ${v.freshdeskTentativi})`
+      ? `chiusura ticket in retry (tentativo ${v.freshdeskTentativi}${prossimo ? `, riprovo ${prossimo}` : ""})`
       : "chiusura ticket non riuscita";
   return (
     <span className="pub-fd-ko">
