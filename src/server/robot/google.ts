@@ -732,19 +732,118 @@ async function radiceConRecensioni(page: Page): Promise<Radice> {
 }
 
 /**
- * Cerca il nome SOLO nella pagina attualmente mostrata del gruppo (NON cambia
- * pagina: al cambio pagina pensa cercaNeiGruppiPerPagina). Fa al più qualche
- * scroll corto per far rendere le card di questa pagina. Trovata la card, vi
- * individua il «Rispondi» (recensione senza risposta), clicca e scrive il testo.
+ * Il campo «cerca nelle recensioni» di Google in questa radice, se c'è.
+ *
+ * Un posto SOLO che sa come riconoscerlo, perché i selettori sono la parte
+ * fragile: li usano sia la ricerca per sede sia quella nei gruppi, e due copie
+ * divergono alla prima volta che Google cambia un'etichetta.
+ *
+ * Il campo deve parlare di RECENSIONI o di recensore: nella stessa pagina c'è
+ * anche la ricerca delle SEDI, e scriverci il nome di un cliente non filtra le
+ * recensioni — porta altrove. Se non è sicuro, null: chi chiama scorre.
+ */
+async function campoRicercaRecensioni(
+  root: Radice,
+  log: (m: string) => void,
+): Promise<Locator | null> {
+  const perRecensioni = /recensione|recensioni|recensore|review|reviewer/i;
+  const trova = async (): Promise<Locator | null> => {
+    for (const loc of [
+      root.getByPlaceholder(perRecensioni),
+      root.locator(
+        'input[aria-label*="recension" i], input[aria-label*="recensore" i], input[aria-label*="review" i]',
+      ),
+      root.getByRole("searchbox", { name: perRecensioni }),
+      root.getByRole("combobox", { name: perRecensioni }),
+    ]) {
+      const c = loc.first();
+      if ((await c.count().catch(() => 0)) > 0 && (await c.isVisible().catch(() => false))) return c;
+    }
+    return null;
+  };
+
+  const subito = await trova();
+  if (subito) return subito;
+
+  // Il campo può stare dietro un'icona «lente» da aprire prima.
+  const lente = root
+    .getByRole("button", { name: /cerca.*recension|cerca nelle recension|search.*review/i })
+    .first();
+  if ((await lente.count().catch(() => 0)) > 0 && (await lente.isVisible().catch(() => false))) {
+    await lente.click().catch(() => {});
+    await paginaDi(root).waitForTimeout(1000);
+    const dopo = await trova();
+    if (dopo) {
+      log("il campo di ricerca delle recensioni era dietro la lente: aperto.");
+      return dopo;
+    }
+  }
+  return null;
+}
+
+/**
+ * FILTRA la lista delle recensioni scrivendo il nome nel campo di ricerca di
+ * Google, e ritorna la radice in cui guardare. null = qui non c'è un campo di
+ * ricerca, e allora si scorre come prima.
+ *
+ * Perché serve (2/11/2026): scorrere le pagine dà per buono che le recensioni
+ * nuove stiano in cima, e non è sempre vero. Il 2/11 la prima pagina del gruppo
+ * di «Davide Di fusco» (Lancusi) conteneva le recensioni di LUGLIO — Capasso
+ * del 24/7, Senatore e Botticella del 23/7, «anna ciao» del 22/7 — e cinque
+ * pagine da cinquanta card non bastano ad arrivare a oggi. Lo stesso era
+ * successo a Franco Lauro, debora santagata e Remo Lamanna, tutti di Lancusi;
+ * nelle segnalazioni di ottobre «non va, rispondo manualmente» compare 30
+ * volte. Chiedere a Google quel nome, invece, non dipende dall'ordine.
+ *
+ * In più la ricerca è PIÙ PRUDENTE dello scorrimento: filtrando, gli omonimi
+ * finiscono nella stessa vista e scegliCard si rifiuta di scegliere, mentre
+ * sfogliando pagina per pagina il secondo omonimo stava tre pagine più avanti e
+ * non lo si vedeva nemmeno.
+ */
+async function filtraRecensioniPerNome(
+  page: Page,
+  nome: string,
+  log: (m: string) => void,
+): Promise<Radice | null> {
+  const radici: Radice[] = [page, ...page.frames().filter((f) => f !== page.mainFrame())];
+  for (const root of radici) {
+    const campo = await campoRicercaRecensioni(root, log).catch(() => null);
+    if (!campo) continue;
+    await campo.click().catch(() => {});
+    await campo.fill("").catch(() => {});
+    await page.keyboard.type(nome, { delay: 30 }).catch(() => {});
+    await page.keyboard.press("Enter").catch(() => {});
+    await page.waitForTimeout(3000);
+    // Dove GUARDARE non è detto sia dove si è SCRITTO: il campo può stare nella
+    // pagina e la lista dentro l'iframe. Si guarda dove sono le card; se non ce
+    // ne sono da nessuna parte si resta qui, e deciderà chi legge.
+    const conCard = await radiceConRecensioni(page).catch(() => root);
+    const dove = (await contaRispondi(conCard).catch(() => 0)) > 0 ? conCard : root;
+    log(`lista filtrata con «${nome}»: ${await contaRispondi(dove)} «Rispondi» in vista.`);
+    return dove;
+  }
+  return null;
+}
+
+/**
+ * Cerca il nome SOLO nella vista attualmente mostrata (NON cambia pagina: al
+ * cambio pagina pensa cercaNeiGruppiPerPagina). Fa al più qualche scroll corto
+ * per far rendere le card di questa pagina. Trovata la card, vi individua il
+ * «Rispondi» (recensione senza risposta), clicca e scrive il testo.
+ *
+ * Accetta una RADICE e non solo la pagina: dopo un filtro per nome la lista può
+ * stare dentro un iframe, e cercare le card nella pagina quando sono nel frame
+ * vuol dire leggerne zero e dire «non trovata» a una recensione che è lì.
  */
 export async function cercaInPaginaCorrente(
-  page: Page,
+  root: Radice,
   nome: string,
   testo: string,
   opts: { testoRecensione?: string; log?: (m: string) => void } = {},
 ): Promise<EsitoMatch> {
   const log = opts.log ?? (() => {});
-  await page
+  const pg = paginaDi(root);
+  await root
     .getByRole("button", { name: /Rispondi/i })
     .first()
     .waitFor({ timeout: 12000 })
@@ -756,7 +855,7 @@ export async function cercaInPaginaCorrente(
   // reale, pubblicando.
   let ultimo = "";
   for (let s = 0; s < 3; s++) {
-    const c = await cardDelCliente(page, nome, opts.testoRecensione ?? "", log);
+    const c = await cardDelCliente(root, nome, opts.testoRecensione ?? "", log);
     if (c.card) {
       if (!c.rispondi) {
         // Due casi diversi, e vanno detti diversi: se la risposta si VEDE, la
@@ -772,8 +871,8 @@ export async function cercaInPaginaCorrente(
         };
       }
       await c.rispondi.click({ timeout: 6000 }).catch(() => {});
-      await page.waitForTimeout(1200);
-      const r = await scriviRisposta(page, testo);
+      await pg.waitForTimeout(1200);
+      const r = await scriviRisposta(root, testo);
       return {
         trovata: true,
         scritto: r.scritto,
@@ -783,8 +882,8 @@ export async function cercaInPaginaCorrente(
     ultimo = c.dettaglio;
     // Non ancora: scroll corto per far rendere il resto di QUESTA pagina.
     if (s < 2) {
-      await scrollaGiu(page, 900);
-      await page.waitForTimeout(600);
+      await scrollaGiu(root, 900);
+      await pg.waitForTimeout(600);
     }
   }
   return { trovata: false, scritto: false, dettaglio: `non in questa pagina (${ultimo})` };
@@ -838,6 +937,57 @@ export async function cercaNeiGruppiPerPagina(
   }
   await sessioni[0].page.waitForTimeout(3000);
 
+  // ---------------------------------------------------- FASE 1: chiedere il nome
+  //
+  // Si chiede a Google quel nome, invece di sfogliare sperando che la
+  // recensione nuova sia in cima (vedi filtraRecensioniPerNome per i casi che
+  // l'hanno imposto). Lo scorrimento resta INTATTO qui sotto come ripiego:
+  // quando il campo di ricerca non c'è, o il filtro non la trova, si fa
+  // esattamente quello che si faceva prima.
+  //
+  // Se la trova ma da quella vista non si può scrivere, non si torna subito: il
+  // suo messaggio si tiene da parte e si prova anche a scorrere, perché un
+  // altro gruppo (o un'altra pagina) può mostrarla col tasto «Rispondi». Alla
+  // fine, se nemmeno lo scorrimento l'ha trovata, si riporta quel messaggio:
+  // dice «l'ho vista ma non ho potuto scrivere», che è molto più utile di «non
+  // l'ho trovata in cinque pagine».
+  let perNome: EsitoRicerca | null = null;
+  for (const s of sessioni) {
+    await s.page.bringToFront().catch(() => {});
+    log(`«${s.gr.nome}»: cerco «${nome}» col campo di ricerca…`);
+    const radice = await filtraRecensioniPerNome(s.page, nome, log).catch(() => null);
+    if (!radice) {
+      log(`«${s.gr.nome}»: nessun campo «cerca recensioni», qui si scorre.`);
+      continue;
+    }
+    const e = await cercaInPaginaCorrente(radice, nome, testo, {
+      testoRecensione: opts.testoRecensione,
+      log,
+    });
+    if (e.trovata) {
+      const esito: EsitoRicerca = {
+        trovata: true,
+        scritto: e.scritto,
+        gruppo: s.gr.nome,
+        page: s.page,
+        dettaglio: `«${s.gr.nome}» cercata per nome · ${e.dettaglio}`,
+      };
+      if (e.scritto) {
+        await s.page.bringToFront().catch(() => {});
+        return esito;
+      }
+      perNome ??= esito;
+      log(`«${s.gr.nome}»: trovata ma non scritta da qui, provo anche a scorrere.`);
+    } else {
+      log(`«${s.gr.nome}»: la ricerca per nome non l'ha trovata (${e.dettaglio}).`);
+    }
+    // La lista è rimasta filtrata: va rimessa intera, altrimenti lo scorrimento
+    // qui sotto sfoglierebbe i risultati del filtro.
+    await s.page.goto(s.gr.url, { waitUntil: "domcontentloaded" }).catch(() => {});
+  }
+  await sessioni[0].page.waitForTimeout(2000);
+
+  // ------------------------------------------------- FASE 2: scorrere le pagine
   for (let pagina = 1; pagina <= maxPagine; pagina++) {
     let vive = 0;
     for (const s of sessioni) {
@@ -870,13 +1020,16 @@ export async function cercaNeiGruppiPerPagina(
     if (vive === 0) break; // tutti i gruppi esauriti
   }
 
+  // La ricerca per nome l'aveva vista: quel motivo vale più del «non trovata».
+  if (perNome) return perNome;
+
   const nomi = GRUPPI.map((g) => g.nome).join(", ");
   return {
     trovata: false,
     scritto: false,
     gruppo: null,
     page: sessioni[0]?.page ?? null,
-    dettaglio: `«${nome}» non trovata nelle prime ${maxPagine} pagine di: ${nomi}.`,
+    dettaglio: `«${nome}» non trovata: né cercandola per nome né nelle prime ${maxPagine} pagine di: ${nomi}.`,
   };
 }
 
@@ -1229,35 +1382,9 @@ export async function cercaClienteNelleRecensioni(
     .catch(() => [] as unknown[]);
   log(`campi di input: ${JSON.stringify(campiInfo).slice(0, 700)}`);
 
-  // Il campo "cerca tra le recensioni" — deve riferirsi a RECENSIONI/recensore.
-  const perRecensioni = /recensione|recensioni|recensore|review|reviewer/i;
-  const trovaCampo = async (): Promise<Locator | null> => {
-    for (const loc of [
-      root.getByPlaceholder(perRecensioni),
-      root.locator(
-        'input[aria-label*="recension" i], input[aria-label*="recensore" i], input[aria-label*="review" i]',
-      ),
-      root.getByRole("searchbox", { name: perRecensioni }),
-      root.getByRole("combobox", { name: perRecensioni }),
-    ]) {
-      const c = loc.first();
-      if ((await c.count().catch(() => 0)) > 0 && (await c.isVisible().catch(() => false))) return c;
-    }
-    return null;
-  };
-
-  let campo = await trovaCampo();
-  // Il campo può stare dietro un'icona "lente" da aprire prima.
-  if (!campo) {
-    const lente = root
-      .getByRole("button", { name: /cerca.*recension|cerca nelle recension|search.*review/i })
-      .first();
-    if ((await lente.count().catch(() => 0)) > 0 && (await lente.isVisible().catch(() => false))) {
-      await lente.click().catch(() => {});
-      await pg.waitForTimeout(1000);
-      campo = await trovaCampo();
-    }
-  }
+  // Il campo «cerca tra le recensioni»: lo riconosce campoRicercaRecensioni,
+  // che è anche quello usato dalla ricerca nei gruppi — un posto solo.
+  const campo = await campoRicercaRecensioni(root, log);
 
   if (!campo) {
     log("nessun campo «cerca recensioni»: ripiego sullo scroll…");

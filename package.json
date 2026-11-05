@@ -51,6 +51,7 @@
     "robot:banco": "tsx --tsconfig tsconfig.json scripts/banco-coda.ts",
     "robot:banco-lista": "tsx --tsconfig tsconfig.json scripts/banco-lista.ts",
     "robot:banco-riquadro": "tsx --tsconfig tsconfig.json scripts/banco-riquadro.ts",
+    "robot:banco-gruppi": "tsx --tsconfig tsconfig.json scripts/banco-gruppi.ts",
     "banco:aggancio": "tsx --tsconfig tsconfig.json scripts/banco-aggancio.ts",
     "banco:lingua": "tsx --tsconfig tsconfig.json scripts/banco-lingua.ts",
     "banco:retry": "tsx --tsconfig tsconfig.json scripts/banco-retry.ts",
