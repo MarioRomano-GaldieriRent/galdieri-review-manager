@@ -91,6 +91,49 @@ async function ctx(mailbox?: string): Promise<{
   return { base, fetchGraph };
 }
 
+/**
+ * Le SCRITTURE (rispondi, inoltra, invia) non avevano nessun ritentativo: una
+ * POST sola, e un 503 passeggero di Microsoft faceva cadere tutto il flusso
+ * della regola.
+ *
+ * Caso reale, 9/11/2026 — Michele Minale, 5★ di Lancusi. Su Google la risposta
+ * c'era (la pubblica il robot, nodo google.rispondi), ma «rispondi all'email»
+ * ha preso «Graph 503: risposta non inviata» e con lui sono SALTATI i quattro
+ * nodi seguenti: trova il ticket, classifica, tag, assegna. È quell'email, con
+ * la copia a customer.care, che fa NASCERE il ticket su Freshdesk: senza, la
+ * recensione resta pubblicata e senza ticket, e qualcuno la rifà a mano.
+ *
+ * Si ripetono SOLO i codici in cui la richiesta non è stata eseguita:
+ *   • 429 → limitata prima di arrivare al servizio;
+ *   • 503 → servizio non disponibile, non l'ha presa in carico.
+ *
+ * 502 e 504 restano fuori DI PROPOSITO: un gateway può cadere anche dopo che il
+ * messaggio è partito, e ripetere vorrebbe dire due email identiche, cioè due
+ * ticket gemelli su Freshdesk — un guaio che conosciamo già. Per quelli la rete
+ * è `npm run ripesca:ticket`, che il ticket lo ritrova dopo.
+ *
+ * Torna l'ULTIMA risposta ricevuta: chi chiama tiene il suo messaggio d'errore.
+ *
+ * Esportata per una ragione sola: è codice che in produzione gira quasi mai —
+ * due volte su 707 esecuzioni — e un ramo che non si prova è un ramo che non
+ * funziona. La prova sta in `npm run banco:graph`, senza toccare la rete.
+ */
+const CODICI_RIPETIBILI = new Set([429, 503]);
+const TENTATIVI_SCRITTURA = 3;
+
+export async function scritturaConRitentativo(
+  chiamata: () => Promise<Response>,
+): Promise<Response> {
+  let res = await chiamata();
+  for (let fatti = 1; fatti < TENTATIVI_SCRITTURA; fatti++) {
+    if (res.ok || !CODICI_RIPETIBILI.has(res.status)) return res;
+    const attesa = Math.min(Number(res.headers.get("retry-after")) || fatti * 2, 10);
+    await new Promise((ok) => setTimeout(ok, attesa * 1000));
+    res = await chiamata();
+  }
+  return res;
+}
+
 export type MailMessage = {
   id: string;
   conversationId: string;
@@ -457,11 +500,13 @@ export async function replyToMessage(
     };
   }
 
-  const res = await fetchGraph(`/messages/${encodeURIComponent(id)}/reply`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(corpo),
-  });
+  const res = await scritturaConRitentativo(() =>
+    fetchGraph(`/messages/${encodeURIComponent(id)}/reply`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(corpo),
+    }),
+  );
 
   if (!res.ok) {
     const json = (await res.json().catch(() => ({}))) as { error?: { message?: string } };
@@ -491,18 +536,20 @@ export async function sendMail(opts: {
   if (opts.destinatari.length === 0) throw new Error("sendMail: nessun destinatario.");
   const { fetchGraph } = await ctx(opts.mailbox);
 
-  const res = await fetchGraph(`/sendMail`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      message: {
-        subject: opts.oggetto,
-        body: { contentType: "HTML", content: opts.html },
-        toRecipients: opts.destinatari.map((address) => ({ emailAddress: { address } })),
-      },
-      saveToSentItems: opts.salvaNegliInviati ?? false,
+  const res = await scritturaConRitentativo(() =>
+    fetchGraph(`/sendMail`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        message: {
+          subject: opts.oggetto,
+          body: { contentType: "HTML", content: opts.html },
+          toRecipients: opts.destinatari.map((address) => ({ emailAddress: { address } })),
+        },
+        saveToSentItems: opts.salvaNegliInviati ?? false,
+      }),
     }),
-  });
+  );
 
   if (!res.ok) {
     const json = (await res.json().catch(() => ({}))) as { error?: { message?: string } };
@@ -538,11 +585,13 @@ export async function forwardMessage(
   //   1) createForward  → crea una BOZZA di inoltro (col commento);
   //   2) PATCH la bozza → imposta destinatari E copia conoscenza;
   //   3) send la bozza  → la invia.
-  const crea = await fetchGraph(`/messages/${encodeURIComponent(id)}/createForward`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ comment: commento }),
-  });
+  const crea = await scritturaConRitentativo(() =>
+    fetchGraph(`/messages/${encodeURIComponent(id)}/createForward`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ comment: commento }),
+    }),
+  );
   if (!crea.ok) {
     const j = (await crea.json().catch(() => ({}))) as { error?: { message?: string } };
     throw new Error(`Graph ${crea.status}: ${j.error?.message ?? "createForward non riuscito"}`);
@@ -557,17 +606,21 @@ export async function forwardMessage(
   if (copiaConoscenza.length > 0) {
     patchBody.ccRecipients = copiaConoscenza.map((address) => ({ emailAddress: { address } }));
   }
-  const patch = await fetchGraph(`/messages/${encodeURIComponent(draftId)}`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(patchBody),
-  });
+  const patch = await scritturaConRitentativo(() =>
+    fetchGraph(`/messages/${encodeURIComponent(draftId)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(patchBody),
+    }),
+  );
   if (!patch.ok) {
     const j = (await patch.json().catch(() => ({}))) as { error?: { message?: string } };
     throw new Error(`Graph ${patch.status}: ${j.error?.message ?? "destinatari/CC non impostati"}`);
   }
 
-  const inv = await fetchGraph(`/messages/${encodeURIComponent(draftId)}/send`, { method: "POST" });
+  const inv = await scritturaConRitentativo(() =>
+    fetchGraph(`/messages/${encodeURIComponent(draftId)}/send`, { method: "POST" }),
+  );
   if (!inv.ok) {
     const j = (await inv.json().catch(() => ({}))) as { error?: { message?: string } };
     throw new Error(`Graph ${inv.status}: ${j.error?.message ?? "invio inoltro non riuscito"}`);
